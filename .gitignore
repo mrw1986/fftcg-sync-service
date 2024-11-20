@@ -1,0 +1,50 @@
+# Firebase
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+ui-debug.log
+.runtimeconfig.json
+
+# Build and Dependencies
+functions/lib/
+node_modules/
+functions/node_modules/
+dist/
+
+# Environment and Configuration
+.env
+.env.*
+.env.local
+.env.*.local
+*.local
+service_account_key.json
+functions/.env
+functions/.env.*
+functions/.runtimeconfig.json
+
+# IDE and Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs and Debug
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+firebase-debug.log*
+ui-debug.log*
+
+# Cache and Temporary Files
+.npm/
+.eslintcache
+.cache/
+.npm
+*.tsbuildinfo
+
+# Testing and Coverage
+coverage/

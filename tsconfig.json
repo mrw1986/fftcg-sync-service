@@ -1,0 +1,17 @@
+{
+  "extends": "./functions/tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "*": ["node_modules/*", "functions/node_modules/*"]
+    },
+    "types": []
+  },
+  "include": [
+    "functions/src"
+  ],
+  "exclude": [
+    "node_modules",
+    "functions/node_modules"
+  ]
+}

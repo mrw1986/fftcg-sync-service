@@ -1,0 +1,35 @@
+{
+  "name": "fftcg-sync-service",
+  "version": "1.0.0",
+  "description": "FFTCG Card Data Sync Service",
+  "scripts": {
+    "start": "cd functions && npm run serve",
+    "build": "cd functions && npm run build",
+    "deploy": "cd functions && npm run deploy",
+    "test": "cd functions && npm test",
+    "lint": "cd functions && npm run lint",
+    "lint:fix": "cd functions && npm run lint:fix",
+    "serve": "cd functions && npm run serve",
+    "shell": "cd functions && npm run shell",
+    "logs": "cd functions && npm run logs",
+    "install:all": "npm install && cd functions && npm install && npm run build",
+    "clean": "cd functions && npm run clean"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^18.19.64",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
+    "eslint-config-google": "^0.14.0",
+    "eslint-plugin-import": "^2.25.4",
+    "typescript": "^4.9.5"
+  },
+  "engines": {
+    "node": "18"
+  },
+  "private": true,
+  "dependencies": {
+    "firebase-functions": "^6.1.0"
+  }
+}
