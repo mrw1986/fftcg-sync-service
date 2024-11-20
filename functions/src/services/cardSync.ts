@@ -1,63 +1,189 @@
+// src/services/cardSync.ts
+
 import axios, {AxiosError} from "axios";
-import {db, COLLECTION, FFTCG_CATEGORY_ID} from "../config/firebase";
-import {CardProduct, SyncOptions, SyncMetadata} from "../types";
+import {db, COLLECTION, FFTCG_CATEGORY_ID, BASE_URL} from "../config/firebase";
+import {
+  CardProduct,
+  SyncOptions,
+  SyncMetadata,
+  GenericError,
+} from "../types";
 import {cardCache, getCacheKey} from "../utils/cache";
 import {logError, logInfo, logWarning} from "../utils/logger";
 import * as crypto from "crypto";
 
-const BASE_URL = "https://tcgcsv.com";
 const MAX_RETRIES = 3;
+const BASE_DELAY = 1000; // 1 second
 
-/**
- * Makes an HTTP request with retry logic
- * @param endpoint API endpoint to request
- * @param retryCount Current retry attempt number
- * @return Promise with the response data
- */
-async function makeRequest<T>(endpoint: string, retryCount = 0): Promise<T> {
+interface RequestOptions {
+  retryCount?: number;
+  customDelay?: number;
+  metadata?: Record<string, unknown>;
+}
+
+class SyncError extends Error implements GenericError {
+  code?: string;
+
+  constructor(
+    message: string,
+    code?: string,
+    public details?: Record<string, unknown>
+  ) {
+    super(message);
+    this.name = "SyncError";
+    this.code = code;
+  }
+
+  toGenericError(): GenericError {
+    return {
+      name: this.name,
+      message: this.message,
+      code: this.code,
+      stack: this.stack,
+    };
+  }
+}
+
+async function makeRequest<T>(
+  endpoint: string,
+  options: RequestOptions = {}
+): Promise<T> {
+  const {retryCount = 0, customDelay = BASE_DELAY} = options;
+
   try {
-    await new Promise((resolve) => setTimeout(resolve, 1000)); // Rate limiting
+    await new Promise((resolve) => setTimeout(resolve, customDelay));
     const url = `${BASE_URL}/${endpoint}`;
+
     await logInfo(`Making request to: ${url}`, {
       attempt: retryCount + 1,
       maxRetries: MAX_RETRIES,
       endpoint,
+      ...options.metadata,
     });
 
-    const response = await axios.get<T>(url);
+    const response = await axios.get<T>(url, {
+      timeout: 30000,
+      headers: {
+        "Accept": "application/json",
+        "User-Agent": "FFTCG-Sync-Service/1.0",
+      },
+    });
+
     return response.data;
   } catch (error) {
     if (retryCount < MAX_RETRIES - 1 && error instanceof AxiosError) {
-      const delay = Math.pow(2, retryCount) * 1000;
+      const delay = Math.pow(2, retryCount) * BASE_DELAY;
       await logWarning(`Request failed, retrying in ${delay}ms...`, {
         error: error.message,
         url: `${BASE_URL}/${endpoint}`,
         attempt: retryCount + 1,
         maxRetries: MAX_RETRIES,
       });
-      await new Promise((resolve) => setTimeout(resolve, delay));
-      return makeRequest<T>(endpoint, retryCount + 1);
+
+      return makeRequest<T>(endpoint, {
+        ...options,
+        retryCount: retryCount + 1,
+        customDelay: delay,
+      });
     }
-    throw error;
+
+    throw new SyncError(
+      error instanceof Error ? error.message : "Unknown request error",
+      error instanceof AxiosError ? error.code : "UNKNOWN_ERROR",
+      {endpoint, ...options.metadata}
+    );
   }
 }
 
-/**
- * Generates a hash of data for comparison
- * @param data Data to hash
- * @return MD5 hash string
- */
 function getDataHash(data: any): string {
   return crypto.createHash("md5")
     .update(JSON.stringify(data, Object.keys(data).sort()))
     .digest("hex");
 }
 
-/**
- * Synchronizes card data from TCGCSV API to Firestore
- * @param options Sync configuration options
- * @return Sync operation metadata
- */
+async function processBatch<T>(
+  items: T[],
+  processor: (batch: T[]) => Promise<void>,
+  batchSize: number = 500
+): Promise<void> {
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    await processor(batch);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+async function processGroupProducts(
+  group: any,
+  options: SyncOptions,
+  metadata: SyncMetadata,
+  existingHashes: Map<string, string>
+): Promise<number> {
+  const groupId = group.groupId.toString();
+  let processedCards = 0;
+
+  try {
+    const productsResponse = await makeRequest<{ results: CardProduct[] }>(
+      `${FFTCG_CATEGORY_ID}/${groupId}/products`,
+      {metadata: {groupId, groupName: group.name}}
+    );
+
+    const products = productsResponse.results;
+    const groupHash = getDataHash(products);
+    const existingHash = existingHashes.get(groupId);
+
+    if (!options.dryRun && (!existingHash || existingHash !== groupHash)) {
+      metadata.groupsUpdated++;
+
+      await processBatch(products, async (batch) => {
+        const writeBatch = db.batch();
+
+        for (const product of batch) {
+          if (options.limit && processedCards >= options.limit) break;
+
+          const cardRef = db.collection(COLLECTION.CARDS)
+            .doc(product.productId.toString());
+
+          writeBatch.set(cardRef, {
+            ...product,
+            lastUpdated: new Date(),
+            groupHash,
+          }, {merge: true});
+
+          cardCache.set(getCacheKey("card", product.productId), product);
+          processedCards++;
+        }
+
+        // Update hash
+        const hashRef = db.collection(COLLECTION.CARD_HASHES)
+          .doc(groupId);
+        writeBatch.set(hashRef, {
+          hash: groupHash,
+          lastUpdated: new Date(),
+        });
+
+        await writeBatch.commit();
+      });
+
+      await logInfo(`Updated ${processedCards} cards from group ${groupId}`);
+    } else {
+      await logInfo(`No updates needed for group ${groupId} (unchanged)`);
+    }
+
+    metadata.cardCount += products.length;
+    return processedCards;
+  } catch (error) {
+    const syncError = error instanceof Error ?
+      new SyncError(error.message, "GROUP_PROCESSING_ERROR", {groupId}) :
+      new SyncError("Unknown group processing error", "UNKNOWN_ERROR", {groupId});
+
+    const errorMessage = `Error processing group ${groupId}: ${syncError.message}`;
+    metadata.errors.push(errorMessage);
+    await logError(syncError.toGenericError(), "processGroupProducts");
+    return processedCards;
+  }
+}
+
 export async function syncCards(options: SyncOptions = {}): Promise<SyncMetadata> {
   const startTime = Date.now();
   const metadata: SyncMetadata = {
@@ -71,84 +197,48 @@ export async function syncCards(options: SyncOptions = {}): Promise<SyncMetadata
   };
 
   try {
-    // Fetch groups
     const groupsResponse = await makeRequest<{ results: any[] }>(
-      `${FFTCG_CATEGORY_ID}/groups`
+      `${FFTCG_CATEGORY_ID}/groups`,
+      {metadata: {operation: "fetchGroups"}}
     );
-    const groups = groupsResponse.results;
 
-    logInfo(`Found ${groups.length} groups`);
+    const groups = groupsResponse.results;
+    await logInfo(`Found ${groups.length} groups`);
 
     let processedCards = 0;
     const existingHashes = new Map<string, string>();
 
     // Load existing hashes from Firestore
-    const hashesSnapshot = await db.collection("cardHashes").get();
+    const hashesSnapshot = await db.collection(COLLECTION.CARD_HASHES).get();
     hashesSnapshot.forEach((doc) => {
       existingHashes.set(doc.id, doc.data().hash);
     });
 
+    // Process groups
     for (const group of groups) {
-      if (options.groupId && group.groupId !== options.groupId) continue;
+      if (options.groupId && group.groupId.toString() !== options.groupId) continue;
 
-      try {
-        metadata.groupsProcessed++;
-        const productsResponse = await makeRequest<{ results: CardProduct[] }>(
-          `${FFTCG_CATEGORY_ID}/${group.groupId}/products`
-        );
-        const products = productsResponse.results;
+      metadata.groupsProcessed++;
+      const groupProcessedCards = await processGroupProducts(
+        group,
+        options,
+        metadata,
+        existingHashes
+      );
 
-        const groupHash = getDataHash(products);
-        const existingHash = existingHashes.get(group.groupId.toString());
-
-        if (!options.dryRun && (!existingHash || existingHash !== groupHash)) {
-          metadata.groupsUpdated++;
-          const batch = db.batch();
-
-          for (const product of products) {
-            if (options.limit && processedCards >= options.limit) break;
-
-            const cardRef = db.collection(COLLECTION.CARDS)
-              .doc(product.productId.toString());
-            batch.set(cardRef, {
-              ...product,
-              lastUpdated: new Date(),
-              groupHash,
-            }, {merge: true});
-
-            cardCache.set(getCacheKey("card", product.productId), product);
-            processedCards++;
-          }
-
-          // Update hash
-          const hashRef = db.collection("cardHashes")
-            .doc(group.groupId.toString());
-          batch.set(hashRef, {
-            hash: groupHash,
-            lastUpdated: new Date(),
-          });
-
-          await batch.commit();
-          logInfo(`Updated ${products.length} cards from group ${group.groupId}`);
-        } else {
-          logInfo(`No updates needed for group ${group.groupId} (unchanged)`);
-        }
-
-        metadata.cardCount += products.length;
-      } catch (error: any) { // Type assertion
-        const errorMessage = `Error processing group ${group.groupId}: ${error?.message || "Unknown error"}`;
-        metadata.errors.push(errorMessage);
-        logError(error, "syncCards:processGroup");
-      }
-
+      processedCards += groupProcessedCards;
       if (options.limit && processedCards >= options.limit) break;
     }
 
     metadata.status = metadata.errors.length > 0 ? "completed_with_errors" : "success";
-  } catch (error: any) { // Type assertion
+  } catch (error) {
+    const syncError = error instanceof Error ?
+      new SyncError(error.message, "SYNC_MAIN_ERROR") :
+      new SyncError("Unknown sync error", "UNKNOWN_ERROR");
+
     metadata.status = "failed";
-    metadata.errors.push(error?.message || "Unknown error");
-    logError(error, "syncCards:main");
+    metadata.errors.push(syncError.message);
+    await logError(syncError.toGenericError(), "syncCards:main");
   }
 
   metadata.lastSync = new Date();

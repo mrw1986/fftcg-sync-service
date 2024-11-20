@@ -1,9 +1,12 @@
+// firestore.rules
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Allow read access to all data
     match /{document=**} {
-      // Only allow access from our Cloud Functions
-      allow read, write: if false;
+      allow read: true;
+      // Only allow write access from Cloud Functions
+      allow write: if false;
     }
   }
 }
