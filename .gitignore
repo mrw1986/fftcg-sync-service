@@ -21,6 +21,7 @@ service_account_key.json
 functions/.env
 functions/.env.*
 functions/.runtimeconfig.json
+functions-backup/
 
 # IDE and Editors
 .idea/

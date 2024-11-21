@@ -6,3 +6,4 @@ service_account_key.json
 .gitignore
 .repomixignore
 repomix.config.json
+functions-backup/
