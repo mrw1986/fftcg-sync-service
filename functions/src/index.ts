@@ -1,5 +1,3 @@
-// src/index.ts
-
 import {onRequest} from "firebase-functions/v2/https";
 import {onSchedule} from "firebase-functions/v2/scheduler";
 import {Request, Response} from "express";
@@ -9,7 +7,7 @@ import {runtimeOpts} from "./config/firebase";
 import {SyncOptions} from "./types";
 
 // Scheduled card sync
-export const scheduledCardSync = onSchedule({
+exports.scheduledCardSync = onSchedule({
   schedule: "0 21 * * *", // Daily at 21:00 UTC
   timeZone: "UTC",
   memory: runtimeOpts.memory,
@@ -20,14 +18,14 @@ export const scheduledCardSync = onSchedule({
 });
 
 // Manual card sync endpoint for testing
-export const testCardSync = onRequest({
+exports.testCardSync = onRequest({
   timeoutSeconds: runtimeOpts.timeoutSeconds,
   memory: runtimeOpts.memory,
   maxInstances: 1,
 }, async (req: Request, res: Response) => {
   const options: SyncOptions = {
-    dryRun: true, // Always true for test endpoint
-    limit: req.query.limit ? parseInt(req.query.limit as string) : 5, // Default to 5
+    dryRun: true,
+    limit: req.query.limit ? parseInt(req.query.limit as string) : 5,
     groupId: req.query.groupId as string,
   };
 
@@ -35,17 +33,17 @@ export const testCardSync = onRequest({
   res.json(result);
 });
 
-export const manualCardSync = onRequest({
+exports.manualCardSync = onRequest({
   timeoutSeconds: runtimeOpts.timeoutSeconds,
   memory: runtimeOpts.memory,
   maxInstances: 1,
 }, async (_req: Request, res: Response) => {
-  const result = await syncCards({dryRun: false}); // Full sync
+  const result = await syncCards({dryRun: false});
   res.json(result);
 });
 
 // Scheduled price sync
-export const scheduledPriceSync = onSchedule({
+exports.scheduledPriceSync = onSchedule({
   schedule: "30 21 * * *", // Daily at 21:30 UTC
   timeZone: "UTC",
   memory: runtimeOpts.memory,
@@ -56,7 +54,7 @@ export const scheduledPriceSync = onSchedule({
 });
 
 // Manual price sync endpoint for testing
-export const testPriceSync = onRequest({
+exports.testPriceSync = onRequest({
   timeoutSeconds: runtimeOpts.timeoutSeconds,
   memory: runtimeOpts.memory,
   maxInstances: 1,
@@ -74,7 +72,7 @@ export const testPriceSync = onRequest({
 });
 
 // For manually triggering full price sync
-export const manualPriceSync = onRequest({
+exports.manualPriceSync = onRequest({
   timeoutSeconds: runtimeOpts.timeoutSeconds,
   memory: runtimeOpts.memory,
   maxInstances: 1,
@@ -84,7 +82,7 @@ export const manualPriceSync = onRequest({
 });
 
 // Health check endpoint
-export const healthCheck = onRequest({
+exports.healthCheck = onRequest({
   timeoutSeconds: 10,
   memory: "128MiB",
 }, async (_req: Request, res: Response) => {
