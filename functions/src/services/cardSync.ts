@@ -220,15 +220,15 @@ async function processGroupProducts(
 }
 
 export async function syncCards(options: SyncOptions = {}): Promise<SyncMetadata> {
-  // Initialize logger only for test/manual syncs
-  const logger = options.dryRun ? new SyncLogger({
-    type: "test",
+  const logger = new SyncLogger({
+    type: options.dryRun ? "both" : "scheduled",
     limit: options.limit,
     dryRun: options.dryRun,
     groupId: options.groupId,
-  }) : undefined;
+    batchSize: 25,
+  });
 
-  if (logger) await logger.start();
+  await logger.start();
 
   const startTime = Date.now();
   const metadata: SyncMetadata = {
@@ -248,8 +248,7 @@ export async function syncCards(options: SyncOptions = {}): Promise<SyncMetadata
     );
 
     const groups = groupsResponse.results;
-    if (logger) await logger.logGroupFound(groups.length);
-    await logInfo(`Found ${groups.length} groups`);
+    await logger.logGroupFound(groups.length);
 
     let processedCards = 0;
     const existingHashes = new Map<string, string>();
@@ -258,6 +257,10 @@ export async function syncCards(options: SyncOptions = {}): Promise<SyncMetadata
     hashesSnapshot.forEach((doc) => {
       existingHashes.set(doc.id, doc.data().hash);
     });
+
+    if (options.dryRun) {
+      await logger.logManualSyncStart();
+    }
 
     for (const group of groups) {
       if (options.groupId && group.groupId.toString() !== options.groupId) continue;
@@ -277,13 +280,12 @@ export async function syncCards(options: SyncOptions = {}): Promise<SyncMetadata
 
     metadata.status = metadata.errors.length > 0 ? "completed_with_errors" : "success";
 
-    if (logger) {
-      await logger.logSyncResults({
-        success: processedCards,
-        failures: metadata.errors.length,
-        groupId: options.groupId,
-      });
-    }
+    await logger.logSyncResults({
+      success: processedCards,
+      failures: metadata.errors.length,
+      groupId: options.groupId,
+      type: options.dryRun ? "Manual" : "Scheduled",
+    });
   } catch (error) {
     const syncError = error instanceof Error ?
       new SyncError(error.message, "SYNC_MAIN_ERROR") :
@@ -302,6 +304,6 @@ export async function syncCards(options: SyncOptions = {}): Promise<SyncMetadata
       .add(metadata);
   }
 
-  if (logger) await logger.finish();
+  await logger.finish();
   return metadata;
 }

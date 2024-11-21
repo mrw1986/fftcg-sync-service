@@ -269,15 +269,15 @@ async function processGroupPrices(
 }
 
 export async function syncPrices(options: SyncOptions = {}): Promise<SyncMetadata> {
-  // Initialize logger only for test/manual syncs
-  const logger = options.dryRun ? new SyncLogger({
-    type: "test",
+  const logger = new SyncLogger({
+    type: options.dryRun ? "both" : "scheduled",
     limit: options.limit,
     dryRun: options.dryRun,
     groupId: options.groupId,
-  }) : undefined;
+    batchSize: 25,
+  });
 
-  if (logger) await logger.start();
+  await logger.start();
 
   const startTime = Date.now();
   const metadata: SyncMetadata = {
@@ -297,9 +297,12 @@ export async function syncPrices(options: SyncOptions = {}): Promise<SyncMetadat
     );
 
     const groups = groupsResponse.results;
-    if (logger) await logger.logGroupFound(groups.length);
+    await logger.logGroupFound(groups.length);
 
-    // Filter to specific group if provided
+    if (options.dryRun) {
+      await logger.logManualSyncStart();
+    }
+
     if (options.groupId) {
       const group = groups.find((g) => g.groupId.toString() === options.groupId);
       if (!group) {
@@ -313,7 +316,6 @@ export async function syncPrices(options: SyncOptions = {}): Promise<SyncMetadat
       groups.push(group);
     }
 
-    // Process each group
     for (const group of groups) {
       metadata.groupsProcessed++;
       await processGroupPrices(group, options, metadata, logger);
@@ -323,13 +325,12 @@ export async function syncPrices(options: SyncOptions = {}): Promise<SyncMetadat
 
     metadata.status = metadata.errors.length > 0 ? "completed_with_errors" : "success";
 
-    if (logger) {
-      await logger.logSyncResults({
-        success: metadata.cardCount,
-        failures: metadata.errors.length,
-        groupId: options.groupId,
-      });
-    }
+    await logger.logSyncResults({
+      success: metadata.cardCount,
+      failures: metadata.errors.length,
+      groupId: options.groupId,
+      type: options.dryRun ? "Manual" : "Scheduled",
+    });
   } catch (error) {
     const syncError = error instanceof SyncError ? error :
       error instanceof Error ?
@@ -349,6 +350,6 @@ export async function syncPrices(options: SyncOptions = {}): Promise<SyncMetadat
       .add(metadata);
   }
 
-  if (logger) await logger.finish();
+  await logger.finish();
   return metadata;
 }

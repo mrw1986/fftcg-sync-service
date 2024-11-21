@@ -1,35 +1,39 @@
+// src/utils/syncLogger.ts
+
 interface CardDetails {
-    id: number;
-    name: string;
+  id: number;
+  name: string;
+  groupId: string;
+  normalPrice?: number;
+  foilPrice?: number;
+  rawPrices: Array<{
+    type: "Normal" | "Foil";
+    price: number;
     groupId: string;
-    normalPrice?: number;
-    foilPrice?: number;
-    rawPrices: Array<{
-      type: "Normal" | "Foil";
-      price: number;
-      groupId: string;
-    }>;
-  }
+  }>;
+}
+
+interface SyncLoggerOptions {
+  type: "manual" | "scheduled" | "both";
+  limit?: number;
+  dryRun?: boolean;
+  groupId?: string;
+  batchSize?: number;
+}
 
 export class SyncLogger {
   private startTime: number;
   private cards: CardDetails[] = [];
   private groups: Map<string, { products: number; prices: number }> = new Map();
 
-  constructor(private options: {
-      type: "test" | "manual" | "scheduled";
-      limit?: number;
-      dryRun?: boolean;
-      groupId?: string;
-    }) {
+  constructor(private options: SyncLoggerOptions) {
     this.startTime = Date.now();
   }
 
   async start(): Promise<void> {
-    console.log("\nStarting sync operation...");
+    console.log("\nStarting sync test...");
     console.log(`Type: ${this.options.type}`);
     if (this.options.limit) console.log(`Limit: ${this.options.limit} cards`);
-    if (this.options.groupId) console.log(`Group ID: ${this.options.groupId}`);
     console.log(`Dry Run: ${this.options.dryRun ? "true" : "false"}`);
     console.log("\n=== Fetching Raw Data ===");
   }
@@ -65,18 +69,32 @@ export class SyncLogger {
     console.log("---");
   }
 
-  async logSyncResults(results: {
-      success: number;
-      failures: number;
-      groupId?: string;
-    }): Promise<void> {
-    const duration = (Date.now() - this.startTime) / 1000;
-
-    console.log(`\n=== ${this.capitalizeFirst(this.options.type)} Sync Results ===`);
+  async logManualSyncStart(): Promise<void> {
+    console.log("\n=== Testing Manual Sync ===");
+    if (this.options.groupId) console.log(`Filtering for groups: ${this.options.groupId}`);
     if (this.options.dryRun) console.log("DRY RUN MODE - No data will be modified");
     if (this.options.limit) console.log(`Processing limited to ${this.options.limit} cards`);
+    if (this.options.batchSize) console.log(`Batch size: ${this.options.batchSize}`);
+    console.log();
+  }
 
-    console.log("\nResults:");
+  async logScheduledSyncStart(): Promise<void> {
+    console.log("\n=== Testing Scheduled Sync ===");
+  }
+
+  async logSyncProgress(message: string): Promise<void> {
+    console.log(message);
+  }
+
+  async logSyncResults(results: {
+    success: number;
+    failures: number;
+    groupId?: string;
+    type: "Manual" | "Scheduled";
+  }): Promise<void> {
+    const duration = (Date.now() - this.startTime) / 1000;
+
+    console.log(`\n${results.type} Sync Results:`);
     console.log(`- Success: ${results.success}`);
     console.log(`- Failures: ${results.failures}`);
     console.log(`- Duration: ${duration.toFixed(1)} seconds`);
@@ -84,10 +102,6 @@ export class SyncLogger {
   }
 
   async finish(): Promise<void> {
-    console.log("\nSync operation completed!");
-  }
-
-  private capitalizeFirst(str: string): string {
-    return str.charAt(0).toUpperCase() + str.slice(1);
+    console.log("\nTest completed!");
   }
 }
