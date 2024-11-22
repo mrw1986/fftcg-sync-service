@@ -1,21 +1,10 @@
-// src/utils/imageHandler.ts
 import axios, {AxiosError} from "axios";
 import {storage, STORAGE, COLLECTION, db} from "../config/firebase";
 import {logError, logInfo, logWarning} from "./logger";
 import LRUCache from "lru-cache";
 import * as crypto from "crypto";
-import {GenericError} from "../types";
-
-interface ImageMetadata {
-  contentType: string;
-  size: number;
-  updated: Date;
-  hash: string;
-  originalUrl: string;
-  highResUrl: string;
-  originalSize?: number;
-  highResSize?: number;
-}
+import {GenericError, ImageMetadata} from "../types";
+import {ImageValidator} from "./imageValidator";
 
 interface ImageProcessingResult {
   originalUrl: string;
@@ -31,6 +20,10 @@ const cacheOptions = {
 
 const imageMetadataCache = new LRUCache<string, ImageMetadata>(cacheOptions);
 const imageExistsCache = new LRUCache<string, boolean>(cacheOptions);
+const imageBufferCache = new LRUCache<string, Buffer>({
+  max: 100,
+  ttl: 1000 * 60 * 5, // 5 minutes
+});
 
 export class ImageHandler {
   private bucket = storage.bucket(STORAGE.BUCKETS.CARD_IMAGES);
@@ -49,8 +42,24 @@ export class ImageHandler {
   }
 
   private async downloadImage(url: string): Promise<Buffer> {
+    const cacheKey = `download:${url}`;
+    const cachedBuffer = imageBufferCache.get(cacheKey);
+
+    if (cachedBuffer) {
+      await logInfo("Using cached image", {
+        url,
+        size: cachedBuffer.length,
+        timestamp: new Date().toISOString(),
+      });
+      return cachedBuffer;
+    }
+
     try {
-      await logInfo(`Attempting to download image from: ${url}`);
+      await logInfo("Attempting to download image", {
+        url,
+        timestamp: new Date().toISOString(),
+      });
+
       const response = await axios.get(url, {
         responseType: "arraybuffer",
         timeout: 30000,
@@ -59,13 +68,29 @@ export class ImageHandler {
           "User-Agent": "FFTCG-Sync-Service/1.0",
         },
       });
-      await logInfo(`Successfully downloaded image from: ${url}`);
-      return Buffer.from(response.data);
+
+      const buffer = Buffer.from(response.data);
+      const validationError = await ImageValidator.validateImage(buffer);
+
+      if (validationError) {
+        throw new Error(`Image validation failed: ${validationError.message}`);
+      }
+
+      imageBufferCache.set(cacheKey, buffer);
+
+      await logInfo("Successfully downloaded and validated image", {
+        url,
+        size: buffer.length,
+        timestamp: new Date().toISOString(),
+      });
+
+      return buffer;
     } catch (error) {
-      await logWarning(
-        `Failed to download image: ${error instanceof Error ? error.message : "Unknown error"}`,
-        {url, errorDetails: error instanceof Error ? error.message : "Unknown error"}
-      );
+      await logWarning("Failed to download or validate image", {
+        url,
+        error: error instanceof Error ? error.message : "Unknown error",
+        timestamp: new Date().toISOString(),
+      });
       throw error;
     }
   }
@@ -136,9 +161,12 @@ export class ImageHandler {
     productId: number
   ): Promise<ImageProcessingResult> {
     try {
-      await logInfo(`Processing image for product ${productId} in group ${groupId}`, {
+      await logInfo("Processing image", {
+        productId,
+        groupId,
         originalUrl: imageUrl,
         highResUrl: this.getHighResUrl(imageUrl),
+        timestamp: new Date().toISOString(),
       });
 
       const highResUrl = this.getHighResUrl(imageUrl);
@@ -149,18 +177,22 @@ export class ImageHandler {
       try {
         originalBuffer = await this.downloadImage(imageUrl);
       } catch (error) {
-        await logWarning(`Original image download failed for ${productId}`, {
+        await logWarning("Original image download failed", {
+          productId,
           url: imageUrl,
           error: error instanceof Error ? error.message : "Unknown error",
+          timestamp: new Date().toISOString(),
         });
       }
 
       try {
         highResBuffer = await this.downloadImage(highResUrl);
       } catch (error) {
-        await logWarning(`High-res image download failed for ${productId}`, {
+        await logWarning("High-res image download failed", {
+          productId,
           url: highResUrl,
           error: error instanceof Error ? error.message : "Unknown error",
+          timestamp: new Date().toISOString(),
         });
       }
 
@@ -255,6 +287,7 @@ export class ImageHandler {
           groupId,
           originalUrl: imageUrl,
           highResUrl: this.getHighResUrl(imageUrl),
+          timestamp: new Date().toISOString(),
         },
       }, "processImage");
       return {
@@ -303,7 +336,11 @@ export class ImageHandler {
         }
       }
 
-      await logInfo(`Cleanup complete. ${deletedCount} files ${dryRun ? "would be" : "were"} deleted.`);
+      await logInfo("Cleanup complete", {
+        deletedCount,
+        mode: dryRun ? "dry-run" : "actual",
+        timestamp: new Date().toISOString(),
+      });
     } catch (error) {
       const genericError: GenericError = {
         message: error instanceof Error ? error.message : "Unknown error",

@@ -1,4 +1,3 @@
-// src/test/testImageHandler.ts
 import {ImageHandler} from "../utils/imageHandler";
 
 const TEST_CASES = [
@@ -32,8 +31,8 @@ async function testImageProcessing() {
         updated: result.updated,
         metadata: {
           size: result.metadata.size,
-          originalSize: result.metadata.originalSize,
-          highResSize: result.metadata.highResSize,
+          originalSize: `${(result.metadata.originalSize || 0) / 1024}KB`,
+          highResSize: `${(result.metadata.highResSize || 0) / 1024}KB`,
           contentType: result.metadata.contentType,
           updated: result.metadata.updated,
         },
@@ -51,6 +50,10 @@ async function testImageProcessing() {
         cached: !cachedResult.updated,
         originalUrl: cachedResult.originalUrl,
         highResUrl: cachedResult.highResUrl,
+        sizes: {
+          original: `${(cachedResult.metadata.originalSize || 0) / 1024}KB`,
+          highRes: `${(cachedResult.metadata.highResSize || 0) / 1024}KB`,
+        },
       });
     }
 
@@ -69,6 +72,7 @@ async function testImageProcessing() {
     console.log("Error Handling Results:", {
       fallbackToOriginal: invalidResult.originalUrl === "https://invalid-url.com/image.jpg",
       updated: invalidResult.updated,
+      handledError: true,
     });
   } catch (error) {
     console.error("Test failed:", error);

@@ -14,11 +14,17 @@ interface LogEntry {
 
 function cleanLogData(data: Record<string, unknown>): Record<string, unknown> {
   return Object.entries(data).reduce((acc, [key, value]) => {
-    if (value !== undefined) {
+    // Skip undefined and null values
+    if (value !== undefined && value !== null) {
       if (value && typeof value === "object") {
-        acc[key] = cleanLogData(value as Record<string, unknown>);
+        const cleaned = cleanLogData(value as Record<string, unknown>);
+        // Only add non-empty objects
+        if (Object.keys(cleaned).length > 0) {
+          acc[key] = cleaned;
+        }
       } else {
-        acc[key] = value;
+        // Convert any specialized types to plain values
+        acc[key] = value instanceof Date ? value.toISOString() : value;
       }
     }
     return acc;
@@ -42,6 +48,7 @@ export const logError = async (error: GenericError | GenericObject, context: str
     stack: error.stack,
     code: error.code,
     ...(error as GenericObject),
+    timestamp: new Date().toISOString(),
   });
 
   const entry: LogEntry = {
@@ -57,13 +64,16 @@ export const logError = async (error: GenericError | GenericObject, context: str
 };
 
 export const logInfo = async (message: string, data?: LogData) => {
-  const cleanedData = data ? cleanLogData(data as Record<string, unknown>) : undefined;
+  const cleanedData = data ? cleanLogData({
+    ...data,
+    timestamp: new Date().toISOString(),
+  }) : undefined;
 
   const entry: LogEntry = {
     timestamp: new Date(),
     level: "INFO",
     message,
-    ...(cleanedData && {data: cleanedData}),
+    ...(cleanedData && Object.keys(cleanedData).length > 0 && {data: cleanedData}),
   };
 
   logger.info(message, cleanedData);
@@ -71,13 +81,16 @@ export const logInfo = async (message: string, data?: LogData) => {
 };
 
 export const logWarning = async (message: string, data?: LogData) => {
-  const cleanedData = data ? cleanLogData(data as Record<string, unknown>) : undefined;
+  const cleanedData = data ? cleanLogData({
+    ...data,
+    timestamp: new Date().toISOString(),
+  }) : undefined;
 
   const entry: LogEntry = {
     timestamp: new Date(),
     level: "WARNING",
     message,
-    ...(cleanedData && {data: cleanedData}),
+    ...(cleanedData && Object.keys(cleanedData).length > 0 && {data: cleanedData}),
   };
 
   logger.warn(message, cleanedData);

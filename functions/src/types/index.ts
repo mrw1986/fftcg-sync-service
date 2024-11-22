@@ -76,8 +76,9 @@ export interface ImageMetadata {
   groupId?: string;
   productId?: number;
   lastUpdated?: Date;
+  originalSize?: number;
+  highResSize?: number;
 }
-
 export interface ImageProcessingResult {
   url: string;
   metadata: ImageMetadata;
@@ -168,4 +169,9 @@ export interface ImageProcessingProgress {
   failed: number;
   startTime: number;
   estimatedTimeRemaining?: number;
+}
+
+export interface ImageValidationError {
+  code: "FILE_TOO_LARGE" | "INVALID_FORMAT" | "VALIDATION_ERROR";
+  message: string;
 }
