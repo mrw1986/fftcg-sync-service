@@ -1,10 +1,11 @@
 import axios, {AxiosError} from "axios";
 import {storage, STORAGE, COLLECTION, db} from "../config/firebase";
 import {logError, logInfo, logWarning} from "./logger";
-import LRUCache from "lru-cache";
 import * as crypto from "crypto";
 import {GenericError, ImageMetadata} from "../types";
 import {ImageValidator} from "./imageValidator";
+import {imageCache} from "./imageCache";
+import {ImageCompressor} from "./imageCompressor";
 
 interface ImageProcessingResult {
   originalUrl: string;
@@ -12,18 +13,6 @@ interface ImageProcessingResult {
   metadata: ImageMetadata;
   updated: boolean;
 }
-
-const cacheOptions = {
-  max: 1000,
-  ttl: 1000 * 60 * 60, // 1 hour
-};
-
-const imageMetadataCache = new LRUCache<string, ImageMetadata>(cacheOptions);
-const imageExistsCache = new LRUCache<string, boolean>(cacheOptions);
-const imageBufferCache = new LRUCache<string, Buffer>({
-  max: 100,
-  ttl: 1000 * 60 * 5, // 5 minutes
-});
 
 export class ImageHandler {
   private bucket = storage.bucket(STORAGE.BUCKETS.CARD_IMAGES);
@@ -41,16 +30,31 @@ export class ImageHandler {
     return crypto.createHash("md5").update(imageBuffer).digest("hex");
   }
 
-  private async downloadImage(url: string): Promise<Buffer> {
-    const cacheKey = `download:${url}`;
-    const cachedBuffer = imageBufferCache.get(cacheKey);
-
-    if (cachedBuffer) {
-      await logInfo("Using cached image", {
-        url,
-        size: cachedBuffer.length,
+  private async compressImage(buffer: Buffer, isHighRes: boolean): Promise<Buffer> {
+    try {
+      const result = await ImageCompressor.compress(buffer, isHighRes);
+      await logInfo("Image compression successful", {
+        originalSize: buffer.length,
+        compressedSize: result.buffer.length,
+        quality: result.info.quality,
+        dimensions: `${result.info.width}x${result.info.height}`,
         timestamp: new Date().toISOString(),
       });
+      return result.buffer;
+    } catch (error) {
+      await logWarning("Image compression skipped", {
+        error: error instanceof Error ? error.message : "Unknown error",
+        timestamp: new Date().toISOString(),
+      });
+      return buffer;
+    }
+  }
+
+  private async downloadImage(url: string): Promise<Buffer> {
+    const cacheKey = imageCache.getBufferCacheKey(url);
+    const cachedBuffer = await imageCache.getBuffer(cacheKey);
+
+    if (cachedBuffer) {
       return cachedBuffer;
     }
 
@@ -76,7 +80,7 @@ export class ImageHandler {
         throw new Error(`Image validation failed: ${validationError.message}`);
       }
 
-      imageBufferCache.set(cacheKey, buffer);
+      imageCache.setBuffer(cacheKey, buffer);
 
       await logInfo("Successfully downloaded and validated image", {
         url,
@@ -102,20 +106,21 @@ export class ImageHandler {
     isHighRes: boolean
   ): Promise<boolean> {
     const storagePath = this.getStoragePath(groupId, productId, isHighRes);
-    const cacheKey = `${groupId}:${productId}:${isHighRes ? "high" : "original"}`;
+    const metadataCacheKey = imageCache.getMetadataCacheKey(groupId, productId, isHighRes);
+    const existsCacheKey = imageCache.getExistsCacheKey(groupId, productId, isHighRes);
 
     try {
-      const cachedMetadata = imageMetadataCache.get(cacheKey);
+      const cachedMetadata = await imageCache.getMetadata(metadataCacheKey);
       if (cachedMetadata) {
         const newHash = await this.getImageHash(imageBuffer);
         return cachedMetadata.hash !== newHash;
       }
 
-      const exists = imageExistsCache.get(cacheKey);
+      const exists = imageCache.getExists(existsCacheKey);
       if (exists === false) return true;
 
       const [fileExists] = await this.bucket.file(storagePath).exists();
-      imageExistsCache.set(cacheKey, fileExists);
+      imageCache.setExists(existsCacheKey, fileExists);
 
       if (!fileExists) return true;
 
@@ -151,8 +156,8 @@ export class ImageHandler {
       lastUpdated: new Date(),
     }, {merge: true});
 
-    const cacheKey = `${groupId}:${productId}`;
-    imageMetadataCache.set(cacheKey, metadata);
+    const metadataCacheKey = imageCache.getMetadataCacheKey(groupId, productId, false);
+    imageCache.setMetadata(metadataCacheKey, metadata);
   }
 
   async processImage(
@@ -167,6 +172,7 @@ export class ImageHandler {
         originalUrl: imageUrl,
         highResUrl: this.getHighResUrl(imageUrl),
         timestamp: new Date().toISOString(),
+        cacheStats: imageCache.getStats(),
       });
 
       const highResUrl = this.getHighResUrl(imageUrl);
@@ -176,6 +182,9 @@ export class ImageHandler {
 
       try {
         originalBuffer = await this.downloadImage(imageUrl);
+        if (originalBuffer) {
+          originalBuffer = await this.compressImage(originalBuffer, false);
+        }
       } catch (error) {
         await logWarning("Original image download failed", {
           productId,
@@ -187,6 +196,9 @@ export class ImageHandler {
 
       try {
         highResBuffer = await this.downloadImage(highResUrl);
+        if (highResBuffer) {
+          highResBuffer = await this.compressImage(highResBuffer, true);
+        }
       } catch (error) {
         await logWarning("High-res image download failed", {
           productId,
@@ -288,6 +300,7 @@ export class ImageHandler {
           originalUrl: imageUrl,
           highResUrl: this.getHighResUrl(imageUrl),
           timestamp: new Date().toISOString(),
+          cacheStats: imageCache.getStats(),
         },
       }, "processImage");
       return {
@@ -336,10 +349,16 @@ export class ImageHandler {
         }
       }
 
+      // Clear caches after cleanup
+      if (!dryRun) {
+        imageCache.clear();
+      }
+
       await logInfo("Cleanup complete", {
         deletedCount,
         mode: dryRun ? "dry-run" : "actual",
         timestamp: new Date().toISOString(),
+        cacheStats: imageCache.getStats(),
       });
     } catch (error) {
       const genericError: GenericError = {
