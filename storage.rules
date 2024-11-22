@@ -1,9 +1,13 @@
+// storage.rules
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
     match /{allPaths=**} {
-      // Only allow access from our Cloud Functions
-      allow read, write: if false;
+      // Allow public read access to card images
+      allow read: if true;
+      // Only allow write access from Cloud Functions
+      allow write: if request.auth.token.firebase.sign_in_provider == 'google.com'
+                  && request.auth.token.email.matches('.*@firebase.google.com$');
     }
   }
 }

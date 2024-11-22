@@ -11,7 +11,8 @@
     "start": "npm run shell",
     "deploy": "npm run lint:fix && firebase deploy --only functions",
     "logs": "firebase functions:log",
-    "lint:fix:force": "eslint . --ext .js,.ts --fix --config .eslintrc.fix.js"
+    "lint:fix:force": "eslint . --ext .js,.ts --fix --config .eslintrc.fix.js",
+    "test:images": "ts-node src/test/testImageHandler.ts"
   },
   "engines": {
     "node": "18"

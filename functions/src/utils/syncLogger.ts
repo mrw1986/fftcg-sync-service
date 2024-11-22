@@ -1,5 +1,3 @@
-// src/utils/syncLogger.ts
-
 interface CardDetails {
   id: number;
   name: string;
@@ -11,6 +9,8 @@ interface CardDetails {
     price: number;
     groupId: string;
   }>;
+  imageUrl?: string;
+  storageImageUrl?: string;
 }
 
 interface SyncLoggerOptions {
@@ -19,6 +19,15 @@ interface SyncLoggerOptions {
   dryRun?: boolean;
   groupId?: string;
   batchSize?: number;
+}
+
+interface SyncResults {
+  success: number;
+  failures: number;
+  groupId?: string;
+  type: "Manual" | "Scheduled";
+  imagesProcessed?: number;
+  imagesUpdated?: number;
 }
 
 export class SyncLogger {
@@ -64,6 +73,13 @@ export class SyncLogger {
       });
     }
 
+    if (details.imageUrl) {
+      console.log(`- Image URL: ${details.imageUrl}`);
+      if (details.storageImageUrl) {
+        console.log(`- Storage URL: ${details.storageImageUrl}`);
+      }
+    }
+
     console.log(`- Normal Price: $${details.normalPrice?.toFixed(2) || "0.00"}`);
     console.log(`- Foil Price: $${details.foilPrice?.toFixed(2) || "0.00"}`);
     console.log("---");
@@ -86,12 +102,7 @@ export class SyncLogger {
     console.log(message);
   }
 
-  async logSyncResults(results: {
-    success: number;
-    failures: number;
-    groupId?: string;
-    type: "Manual" | "Scheduled";
-  }): Promise<void> {
+  async logSyncResults(results: SyncResults): Promise<void> {
     const duration = (Date.now() - this.startTime) / 1000;
 
     console.log(`\n${results.type} Sync Results:`);
@@ -99,6 +110,8 @@ export class SyncLogger {
     console.log(`- Failures: ${results.failures}`);
     console.log(`- Duration: ${duration.toFixed(1)} seconds`);
     if (results.groupId) console.log(`- Group ID: ${results.groupId}`);
+    if (results.imagesProcessed) console.log(`- Images Processed: ${results.imagesProcessed}`);
+    if (results.imagesUpdated) console.log(`- Images Updated: ${results.imagesUpdated}`);
   }
 
   async finish(): Promise<void> {
