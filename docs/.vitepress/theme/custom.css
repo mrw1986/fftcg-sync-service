@@ -91,33 +91,6 @@
   z-index: 1000;
 }
 
-.user-email {
-  max-width: 200px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--vp-c-text-2);
-}
-
-.logout-button {
-  padding: 4px 12px;
-  border-radius: 4px;
-  background-color: var(--vp-c-danger);
-  color: #ffffff !important;
-  border: none;
-  cursor: pointer;
-  font-size: 0.875rem;
-  font-weight: 500;
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-  height: 32px;
-}
-
-.logout-button:hover {
-  opacity: 0.9;
-}
-
 /* Sidebar Improvements */
 .VPSidebarItem .text {
   white-space: normal !important;
