@@ -7,6 +7,8 @@ ui-debug.log
 FirebaseAuth.vue
 docs/codebase.xml
 docs/.vitepress/theme/FirebaseAuth.vue
+docs/codebase.xml
+codebase.xml
 
 # Build and Dependencies
 functions/lib/
