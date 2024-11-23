@@ -9,3 +9,8 @@ node_modules/
 .vitepress/dist/
 
 codebase.xml
+
+.vitepress/theme/FirebaseAuth.vue
+FirebaseAuth.vue
+.env.local
+.env

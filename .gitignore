@@ -9,6 +9,10 @@ docs/codebase.xml
 docs/.vitepress/theme/FirebaseAuth.vue
 docs/codebase.xml
 codebase.xml
+.env.local
+.env
+docs/.env.local
+docs/.env
 
 # Build and Dependencies
 functions/lib/
