@@ -76,19 +76,54 @@
 .VPDocAsideOutline .content {
   position: relative;
   width: 200px;
+  padding-right: 8px;
 }
 
-/* Navigation Extras (Email/Sign Out) */
-.nav-extra {
-  position: fixed !important;
-  right: 80px !important;
-  top: 0 !important;
-  height: var(--vp-nav-height);
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 0 16px;
-  z-index: 1000;
+/* Right Sidebar Link Wrapping */
+.VPDocAsideOutline .outline-marker {
+  width: 2px;
+  left: 0;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  opacity: 0;
+  background-color: var(--vp-c-brand);
+  transition: opacity 0.25s;
+}
+
+.VPDocAsideOutline .outline-link {
+  position: relative;
+  white-space: normal;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  line-height: 1.4;
+  display: block;
+  padding: 4px 0 4px 16px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--vp-c-text-2);
+  transition: color 0.25s;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  -webkit-box-orient: unset;
+  box-orient: unset;
+  overflow: visible;
+}
+
+.VPDocAsideOutline .outline-link:hover {
+  color: var(--vp-c-text-1);
+}
+
+.VPDocAsideOutline .outline-link:hover .outline-marker {
+  opacity: 0.5;
+}
+
+.VPDocAsideOutline .outline-link.active {
+  color: var(--vp-c-brand);
+}
+
+.VPDocAsideOutline .outline-link.active .outline-marker {
+  opacity: 1;
 }
 
 /* Sidebar Improvements */
@@ -104,53 +139,42 @@
   overflow: hidden;
 }
 
-/* Outline Marker */
-.VPDocAsideOutline .outline-marker {
-  width: 2px;
-  left: 0;
-}
-
-.VPDocAsideOutline .outline-link {
-  padding: 4px 0 4px 12px;
-  line-height: 1.4;
-}
-
 /* Responsive Layout */
 @media (min-width: 960px) {
   :root {
-      --vp-sidebar-width: 320px;
+    --vp-sidebar-width: 320px;
   }
 
   .VPNavBar {
-      padding-right: 32px !important;
+    padding-right: 32px !important;
   }
 
   .VPDocAsideOutline .content {
-      width: 220px;
+    width: 220px;
   }
 }
 
 @media (max-width: 959px) {
   :root {
-      --vp-sidebar-width: 260px;
+    --vp-sidebar-width: 260px;
   }
   
   .VPSidebarItem .text {
-      font-size: 0.9em;
+    font-size: 0.9em;
   }
 
   .VPDocAsideOutline .content {
-      width: 180px;
+    width: 180px;
   }
 }
 
 @media (max-width: 768px) {
   .nav-extra {
-      right: 60px !important;
+    right: 60px !important;
   }
 
   .user-email {
-      max-width: 150px;
+    max-width: 150px;
   }
 }
 
@@ -176,12 +200,12 @@
   .VPNav,
   .VPSidebar,
   .VPDocAside {
-      display: none;
+    display: none;
   }
 
   .VPDoc {
-      padding: 0;
-      margin: 0;
+    padding: 0;
+    margin: 0;
   }
 }
 
