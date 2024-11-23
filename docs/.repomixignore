@@ -6,3 +6,6 @@ service_account_key.json
 repomix.config.json
 node_modules/
 *.local
+.vitepress/cache/deps/
+.vitepress/dist/
+codebase.xml

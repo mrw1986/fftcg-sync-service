@@ -4,3 +4,8 @@ typings/
 # Node.js dependency directory
 node_modules/
 *.local
+
+.vitepress/cache/deps/
+.vitepress/dist/
+
+codebase.xml
