@@ -6,8 +6,8 @@ import {syncPrices} from "./services/priceSync";
 import {runtimeOpts} from "./config/firebase";
 import {SyncOptions} from "./types";
 
-// Scheduled card sync
-exports.scheduledCardSync = onSchedule({
+// Create a namespace for all functions
+export const scheduledCardSync = onSchedule({
   schedule: "0 21 * * *", // Daily at 21:00 UTC
   timeZone: "UTC",
   memory: runtimeOpts.memory,
@@ -17,8 +17,7 @@ exports.scheduledCardSync = onSchedule({
   await syncCards();
 });
 
-// Manual card sync endpoint for testing
-exports.testCardSync = onRequest({
+export const testCardSync = onRequest({
   timeoutSeconds: runtimeOpts.timeoutSeconds,
   memory: runtimeOpts.memory,
   maxInstances: 1,
@@ -33,7 +32,7 @@ exports.testCardSync = onRequest({
   res.json(result);
 });
 
-exports.manualCardSync = onRequest({
+export const manualCardSync = onRequest({
   timeoutSeconds: runtimeOpts.timeoutSeconds,
   memory: runtimeOpts.memory,
   maxInstances: 1,
@@ -42,8 +41,7 @@ exports.manualCardSync = onRequest({
   res.json(result);
 });
 
-// Scheduled price sync
-exports.scheduledPriceSync = onSchedule({
+export const scheduledPriceSync = onSchedule({
   schedule: "30 21 * * *", // Daily at 21:30 UTC
   timeZone: "UTC",
   memory: runtimeOpts.memory,
@@ -53,8 +51,7 @@ exports.scheduledPriceSync = onSchedule({
   await syncPrices();
 });
 
-// Manual price sync endpoint for testing
-exports.testPriceSync = onRequest({
+export const testPriceSync = onRequest({
   timeoutSeconds: runtimeOpts.timeoutSeconds,
   memory: runtimeOpts.memory,
   maxInstances: 1,
@@ -71,8 +68,7 @@ exports.testPriceSync = onRequest({
   res.json(result);
 });
 
-// For manually triggering full price sync
-exports.manualPriceSync = onRequest({
+export const manualPriceSync = onRequest({
   timeoutSeconds: runtimeOpts.timeoutSeconds,
   memory: runtimeOpts.memory,
   maxInstances: 1,
@@ -81,8 +77,7 @@ exports.manualPriceSync = onRequest({
   res.json(result);
 });
 
-// Health check endpoint
-exports.healthCheck = onRequest({
+export const healthCheck = onRequest({
   timeoutSeconds: 10,
   memory: "128MiB",
 }, async (_req: Request, res: Response) => {

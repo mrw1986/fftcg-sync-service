@@ -9,12 +9,13 @@
     "target": "es2017",
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "types": ["node", "express"],
+    "baseUrl": "./src",
+    "lib": ["es2017", "dom"],
     "typeRoots": [
       "./node_modules/@types",
       "./src/types"
-    ],
-    "types": ["node", "express"],
-    "baseUrl": "./src"
+    ]
   },
   "compileOnSave": true,
   "include": [
