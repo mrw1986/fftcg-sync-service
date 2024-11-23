@@ -1,5 +1,18 @@
 {
   "projects": {
     "default": "fftcg-sync-service"
-  }
+  },
+  "targets": {
+    "fftcg-sync-service": {
+      "hosting": {
+        "main": [
+          "fftcg-sync-service"
+        ],
+        "docs": [
+          "fftcg-sync-docs"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }

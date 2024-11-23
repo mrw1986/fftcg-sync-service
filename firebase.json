@@ -20,6 +20,49 @@
       ]
     }
   ],
+  "hosting": [
+    {
+      "target": "main",
+      "public": "public",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "rewrites": [
+        {
+          "source": "**",
+          "function": "app"
+        }
+      ]
+    },
+    {
+      "target": "docs",
+      "public": "docs/.vitepress/dist",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "rewrites": [
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ],
+      "headers": [
+        {
+          "source": "**",
+          "headers": [
+            {
+              "key": "Cache-Control",
+              "value": "max-age=3600"
+            }
+          ]
+        }
+      ]
+    }
+  ],
   "storage": {
     "rules": "storage.rules"
   },
@@ -34,6 +77,10 @@
     },
     "storage": {
       "port": 9199,
+      "host": "127.0.0.1"
+    },
+    "hosting": {
+      "port": 5000,
       "host": "127.0.0.1"
     },
     "ui": {
