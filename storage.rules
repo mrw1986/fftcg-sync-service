@@ -1,13 +1,26 @@
-// storage.rules
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
+    // Helper function to check if user is authorized
+    function isAuthorizedUser() {
+      return request.auth != null && 
+             (request.auth.token.email == 'mrw1986@gmail.com' ||
+              request.auth.token.email == 'preliatorzero@gmail.com' ||
+              request.auth.token.email == 'fftcgcompanion@gmail.com');
+    }
+
+    // Helper function to check if request is from Cloud Functions
+    function isCloudFunction() {
+      return request.auth != null &&
+             request.auth.token.firebase.sign_in_provider == 'google.com' &&
+             request.auth.token.email.matches('.*@firebase.google.com$');
+    }
+
     match /{allPaths=**} {
       // Allow public read access to card images
       allow read: if true;
-      // Only allow write access from Cloud Functions
-      allow write: if request.auth.token.firebase.sign_in_provider == 'google.com'
-                  && request.auth.token.email.matches('.*@firebase.google.com$');
+      // Allow write access from Cloud Functions or authorized users
+      allow write: if isCloudFunction() || isAuthorizedUser();
     }
   }
 }

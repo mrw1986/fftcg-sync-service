@@ -1,14 +1,15 @@
 {
-    "MD033": {
-      "allowed_elements": [
-        "ApiExplorer",
-        "ArchitectureDiagram",
-        "FileTree",
-        "div",
-        "span",
-        "template",
-        "script",
-        "style"
-      ]
-    }
+  "MD033": {
+    "allowed_elements": [
+      "ApiExplorer",
+      "ArchitectureDiagram",
+      "FileTree",
+      "ProjectStructure",
+      "div",
+      "span",
+      "template",
+      "script",
+      "style"
+    ]
   }
+}

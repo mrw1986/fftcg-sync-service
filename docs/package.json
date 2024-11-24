@@ -12,6 +12,7 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "@types/lodash": "^4.17.13",
     "@types/node": "^22.9.1",
     "@vueuse/core": "^10.7.0",
     "firebase": "^10.14.1",
@@ -53,6 +54,7 @@
     "idb": "^7.1.1",
     "is-fullwidth-code-point": "^3.0.0",
     "is-what": "^4.1.16",
+    "lodash": "^4.17.21",
     "lodash.camelcase": "^4.3.0",
     "long": "^5.2.3",
     "magic-string": "^0.30.13",

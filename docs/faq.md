@@ -4,7 +4,8 @@
 
 ### What is FFTCG Sync Service?
 
-A Firebase-based service that synchronizes Final Fantasy Trading Card Game data from TCGplayer, including card information, prices, and images.
+A Firebase-based service that synchronizes Final Fantasy Trading Card Game data
+ from TCGplayer, including card information, prices, and images.
 
 ### What are the system requirements?
 
@@ -42,7 +43,8 @@ await syncPrices({
 
 ### What is dry run mode?
 
-Dry run mode (`dryRun: true`) allows you to test synchronization without making any changes to the database. It's useful for:
+Dry run mode (`dryRun: true`) allows you to test synchronization without making
+ any changes to the database. It's useful for:
 
 - Validating data before actual sync
 - Testing configuration changes

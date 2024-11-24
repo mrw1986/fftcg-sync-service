@@ -80,25 +80,16 @@
 }
 
 /* Right Sidebar Link Wrapping */
-.VPDocAsideOutline .outline-marker {
-  width: 2px;
-  left: 0;
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  opacity: 0;
-  background-color: var(--vp-c-brand);
-  transition: opacity 0.25s;
-}
-
 .VPDocAsideOutline .outline-link {
   position: relative;
   white-space: normal;
   word-wrap: break-word;
   overflow-wrap: break-word;
   line-height: 1.4;
-  display: block;
-  padding: 4px 0 4px 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 4px 0;
   font-size: 13px;
   font-weight: 400;
   color: var(--vp-c-text-2);
@@ -108,6 +99,15 @@
   -webkit-box-orient: unset;
   box-orient: unset;
   overflow: visible;
+}
+
+.VPDocAsideOutline .outline-marker {
+  width: 2px;
+  background-color: var(--vp-c-brand);
+  opacity: 0;
+  transition: opacity 0.25s;
+  height: 1.4em;  /* Match the line-height */
+  align-self: center;
 }
 
 .VPDocAsideOutline .outline-link:hover {

@@ -2,248 +2,302 @@
 
 ## Overview
 
-FFTCG Sync Service is built on Firebase Cloud Functions with a microservices architecture, designed to synchronize card data, prices, and images from TCGplayer while maintaining high performance and reliability.
+FFTCG Sync Service is a Firebase-based application designed to synchronize Final
+Fantasy Trading Card Game data. The system uses Firebase Cloud Functions for
+serverless operations, Firestore for data storage, and Firebase Storage for
+image management.
 
 ## System Diagram
 
-The diagram below shows the key components and their interactions:
+The diagram below illustrates the key components and their interactions.
+Each color represents a different component type:
 
-<ArchitectureDiagram :zoom="1" :showLabels="true" />
+<ArchitectureDiagram :zoom="1.2" :showLabels="true" />
+
+::: tip Component Types
+
+- Blue: Firebase Services (Functions, Firestore, Auth)
+- Green: Storage Systems (Cloud Storage, Cache)
+- Orange: Core Functions (Card Sync, Price Sync, Image Processing)
+- Gray: External Services (TCGPlayer API)
+:::
 
 ## Core Components
 
-### Cloud Functions
+### Firebase Services
 
-```mermaid
-graph TD
-    A[Scheduled Triggers] -->|Daily| B[Sync Functions]
-    C[HTTP Triggers] -->|Manual| B
-    B --> D[Card Sync]
-    B --> E[Price Sync]
-    B --> F[Image Processing]
+#### Cloud Functions
+
+```typescript
+// Runtime Configuration
+export const runtimeOpts = {
+  timeoutSeconds: 540,
+  memory: "1GiB",
+} as const;
+
+// Scheduled Functions
+export const scheduledCardSync = onSchedule({
+  schedule: "0 21 * * *",  // Daily at 21:00 UTC
+  timeZone: "UTC",
+  memory: runtimeOpts.memory,
+  timeoutSeconds: runtimeOpts.timeoutSeconds,
+  retryCount: 3,
+});
+
+export const scheduledPriceSync = onSchedule({
+  schedule: "30 21 * * *", // Daily at 21:30 UTC
+  timeZone: "UTC",
+  memory: runtimeOpts.memory,
+  timeoutSeconds: runtimeOpts.timeoutSeconds,
+  retryCount: 3,
+});
 ```
 
-#### Functions Structure
+#### Firestore Collections
 
-- `scheduledCardSync` - Daily card data synchronization
-- `scheduledPriceSync` - Daily price updates
-- `testCardSync` - Test endpoint for card sync
-- `testPriceSync` - Test endpoint for price sync
-- `manualCardSync` - Manual trigger for full sync
-- `manualPriceSync` - Manual trigger for price sync
-- `healthCheck` - System health monitoring
-
-### Storage Systems
-
-```mermaid
-graph LR
-    A[Cloud Functions] --> B[Firestore]
-    A --> C[Cloud Storage]
-    B --> D[(Cards Collection)]
-    B --> E[(Prices Collection)]
-    B --> F[(Sync Metadata)]
-    C --> G[Card Images]
+```typescript
+export const COLLECTION = {
+  CARDS: "cards",           // Card information
+  PRICES: "prices",         // Price data
+  SYNC_METADATA: "syncMetadata",  // Sync operation logs
+  LOGS: "logs",            // System logs
+  CARD_HASHES: "cardHashes",  // Card data version control
+  PRICE_HASHES: "priceHashes",  // Price data version control
+  IMAGE_METADATA: "imageMetadata",  // Image processing metadata
+};
 ```
 
-#### Database Collections
+#### Storage Configuration
 
-- `cards` - Card information and metadata
-- `prices` - Current and historical price data
-- `syncMetadata` - Sync operation logs and status
-- `logs` - System logs and operations history
-- `cardHashes` - Change detection hashes
-- `priceHashes` - Price update tracking
-- `imageMetadata` - Image processing metadata
-
-### Processing Pipeline
-
-```mermaid
-graph TD
-    A[Data Source] -->|Fetch| B[Raw Data]
-    B -->|Validate| C[Validation Layer]
-    C -->|Process| D[Processing Layer]
-    D -->|Store| E[Storage Layer]
-    D -->|Cache| F[Cache Layer]
+```typescript
+export const STORAGE = {
+  BUCKETS: {
+    CARD_IMAGES: "fftcg-sync-service.firebasestorage.app",
+  },
+  PATHS: {
+    IMAGES: "card-images",
+  },
+};
 ```
 
-#### Pipeline Components
+### Core Services
 
-- Data Fetching
-- Validation & Sanitization
-- Processing & Transformation
-- Storage Management
-- Cache Management
+#### Card Synchronization
 
-## Service Integration
+- Daily automated sync (21:00 UTC)
+- Image processing and optimization
+- Hash-based change detection
+- Batch processing with configurable limits
 
-### External Services
+#### Price Synchronization
 
-```mermaid
-graph LR
-    A[FFTCG Sync Service] -->|Cards Data| B[TCGplayer API]
-    A -->|Prices| B
-    A -->|Images| C[TCGplayer CDN]
-    A --> D[Firebase Services]
+- Daily automated sync (21:30 UTC)
+- Price history tracking
+- Market price monitoring
+- Batch updates with validation
+
+#### Image Processing
+
+- Dual resolution support (200w/400w)
+- Progressive JPEG compression
+- Metadata tracking
+- Cache integration
+
+### Utility Systems
+
+#### Caching System
+
+```typescript
+// Multiple cache layers
+const cacheOptions = {
+  cardCache: {
+    max: 500,
+    ttl: 1000 * 60 * 60  // 1 hour
+  },
+  imageCache: {
+    metadata: {
+      max: 1000,
+      ttl: 1000 * 60 * 60  // 1 hour
+    },
+    buffer: {
+      max: 100,
+      ttl: 1000 * 60 * 5,  // 5 minutes
+      maxSize: 50 * 1024 * 1024  // 50MB
+    }
+  }
+};
 ```
 
-### Internal Services Communication
+#### Batch Processing
 
-```mermaid
-graph TD
-    A[Sync Controller] --> B[Card Service]
-    A --> C[Price Service]
-    A --> D[Image Service]
-    B --> E[Storage Service]
-    C --> E
-    D --> E
+```typescript
+interface BatchOptions {
+  batchSize?: number;  // Default: 500
+  delayBetweenBatches?: number;  // Default: 100ms
+  onBatchComplete?: (stats: BatchProcessingStats) => Promise<void>;
+}
+```
+
+#### Error Handling
+
+```typescript
+interface ErrorReport {
+  timestamp: Date;
+  context: string;
+  error: string;
+  stackTrace?: string;
+  metadata?: Record<string, unknown>;
+  severity: "ERROR" | "WARNING" | "CRITICAL";
+}
 ```
 
 ## Data Flow
 
-### Synchronization Flow
+### Synchronization Process
 
 ```mermaid
 sequenceDiagram
-    participant T as Trigger
-    participant S as Sync Service
-    participant E as External API
-    participant D as Database
-    participant C as Cache
-   
-    T->>S: Initiate Sync
-    S->>C: Check Cache
-    S->>E: Fetch Updates
-    E->>S: Return Data
-    S->>D: Store Updates
-    S->>C: Update Cache
+    participant TCG as TCGPlayer API
+    participant Func as Cloud Functions
+    participant Store as Firestore
+    participant Storage as Cloud Storage
+    participant Cache as Memory Cache
+
+    Func->>TCG: Request card/price data
+    TCG-->>Func: Return data
+    Func->>Cache: Check hash cache
+    Cache-->>Func: Return cache status
+    
+    alt Data Changed
+        Func->>Store: Update card/price data
+        Func->>Storage: Process images
+        Func->>Cache: Update cache
+    else No Change
+        Func->>Store: Update sync metadata
+    end
 ```
 
-## Error Handling
-
-### Recovery System
+### Image Processing Pipeline
 
 ```mermaid
 graph TD
-    A[Error Detection] -->|Classify| B[Error Types]
-    B -->|Transient| C[Retry Logic]
-    B -->|Permanent| D[Failure Handling]
-    C -->|Success| E[Continue Processing]
-    C -->|Max Retries| D
-    D --> F[Error Logging]
-    D --> G[Fallback Mechanism]
+    A[Download Image] -->|Validate| B[Check Cache]
+    B -->|Miss| C[Process Image]
+    C -->|Compress| D[Store Image]
+    D -->|Update| E[Cache Result]
+    B -->|Hit| F[Return Cached]
 ```
 
 ## Performance Optimization
 
-### Caching Strategy
+### Resource Management
 
-```mermaid
-graph LR
-    A[Request] --> B{Cache Check}
-    B -->|Hit| C[Return Cached]
-    B -->|Miss| D[Fetch Fresh]
-    D --> E[Process]
-    E --> F[Update Cache]
-    F --> G[Return Fresh]
+- Memory allocation: 1GB per function
+- Function timeout: 540 seconds
+- Batch size: 500 items
+- Cache TTL: Configurable per type
+
+### Rate Limiting
+
+```typescript
+const rateLimits = {
+  tcgPlayer: {
+    requestsPerMinute: 100,
+    concurrentRequests: 10
+  },
+  storage: {
+    uploadsPerMinute: 50,
+    maxConcurrent: 5
+  }
+};
 ```
 
-## Security Architecture
+## Security
 
-### Access Control
+### Authentication
 
-```mermaid
-graph TD
-    A[Request] --> B{Authentication}
-    B -->|Valid| C{Authorization}
-    B -->|Invalid| D[Reject]
-    C -->|Allowed| E[Process]
-    C -->|Denied| D
+- Firebase Authentication
+- Service account credentials
+- Token-based API access
+
+### Data Protection
+
+```typescript
+// Storage Rules
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /card-images/{groupId}/{imageId} {
+      allow read: if true;
+      allow write: if request.auth != null 
+        && request.auth.token.admin == true;
+    }
+  }
+}
 ```
 
-## Monitoring System
+## Monitoring
 
-### Observability
+### Health Checks
 
-```mermaid
-graph TD
-    A[Operations] --> B[Logging]
-    A --> C[Metrics]
-    A --> D[Traces]
-    B --> E[Analysis]
-    C --> E
-    D --> E
+```typescript
+export const healthCheck = onRequest({
+  timeoutSeconds: 10,
+  memory: "128MiB",
+}, async (_req: Request, res: Response) => {
+  res.json({
+    status: "healthy",
+    timestamp: new Date().toISOString(),
+    version: "1.0.0",
+  });
+});
 ```
 
-## Resource Management
+### Logging System
 
-### Scaling Strategy
+- Structured logging
+- Error tracking
+- Performance monitoring
+- Operation auditing
 
-```mermaid
-graph TD
-    A[Load Monitor] -->|Triggers| B[Scaling Decision]
-    B -->|Up| C[Increase Resources]
-    B -->|Down| D[Decrease Resources]
-    C --> E[Update Configuration]
-    D --> E
-```
+## Scalability
 
-## Configuration Management
+### Function Configuration
 
-### Environment Setup
+- Automatic scaling
+- Memory optimization
+- Concurrent execution limits
+- Regional deployment
 
-```mermaid
-graph LR
-    A[Configuration] --> B[Development]
-    A --> C[Staging]
-    A --> D[Production]
-    B --> E[Firebase Project]
-    C --> E
-    D --> E
-```
+### Resource Limits
 
-## Best Practices
+- Storage quota management
+- Database operation limits
+- Function execution timeouts
+- Cache size restrictions
 
-### Development Workflow
+## Development Setup
 
-```mermaid
-graph LR
-    A[Development] -->|Test| B[Staging]
-    B -->|Validate| C[Production]
-    C -->|Monitor| D[Maintenance]
-    D -->|Update| A
-```
+### Requirements
 
-## System Requirements
+- Node.js 18 or higher
+- Firebase CLI
+- Firebase project with enabled services:
+  - Cloud Functions
+  - Firestore
+  - Cloud Storage
+  - Authentication
 
-### Infrastructure
+### Local Development
 
-- Node.js 18+
-- Firebase Admin SDK
-- Cloud Functions
-- Firestore
-- Cloud Storage
-- Memory: 1GB minimum
-- Timeout: 540s maximum
+```bash
+# Install dependencies
+npm install
 
-### Dependencies
+# Run locally
+npm run serve
 
-- Firebase Functions
-- Firebase Admin
-- Axios for HTTP requests
-- Sharp for image processing
-- LRU Cache for caching
-- TypeScript for development
-
-## Deployment Architecture
-
-### CI/CD Pipeline
-
-```mermaid
-graph LR
-    A[Code Push] -->|Build| B[Tests]
-    B -->|Pass| C[Deploy]
-    C -->|Success| D[Monitor]
-    D -->|Issues| E[Rollback]
+# Deploy
+npm run deploy
 ```
 
 ## Additional Resources

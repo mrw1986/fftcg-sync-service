@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
-import { useDateFormat, useLocalStorage } from '@vueuse/core'
 import { getAuth } from 'firebase/auth'
 
 interface ApiEndpoint {
@@ -65,108 +64,17 @@ interface HistoryEntry {
 
 const endpoints: ApiEndpoint[] = [
   {
-    name: 'List Cards',
+    name: 'Test Card Sync',
     method: 'GET',
-    path: '/api/cards',  // Updated path to include /api prefix
-    description: 'Retrieve a list of all cards with optional filtering',
-    authenticated: false,
-    params: [
-      {
-        name: 'groupId',
-        type: 'string',
-        required: false,
-        description: 'Filter by specific group ID'
-      },
-      {
-        name: 'limit',
-        type: 'number',
-        required: false,
-        description: 'Maximum number of cards to return',
-        default: '50'
-      },
-      {
-        name: 'offset',
-        type: 'number',
-        required: false,
-        description: 'Number of cards to skip',
-        default: '0'
-      }
-    ],
-    responses: [
-      {
-        status: 200,
-        description: 'List of cards retrieved successfully',
-        schema: `{
-  "cards": [
-    {
-      "id": "string",
-      "name": "string",
-      "groupId": "string",
-      "imageUrl": "string",
-      "prices": {
-        "normal": "number",
-        "foil": "number"
-      }
-    }
-  ],
-  "total": "number",
-  "limit": "number",
-  "offset": "number"
-}`
-      }
-    ]
-  },
-  {
-    name: 'Card Details',
-    method: 'GET',
-    path: '/api/cards/{id}',
-    description: 'Get details for a specific card',
-    authenticated: false,
-    tags: ['cards'],
-    params: [
-      {
-        name: 'id',
-        type: 'string',
-        required: true,
-        description: 'Card ID'
-      }
-    ],
-    responses: [
-      {
-        status: 200,
-        description: 'Card details retrieved successfully',
-        schema: `{
-  "id": "string",
-  "name": "string",
-  "groupId": "string",
-  "imageUrl": "string",
-  "prices": {
-    "normal": "number",
-    "foil": "number"
-  },
-  "priceHistory": [
-    {
-      "date": "string",
-      "normal": "number",
-      "foil": "number"
-    }
-  ]
-}`
-      }
-    ]
-  },
-  {
-    name: 'Card Sync',
-    method: 'GET',
-    path: '/api/testCardSync',
-    description: 'Trigger a card synchronization',
+    path: '/testCardSync',
+    description: 'Test card synchronization with optional parameters',
     authenticated: true,
     params: [
       {
         name: 'dryRun',
         type: 'boolean',
         required: false,
-        description: 'Run sync without making changes',
+        description: 'Run without making changes',
         default: 'true'
       },
       {
@@ -175,74 +83,150 @@ const endpoints: ApiEndpoint[] = [
         required: false,
         description: 'Maximum number of cards to process',
         default: '5'
+      },
+      {
+        name: 'groupId',
+        type: 'string',
+        required: false,
+        description: 'Process specific group only'
       }
     ],
     responses: [
       {
         status: 200,
-        description: 'Sync initiated successfully',
+        description: 'Sync operation details',
         schema: `{
-  "jobId": "string",
-  "status": "string",
-  "message": "string"
+  "lastSync": "string",
+  "status": "in_progress" | "success" | "failed" | "completed_with_errors",
+  "cardCount": "number",
+  "type": "manual" | "scheduled",
+  "groupsProcessed": "number",
+  "groupsUpdated": "number",
+  "errors": "string[]",
+  "duration": "number",
+  "imagesProcessed": "number",
+  "imagesUpdated": "number"
 }`
       }
     ]
   },
   {
-    name: 'Price Sync',
+    name: 'Manual Card Sync',
     method: 'GET',
-    path: '/api/testPriceSync',
-    description: 'Trigger a price synchronization',
+    path: '/manualCardSync',
+    description: 'Trigger a full card synchronization',
+    authenticated: true,
+    responses: [
+      {
+        status: 200,
+        description: 'Sync operation details',
+        schema: `{
+  "lastSync": "string",
+  "status": "string",
+  "cardCount": "number",
+  "type": "scheduled",
+  "groupsProcessed": "number",
+  "groupsUpdated": "number",
+  "errors": "string[]",
+  "duration": "number"
+}`
+      }
+    ]
+  },
+  {
+    name: 'Test Price Sync',
+    method: 'GET',
+    path: '/testPriceSync',
+    description: 'Test price synchronization with optional parameters',
     authenticated: true,
     params: [
       {
         name: 'dryRun',
         type: 'boolean',
         required: false,
-        description: 'Run sync without making changes',
+        description: 'Run without making changes',
+        default: 'true'
+      },
+      {
+        name: 'limit',
+        type: 'number',
+        required: false,
+        description: 'Maximum number of prices to process'
+      },
+      {
+        name: 'groupId',
+        type: 'string',
+        required: false,
+        description: 'Process specific group only'
+      },
+      {
+        name: 'productId',
+        type: 'number',
+        required: false,
+        description: 'Process specific product only'
+      },
+      {
+        name: 'showAll',
+        type: 'boolean',
+        required: false,
+        description: 'Show all prices, including unchanged',
         default: 'false'
       }
     ],
     responses: [
       {
         status: 200,
-        description: 'Price sync initiated successfully',
+        description: 'Price sync operation details',
         schema: `{
-  "jobId": "string",
+  "lastSync": "string",
   "status": "string",
-  "message": "string"
+  "cardCount": "number",
+  "type": "manual",
+  "groupsProcessed": "number",
+  "groupsUpdated": "number",
+  "errors": "string[]",
+  "duration": "number"
 }`
       }
     ]
   },
   {
-    name: 'Sync Status',
+    name: 'Manual Price Sync',
     method: 'GET',
-    path: '/api/syncStatus/{jobId}',
-    description: 'Check the status of a sync operation',
+    path: '/manualPriceSync',
+    description: 'Trigger a full price synchronization',
     authenticated: true,
-    params: [
-      {
-        name: 'jobId',
-        type: 'string',
-        required: true,
-        description: 'Sync job ID'
-      }
-    ],
     responses: [
       {
         status: 200,
-        description: 'Sync status retrieved successfully',
+        description: 'Price sync operation details',
         schema: `{
-  "jobId": "string",
+  "lastSync": "string",
   "status": "string",
-  "progress": "number",
-  "details": {
-    "processed": "number",
-    "total": "number",
-    "errors": "number"
-  }
+  "cardCount": "number",
+  "type": "scheduled",
+  "groupsProcessed": "number",
+  "groupsUpdated": "number",
+  "errors": "string[]",
+  "duration": "number"
+}`
+      }
+    ]
+  },
+  {
+    name: 'Health Check',
+    method: 'GET',
+    path: '/healthCheck',
+    description: 'Check system health status',
+    authenticated: false,
+    responses: [
+      {
+        status: 200,
+        description: 'System health information',
+        schema: `{
+  "status": "healthy",
+  "timestamp": "string",
+  "version": "string"
 }`
       }
     ]
@@ -425,12 +409,6 @@ async function tryEndpoint(endpoint: ApiEndpoint) {
       })
     }
 
-    // Add default parameters for sync endpoints
-    if (endpoint.path.includes('Sync')) {
-      url.searchParams.set('dryRun', 'true')
-      url.searchParams.set('limit', '5')
-    }
-
     const headers = {
       ...getEnabledHeaders(),
       'Content-Type': 'application/json',
@@ -545,21 +523,6 @@ watch(selectedEndpoint, (newEndpoint) => {
           class="search-input"
         />
         <div class="filter-options">
-          <!--
-          <div class="tags">
-            <button
-              v-for="tag in ['cards', 'sync']"
-              :key="tag"
-              class="tag-button"
-              :class="{ active: selectedTags.includes(tag) }"
-              @click="selectedTags = selectedTags.includes(tag) 
-                ? selectedTags.filter(t => t !== tag)
-                : [...selectedTags, tag]"
-            >
-              {{ tag }}
-            </button>
-          </div>
-        -->
           <label class="auth-toggle">
             <input
               type="checkbox"
@@ -573,20 +536,20 @@ watch(selectedEndpoint, (newEndpoint) => {
       <!-- Endpoint List -->
       <div class="endpoint-list">
         <div
-    v-for="endpoint in filteredEndpoints"
-    :key="endpoint.path"
-    class="endpoint-item"
-    :class="{ 
-      active: endpoint === selectedEndpoint,
-      authenticated: endpoint.authenticated
-    }"
-    @click="selectedEndpoint = endpoint"
-  >
-    <div class="endpoint-item-header">
-      <span class="name">{{ endpoint.name }}</span>
-    </div>
-    <div class="endpoint-path">{{ endpoint.path }}</div>
-  </div>
+          v-for="endpoint in filteredEndpoints"
+          :key="endpoint.path"
+          class="endpoint-item"
+          :class="{ 
+            active: endpoint === selectedEndpoint,
+            authenticated: endpoint.authenticated
+          }"
+          @click="selectedEndpoint = endpoint"
+        >
+          <div class="endpoint-item-header">
+            <span class="name">{{ endpoint.name }}</span>
+          </div>
+          <div class="endpoint-path">{{ endpoint.path }}</div>
+        </div>
       </div>
 
       <!-- History Section -->
@@ -651,17 +614,6 @@ watch(selectedEndpoint, (newEndpoint) => {
 
       <div class="description">
         {{ selectedEndpoint.description }}
-      </div>
-
-      <!-- Tags -->
-      <div v-if="selectedEndpoint.tags?.length" class="endpoint-tags">
-        <span 
-          v-for="tag in selectedEndpoint.tags"
-          :key="tag"
-          class="tag"
-        >
-          {{ tag }}
-        </span>
       </div>
 
       <!-- Headers Section -->

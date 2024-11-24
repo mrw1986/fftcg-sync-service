@@ -2,7 +2,7 @@
 <file_structure>
     <metadata>
         <root_directory>C:\VSCode\fftcg-sync-service</root_directory>
-        <generated_date>2024-11-21 21:09:05</generated_date>
+        <generated_date>2024-11-23 21:55:40</generated_date>
     </metadata>
     <directories>
         <functions>
@@ -38,7 +38,8 @@
             </files>
         </functions>
     </directories>
-    <root_files>        <file>.env.local</file>
+    <root_files>        <file>.env</file>
+        <file>.env.local</file>
         <file>.eslintrc.fix.js</file>
         <file>.eslintrc.js</file>
         <file>.firebaserc</file>

@@ -13,6 +13,7 @@ codebase.xml
 .env
 docs/.env.local
 docs/.env
+functions-backup/
 
 # Build and Dependencies
 functions/lib/

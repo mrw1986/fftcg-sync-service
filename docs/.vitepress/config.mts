@@ -19,12 +19,20 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: 'Home', link: '/' },
+      { text: 'Architecture', link: '/architecture' },
       { text: 'API', link: '/api/' },
-      { text: 'Services', link: '/services/card-sync' }, // Changed from '/services/'
-      { text: 'Utils', link: '/utils/batch' }  // Changed from '/utils/'
+      { text: 'Services', link: '/services/card-sync' },
+      { text: 'Utils', link: '/utils/batch' }
     ],
 
     sidebar: [
+      {
+        text: 'Getting Started',
+        items: [
+          { text: 'Introduction', link: '/introduction' },
+          { text: 'Architecture', link: '/architecture' }
+        ]
+      },
       {
         text: 'Setup',
         items: [
