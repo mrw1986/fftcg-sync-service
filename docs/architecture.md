@@ -3,14 +3,14 @@
 ## Overview
 
 FFTCG Sync Service is a Firebase-based application designed to synchronize Final
-Fantasy Trading Card Game data. The system uses Firebase Cloud Functions for
-serverless operations, Firestore for data storage, and Firebase Storage for
-image management.
+ Fantasy Trading Card Game data. The system uses Firebase Cloud Functions for
+  serverless operations, Firestore for data storage, and Firebase Storage for
+   image management. For setup details, see our [Installation Guide](/setup/installation).
 
 ## System Diagram
 
-The diagram below illustrates the key components and their interactions.
-Each color represents a different component type:
+The diagram below illustrates the key components and their interactions. Each
+ color represents a different component type:
 
 <ArchitectureDiagram :zoom="1.2" :showLabels="true" />
 
@@ -25,6 +25,8 @@ Each color represents a different component type:
 ## Core Components
 
 ### Firebase Services
+
+For detailed configuration, see [Firebase Configuration Guide](/setup/firebase-config).
 
 #### Cloud Functions
 
@@ -55,6 +57,8 @@ export const scheduledPriceSync = onSchedule({
 
 #### Firestore Collections
 
+For collection usage details, see [API Documentation](/api/).
+
 ```typescript
 export const COLLECTION = {
   CARDS: "cards",           // Card information
@@ -68,6 +72,8 @@ export const COLLECTION = {
 ```
 
 #### Storage Configuration
+
+For storage implementation details, see [Image Handler](/utils/image-handler).
 
 ```typescript
 export const STORAGE = {
@@ -84,6 +90,8 @@ export const STORAGE = {
 
 #### Card Synchronization
 
+For detailed implementation, see [Card Sync Service](/services/card-sync).
+
 - Daily automated sync (21:00 UTC)
 - Image processing and optimization
 - Hash-based change detection
@@ -91,12 +99,17 @@ export const STORAGE = {
 
 #### Price Synchronization
 
+For detailed implementation, see [Price Sync Service](/services/price-sync).
+
 - Daily automated sync (21:30 UTC)
 - Price history tracking
 - Market price monitoring
 - Batch updates with validation
 
 #### Image Processing
+
+For detailed implementation, see [Image Handler](/utils/image-handler) and
+ [Image Compressor](/utils/image-compressor).
 
 - Dual resolution support (200w/400w)
 - Progressive JPEG compression
@@ -106,6 +119,8 @@ export const STORAGE = {
 ### Utility Systems
 
 #### Caching System
+
+For implementation details, see [Cache System](/utils/cache).
 
 ```typescript
 // Multiple cache layers
@@ -130,6 +145,8 @@ const cacheOptions = {
 
 #### Batch Processing
 
+For implementation details, see [Batch Processing](/utils/batch).
+
 ```typescript
 interface BatchOptions {
   batchSize?: number;  // Default: 500
@@ -139,6 +156,8 @@ interface BatchOptions {
 ```
 
 #### Error Handling
+
+For detailed implementation, see [Error Handling](/utils/error-handling).
 
 ```typescript
 interface ErrorReport {
@@ -190,6 +209,8 @@ graph TD
 
 ## Performance Optimization
 
+For detailed performance guidelines, see [Performance Guide](/performance).
+
 ### Resource Management
 
 - Memory allocation: 1GB per function
@@ -198,6 +219,8 @@ graph TD
 - Cache TTL: Configurable per type
 
 ### Rate Limiting
+
+For rate limiting implementation, see [Request Handler](/utils/request).
 
 ```typescript
 const rateLimits = {
@@ -213,6 +236,8 @@ const rateLimits = {
 ```
 
 ## Security
+
+For detailed security implementation, see [Security Guidelines](/security).
 
 ### Authentication
 
@@ -237,6 +262,8 @@ service firebase.storage {
 
 ## Monitoring
 
+For detailed monitoring setup, see [Monitoring Guide](/monitoring/).
+
 ### Health Checks
 
 ```typescript
@@ -254,51 +281,12 @@ export const healthCheck = onRequest({
 
 ### Logging System
 
+For logging implementation details, see [Logging System](/utils/logging).
+
 - Structured logging
 - Error tracking
 - Performance monitoring
 - Operation auditing
-
-## Scalability
-
-### Function Configuration
-
-- Automatic scaling
-- Memory optimization
-- Concurrent execution limits
-- Regional deployment
-
-### Resource Limits
-
-- Storage quota management
-- Database operation limits
-- Function execution timeouts
-- Cache size restrictions
-
-## Development Setup
-
-### Requirements
-
-- Node.js 18 or higher
-- Firebase CLI
-- Firebase project with enabled services:
-  - Cloud Functions
-  - Firestore
-  - Cloud Storage
-  - Authentication
-
-### Local Development
-
-```bash
-# Install dependencies
-npm install
-
-# Run locally
-npm run serve
-
-# Deploy
-npm run deploy
-```
 
 ## Additional Resources
 

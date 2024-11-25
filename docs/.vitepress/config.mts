@@ -1,3 +1,5 @@
+// .vitepress/config.mts
+
 import { defineConfig } from 'vitepress/dist/node/index.js'
 
 export default defineConfig({
@@ -19,10 +21,10 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: 'Home', link: '/' },
+      { text: 'Getting Started', link: '/introduction' },
       { text: 'Architecture', link: '/architecture' },
       { text: 'API', link: '/api/' },
-      { text: 'Services', link: '/services/card-sync' },
-      { text: 'Utils', link: '/utils/batch' }
+      { text: 'Services', link: '/services/card-sync' }
     ],
 
     sidebar: [
@@ -30,20 +32,24 @@ export default defineConfig({
         text: 'Getting Started',
         items: [
           { text: 'Introduction', link: '/introduction' },
-          { text: 'Architecture', link: '/architecture' }
+          { text: 'Architecture', link: '/architecture' },
+          { text: 'Performance', link: '/performance' },
+          { text: 'Security', link: '/security' }
         ]
       },
       {
         text: 'Setup',
         items: [
           { text: 'Installation', link: '/setup/installation' },
-          { text: 'Configuration', link: '/setup/configuration' }
+          { text: 'Configuration', link: '/setup/configuration' },
+          { text: 'Firebase Config', link: '/setup/firebase-config' }
         ]
       },
       {
         text: 'API',
         items: [
-          { text: 'Overview', link: '/api/' }
+          { text: 'Overview', link: '/api/' },
+          { text: 'Types Reference', link: '/reference/types' }
         ]
       },
       {
@@ -66,6 +72,40 @@ export default defineConfig({
           { text: 'Progress', link: '/utils/progress' },
           { text: 'Request', link: '/utils/request' },
           { text: 'Sync Logger', link: '/utils/sync-logger' }
+        ]
+      },
+      {
+        text: 'Deployment',
+        items: [
+          { text: 'Deployment Guide', link: '/deployment/' }
+        ]
+      },
+      {
+        text: 'Testing',
+        items: [
+          { text: 'Overview', link: '/testing/' },
+          { text: 'Endpoints', link: '/testing/endpoints' },
+          { text: 'Images', link: '/testing/images' },
+          { text: 'Validation', link: '/testing/validation' }
+        ]
+      },
+      {
+        text: 'Monitoring',
+        items: [
+          { text: 'System Monitoring', link: '/monitoring/' }
+        ]
+      },
+      {
+        text: 'Troubleshooting',
+        items: [
+          { text: 'Overview', link: '/troubleshooting' },
+          { text: 'Common Issues', link: '/troubleshooting/common-issues' }
+        ]
+      },
+      {
+        text: 'Integrations',
+        items: [
+          { text: 'TCGplayer', link: '/integrations/tcgplayer' }
         ]
       }
     ],

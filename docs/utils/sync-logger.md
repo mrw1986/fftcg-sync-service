@@ -2,16 +2,9 @@
 
 ## Overview
 
-The Sync Logger (`syncLogger.ts`) provides specialized logging functionality for synchronization operations. It offers detailed tracking of card and price synchronization processes, including group details, card information, and sync results.
-
-## Features
-
-- Detailed sync operation logging
-- Card and price details tracking
-- Group processing information
-- Progress monitoring
-- Results summarization
-- Support for dry run operations
+The Sync Logger (`syncLogger.ts`) provides specialized logging functionality for
+ synchronization operations. It handles detailed logging of card and price
+ synchronization processes, including group details, card information, and sync results.
 
 ## Core Interfaces
 
@@ -59,70 +52,36 @@ interface SyncResults {
 }
 ```
 
-## Usage Examples
+## Core Implementation
 
-### Basic Usage
-
-```typescript
-const logger = new SyncLogger({
-  type: "manual",
-  dryRun: true,
-  limit: 10,
-  batchSize: 25
-});
-
-await logger.start();
-await logger.logGroupFound(totalGroups);
-await logger.logCardDetails(cardDetails);
-await logger.finish();
-```
-
-### Sync Process Logging
+### SyncLogger Class
 
 ```typescript
-// Initialize logger
-const logger = new SyncLogger({
-  type: options.dryRun ? "manual" : "scheduled",
-  limit: options.limit,
-  dryRun: options.dryRun,
-  groupId: options.groupId
-});
+export class SyncLogger {
+  private startTime: number;
+  private cards: CardDetails[] = [];
+  private groups: Map<string, { 
+    products: number; 
+    prices: number 
+  }> = new Map();
 
-// Start logging
-await logger.start();
-
-// Log group information
-await logger.logGroupDetails(groupId, products.length, prices.length);
-
-// Log individual card details
-await logger.logCardDetails({
-  id: product.productId,
-  name: product.name,
-  groupId: product.groupId.toString(),
-  normalPrice: normalPrice,
-  foilPrice: foilPrice,
-  rawPrices: pricesArray
-});
-
-// Log final results
-await logger.logSyncResults({
-  success: processedCount,
-  failures: errorCount,
-  type: "Manual",
-  imagesProcessed: 100,
-  imagesUpdated: 25
-});
+  constructor(private options: SyncLoggerOptions) {
+    this.startTime = Date.now();
+  }
+}
 ```
 
-## Core Methods
+## Logging Methods
 
-### Start Logging
+### Initialization
 
 ```typescript
 async start(): Promise<void> {
   console.log("\nStarting sync test...");
   console.log(`Type: ${this.options.type}`);
-  if (this.options.limit) console.log(`Limit: ${this.options.limit} cards`);
+  if (this.options.limit) {
+    console.log(`Limit: ${this.options.limit} cards`);
+  }
   console.log(`Dry Run: ${this.options.dryRun ? "true" : "false"}`);
   console.log("\n=== Fetching Raw Data ===");
 }
@@ -165,30 +124,89 @@ async logCardDetails(details: CardDetails): Promise<void> {
       );
     });
   }
+
+  if (details.imageUrl) {
+    console.log(`- Image URL: ${details.imageUrl}`);
+    if (details.storageImageUrl) {
+      console.log(`- Storage URL: ${details.storageImageUrl}`);
+    }
+  }
 }
+```
+
+### Sync Results Logging
+
+```typescript
+async logSyncResults(results: SyncResults): Promise<void> {
+  const duration = (Date.now() - this.startTime) / 1000;
+
+  console.log(`\n${results.type} Sync Results:`);
+  console.log(`- Success: ${results.success}`);
+  console.log(`- Failures: ${results.failures}`);
+  console.log(`- Duration: ${duration.toFixed(1)} seconds`);
+  
+  if (results.groupId) {
+    console.log(`- Group ID: ${results.groupId}`);
+  }
+  if (results.imagesProcessed) {
+    console.log(`- Images Processed: ${results.imagesProcessed}`);
+  }
+  if (results.imagesUpdated) {
+    console.log(`- Images Updated: ${results.imagesUpdated}`);
+  }
+}
+```
+
+## Usage Examples
+
+### Manual Sync Logging
+
+```typescript
+const logger = new SyncLogger({
+  type: "manual",
+  dryRun: true,
+  limit: 5,
+  batchSize: 25
+});
+
+await logger.start();
+await logger.logGroupFound(totalGroups);
+await logger.logCardDetails(cardDetails);
+await logger.logSyncResults({
+  success: 5,
+  failures: 0,
+  type: "Manual",
+  imagesProcessed: 5,
+  imagesUpdated: 2
+});
+await logger.finish();
+```
+
+### Scheduled Sync Logging
+
+```typescript
+const logger = new SyncLogger({
+  type: "scheduled",
+  dryRun: false
+});
+
+await logger.start();
+await logger.logScheduledSyncStart();
+// Sync operations...
+await logger.finish();
 ```
 
 ## Output Examples
 
-### Sync Start
-
-```text
-Starting sync test...
-Type: manual
-Limit: 10 cards
-Dry Run: true
-
-=== Fetching Raw Data ===
-```
-
 ### Group Information
 
 ```text
+=== Fetching Raw Data ===
 Found 15 groups
 Group 23783 has 100 products and 200 prices
 ```
 
-### Card Details Output Example
+### Card Details Output
 
 ```text
 === Card Details ===
@@ -202,70 +220,75 @@ Card: Cloud (23783)
 - Storage URL: gs://bucket/image.jpg
 ```
 
+### Sync Results Output
+
+```text
+Manual Sync Results:
+- Success: 95
+- Failures: 5
+- Duration: 120.5 seconds
+- Group ID: 23783
+- Images Processed: 100
+- Images Updated: 25
+```
+
+## Error Handling
+
+### Error Logging
+
+```typescript
+async logError(
+  error: Error,
+  context: string
+): Promise<void> {
+  console.error(`Error in ${context}:`, error.message);
+  if (this.options.verbose) {
+    console.error("Stack trace:", error.stack);
+  }
+}
+```
+
+### Progress Errors
+
+```typescript
+async logProgressError(
+  current: number,
+  total: number,
+  error: Error
+): Promise<void> {
+  console.error(
+    `Error at ${current}/${total} (${((current/total)*100).toFixed(1)}%):`,
+    error.message
+  );
+}
+```
+
 ## Best Practices
 
-1. **Consistent Usage**:
+### Log Organization
 
-   ```typescript
-   const logger = new SyncLogger(options);
-   await logger.start();
-   try {
-     // Sync operations
-   } finally {
-     await logger.finish();
-   }
-   ```
+- Group related logs
+- Use consistent formatting
+- Include timestamps
+- Maintain context
 
-2. **Detailed Logging**:
+### Performance
 
-   ```typescript
-   await logger.logCardDetails({
-     id: product.id,
-     name: product.name,
-     groupId: product.groupId,
-     normalPrice: product.prices.normal,
-     foilPrice: product.prices.foil,
-     rawPrices: product.allPrices,
-     imageUrl: product.imageUrl,
-     storageImageUrl: product.storageUrl
-   });
-   ```
+- Buffer large outputs
+- Limit verbose logging
+- Use appropriate log levels
+- Implement log rotation
 
-3. **Error Tracking**:
+### Error Handling Guidelines
 
-   ```typescript
-   try {
-     await processGroup(group);
-   } catch (error) {
-     await logger.logSyncResults({
-       success: processed,
-       failures: failures + 1,
-       type: "Manual"
-     });
-   }
-   ```
+- Log all errors
+- Include context
+- Track error patterns
+- Maintain error history
 
-## Related Components
+## Related Documentation
 
-- [Logger](./logging)
-- [Error Handling](./error-handling)
-- [Progress Tracking](./progress)
-
-## Troubleshooting
-
-### Common Issues
-
-1. Missing Information:
-   - Verify all required fields are provided
-   - Check logging options configuration
-   - Ensure proper error handling
-
-2. Performance Impact:
-   - Use appropriate batch sizes
-   - Monitor memory usage
-   - Implement log rotation
-
-3. Output Formatting:
-   - Verify console output formatting
-   - Check price formatting
-   - Validate date/time formats
+- [Logging System](/utils/logging)
+- [Error Handling](/utils/error-handling)
+- [Progress Tracking](/utils/progress)
+- [Card Sync Service](/services/card-sync)

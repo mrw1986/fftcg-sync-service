@@ -9,6 +9,7 @@ node_modules/
 .vitepress/dist/
 
 codebase.xml
+docs_codebase.xml
 
 .vitepress/theme/FirebaseAuth.vue
 FirebaseAuth.vue

@@ -2,287 +2,260 @@
 
 ## Overview
 
-The Progress Tracker (`progress.ts`) provides real-time monitoring and reporting of long-running operations, particularly during synchronization processes. It handles progress calculation, ETA estimation, and status updates.
+The Progress Tracking utility (`progress.ts`) provides real-time monitoring and
+ reporting of long-running operations. It offers accurate progress calculations,
+  ETA estimations, and detailed statistics for batch operations.
 
-## Core Features
+## Core Components
 
-- Real-time progress tracking
-- ETA calculations
-- Operation statistics
-- Progress bar visualization
-- Step-by-step monitoring
-- Batch progress tracking
-
-## Main Interfaces
-
-### Progress Options
+### Progress Statistics Interface
 
 ```typescript
-interface ProgressOptions {
-  total: number;
-  title?: string;
-  showBar?: boolean;
-  showEta?: boolean;
-  batchSize?: number;
-}
-```
-
-### Progress State
-
-```typescript
-interface ProgressState {
+export interface ProgressStats {
   current: number;
   total: number;
-  startTime: Date;
-  lastUpdateTime: Date;
-  completed: boolean;
-  eta?: Date;
-  rate?: number;
+  percent: number;
+  elapsed: number;
+  rate: number;
+  remaining: number;
+  eta: number;
 }
 ```
 
-## Implementation Examples
-
-### Basic Usage
+### Enhanced Progress Tracker Class
 
 ```typescript
-const progress = new ProgressTracker({
-  total: totalItems,
-  title: "Processing Cards",
-  showBar: true,
-  showEta: true
-});
+export class EnhancedProgressTracker {
+  private startTime: number;
+  private current: number;
+  private estimates: number[] = [];
+  private lastUpdate: number;
+  private updateInterval: number;
 
-progress.start();
-
-for (const item of items) {
-  await processItem(item);
-  progress.increment();
+  constructor(
+    private total: number,
+    private description: string,
+    options: { updateInterval?: number } = {}
+  ) {
+    this.startTime = Date.now();
+    this.current = 0;
+    this.lastUpdate = Date.now();
+    this.updateInterval = options.updateInterval || 1000; // Default 1 second
+  }
 }
-
-progress.finish();
 ```
 
-### Batch Processing
+## Core Methods
+
+### Statistics Calculation
 
 ```typescript
-const tracker = new ProgressTracker({
-  total: totalGroups,
-  title: "Syncing Groups",
-  batchSize: 25
-});
+private calculateStats(): ProgressStats {
+  const now = Date.now();
+  const elapsed = (now - this.startTime) / 1000;
+  const percent = (this.current / this.total) * 100;
+  const rate = this.current / elapsed;
+  const remaining = this.total - this.current;
+  const eta = remaining / rate;
 
-tracker.start();
+  return {
+    current: this.current,
+    total: this.total,
+    percent,
+    elapsed,
+    rate,
+    remaining,
+    eta,
+  };
+}
+```
+
+### Progress Update
+
+```typescript
+update(amount = 1): void {
+  const now = Date.now();
+  this.current += amount;
+
+  // Only update log if enough time has passed
+  if (now - this.lastUpdate >= this.updateInterval) {
+    const stats = this.calculateStats();
+    this.estimates.push(stats.eta);
+
+    // Keep only last 10 estimates for averaging
+    if (this.estimates.length > 10) {
+      this.estimates.shift();
+    }
+
+    const avgEta = this.estimates.reduce((a, b) => a + b, 0) / 
+      this.estimates.length;
+
+    logInfo(
+      `${this.description}: ${stats.current}/${stats.total} ` +
+      `(${stats.percent.toFixed(1)}%) - ${stats.remaining} remaining - ` +
+      `ETA: ${avgEta.toFixed(1)}s - Rate: ${stats.rate.toFixed(1)}/s`
+    );
+
+    this.lastUpdate = now;
+  }
+}
+```
+
+## Usage Examples
+
+### Basic Progress Tracking
+
+```typescript
+const tracker = new EnhancedProgressTracker(100, "Processing Items");
+
+for (let i = 0; i < 100; i++) {
+  await processItem(i);
+  tracker.update();
+}
+```
+
+### Batch Processing Progress
+
+```typescript
+const tracker = new EnhancedProgressTracker(
+  totalItems,
+  "Processing Batches",
+  { updateInterval: 2000 } // Update every 2 seconds
+);
 
 for (const batch of batches) {
   await processBatch(batch);
-  tracker.incrementBatch(batch.length);
-}
-
-tracker.finish();
-```
-
-## Progress Visualization
-
-### Progress Bar
-
-```typescript
-private renderBar(
-  percentage: number,
-  width: number = 30
-): string {
-  const filled = Math.floor(width * (percentage / 100));
-  const empty = width - filled;
- 
-  return '[' + 
-    '='.repeat(filled) + 
-    ' '.repeat(empty) + 
-    ']';
+  tracker.update(batch.length);
 }
 ```
 
-### Status Line
+### Custom Progress Monitoring
 
 ```typescript
-private renderStatus(): string {
-  const percentage = this.getPercentage();
-  const current = this.state.current;
-  const total = this.state.total;
- 
-  return `${this.options.title || 'Progress'}: ` +
-    `${current}/${total} ` +
-    `(${percentage.toFixed(1)}%)`;
-}
+const tracker = new EnhancedProgressTracker(totalCards, "Syncing Cards");
+
+// Get current progress
+const progress = tracker.getProgress();
+console.log(`Current progress: ${progress.percent.toFixed(1)}%`);
+console.log(`ETA: ${progress.eta.toFixed(1)} seconds`);
 ```
 
-## Time Calculations
+## Progress Output Examples
 
-### ETA Estimation
+### Standard Progress Output
 
-```typescript
-private calculateEta(): Date | undefined {
-  if (this.state.current === 0) return undefined;
- 
-  const elapsed = Date.now() - this.state.startTime.getTime();
-  const rate = this.state.current / (elapsed / 1000);
-  const remaining = this.state.total - this.state.current;
- 
-  return new Date(
-    Date.now() + (remaining / rate) * 1000
-  );
-}
+```text
+Processing Items: 45/100 (45.0%) - 55 remaining - ETA: 62.3s - Rate: 0.9/s
 ```
 
-### Processing Rate
+### Batch Progress Output
 
-```typescript
-private calculateRate(): number {
-  const elapsed = (
-    this.state.lastUpdateTime.getTime() - 
-    this.state.startTime.getTime()
-  ) / 1000;
- 
-  return this.state.current / elapsed;
-}
+```text
+Processing Batches: 250/1000 (25.0%) - 750 remaining - ETA: 300.5s - Rate: 2.5/s
 ```
 
-## Event Handling
+## Advanced Features
 
-### Progress Updates
+### ETA Calculation
 
-```typescript
-onProgress(callback: ProgressCallback): void {
-  this.progressCallbacks.push(callback);
-}
+- Rolling average of last 10 estimates
+- Adaptive rate calculation
+- Dynamic update intervals
+- Accurate remaining time prediction
 
-private emitProgress(): void {
-  const progress = {
-    current: this.state.current,
-    total: this.state.total,
-    percentage: this.getPercentage(),
-    eta: this.state.eta,
-    rate: this.state.rate
-  };
- 
-  this.progressCallbacks.forEach(callback => callback(progress));
-}
-```
+### Performance Monitoring
 
-### Completion Events
+- Processing rate tracking
+- Resource usage monitoring
+- Time elapsed tracking
+- Completion percentage
 
-```typescript
-onComplete(callback: CompleteCallback): void {
-  this.completeCallbacks.push(callback);
-}
+### Progress Formatting
 
-private emitComplete(): void {
-  const summary = {
-    total: this.state.total,
-    duration: this.getDuration(),
-    averageRate: this.calculateAverageRate()
-  };
- 
-  this.completeCallbacks.forEach(callback => callback(summary));
-}
-```
+- Percentage calculation
+- Rate calculation
+- Time formatting
+- Progress bar rendering
 
-## Usage Patterns
+## Best Practices
 
-### With Async Operations
+### Update Frequency
 
 ```typescript
-const processWithProgress = async (
-  items: any[],
-  processor: (item: any) => Promise<void>
-): Promise<void> => {
-  const progress = new ProgressTracker({
-    total: items.length,
-    title: "Processing Items",
-    showBar: true
-  });
- 
-  progress.start();
- 
-  for (const item of items) {
-    await processor(item);
-    progress.increment();
-    await new Promise(resolve => setTimeout(resolve, 10));
-  }
- 
-  progress.finish();
+// Recommended update interval based on total items
+const getOptimalInterval = (total: number): number => {
+  if (total < 100) return 500;    // 0.5s for small operations
+  if (total < 1000) return 1000;  // 1s for medium operations
+  return 2000;                    // 2s for large operations
 };
+
+const tracker = new EnhancedProgressTracker(items.length, "Processing", {
+  updateInterval: getOptimalInterval(items.length)
+});
 ```
+
+### Memory Management
+
+```typescript
+// Clear old estimates periodically
+if (this.estimates.length > 10) {
+  this.estimates = this.estimates.slice(-10);
+}
+```
+
+### Error Handling
+
+```typescript
+update(amount = 1): void {
+  try {
+    this.current += amount;
+    if (this.current > this.total) {
+      this.current = this.total;
+    }
+    // Update logic...
+  } catch (error) {
+    logError(error, "progressUpdate");
+  }
+}
+```
+
+## Integration Examples
 
 ### With Batch Processing
 
 ```typescript
-const processBatchWithProgress = async (
-  batches: any[][],
-  processor: (batch: any[]) => Promise<void>
-): Promise<void> => {
-  const totalItems = batches.reduce(
-    (sum, batch) => sum + batch.length, 
-    0
-  );
- 
-  const progress = new ProgressTracker({
-    total: totalItems,
-    title: "Processing Batches",
-    batchSize: batches[0].length
-  });
- 
-  progress.start();
- 
-  for (const batch of batches) {
-    await processor(batch);
-    progress.incrementBatch(batch.length);
+const batchProcessor = async (items: any[]) => {
+  const tracker = new EnhancedProgressTracker(items.length, "Batch Processing");
+  
+  for (const batch of chunks(items, 100)) {
+    await processBatch(batch);
+    tracker.update(batch.length);
   }
- 
-  progress.finish();
 };
 ```
 
-## Best Practices
+### With Sync Operations
 
-### Memory Efficiency
+```typescript
+const syncWithProgress = async (options: SyncOptions) => {
+  const tracker = new EnhancedProgressTracker(
+    totalItems,
+    "Syncing Data",
+    { updateInterval: 1000 }
+  );
 
-- Clear callbacks after completion
-- Limit status update frequency
-- Manage event listener count
+  // Register callback
+  options.onProgress = (processed: number) => {
+    tracker.update(processed);
+  };
 
-### Accuracy
+  await syncOperation(options);
+};
+```
 
-- Update progress immediately
-- Calculate rates periodically
-- Maintain precise counters
+## Related Documentation
 
-### User Experience
-
-- Show meaningful titles
-- Provide accurate ETAs
-- Update status consistently
-
-## Related Components
-
-- [Sync Logger](./sync-logger)
-- [Batch Processor](./batch)
-- [Logger](./logging)
-
-## Troubleshooting
-
-### Common Issues
-
-1. Performance Impact:
-   - Limit update frequency
-   - Optimize calculations
-   - Monitor memory usage
-
-2. Accuracy Problems:
-   - Verify counter updates
-   - Check time calculations
-   - Validate batch sizes
-
-3. Display Issues:
-   - Check terminal width
-   - Verify output formatting
-   - Monitor update rates
+- [Batch Processing](/utils/batch)
+- [Sync Logger](/utils/sync-logger)
+- [Error Handling](/utils/error-handling)
+- [Logging System](/utils/logging)

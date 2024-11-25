@@ -4,12 +4,12 @@
 
 The FFTCG Sync Service API provides endpoints for card and price synchronization,
  with support for both testing and production operations. All endpoints are
- HTTPS-only and most require Firebase authentication.
+  HTTPS-only and most require Firebase authentication.
 
 ## API Authentication
 
 The service uses Firebase Authentication. Protected endpoints require a valid
- Firebase ID token.
+ Firebase ID token. For implementation details, see our [Security Guidelines](/security).
 
 ```typescript
 // Get Firebase auth token
@@ -38,6 +38,8 @@ https://us-central1-fftcg-sync-service.cloudfunctions.net
 ## Endpoints
 
 ### Card Synchronization
+
+For detailed implementation, see [Card Sync Service](/services/card-sync).
 
 #### Test Card Sync
 
@@ -84,6 +86,8 @@ Response: Same as Test Card Sync
 
 ### Price Synchronization
 
+For detailed implementation, see [Price Sync Service](/services/price-sync).
+
 #### Test Price Sync
 
 Test price synchronization with configurable options.
@@ -129,6 +133,8 @@ Response: Same as Test Price Sync
 
 ### System Health
 
+For monitoring configuration, see our [Monitoring Guide](/monitoring/index).
+
 #### Health Check
 
 Check system health status.
@@ -155,7 +161,7 @@ Test the API endpoints using our interactive explorer:
 
 ## Runtime Configuration
 
-The service uses the following runtime configuration:
+For detailed configuration options, see the [Configuration Guide](/setup/configuration).
 
 ```typescript
 export const runtimeOpts = {
@@ -172,6 +178,8 @@ Function-specific configurations:
 
 ## Rate Limiting
 
+For detailed rate limiting implementation, see our [Monitoring Guide](/monitoring/index).
+
 - Function timeouts: 540 seconds
 - Memory allocation: 1GB per function
 - Maximum instances: 1 per function
@@ -179,6 +187,8 @@ Function-specific configurations:
 - Request delay: Exponential backoff starting at 1000ms
 
 ## Error Response Format
+
+For complete error handling documentation, see [Error Handling](/utils/error-handling).
 
 ```typescript
 interface ErrorResponse {
@@ -203,6 +213,8 @@ Example error:
 ```
 
 ## Data Models
+
+For complete type definitions, see [Types Reference](/reference/types).
 
 ### Card Product
 
@@ -243,6 +255,8 @@ interface CardPrice {
 
 ### Image Metadata
 
+For image handling details, see [Image Handler](/utils/image-handler).
+
 ```typescript
 interface ImageMetadata {
   contentType: string;
@@ -260,6 +274,8 @@ interface ImageMetadata {
 
 ### Request Rate Limiting
 
+For detailed implementation, see [Request Handler](/utils/request).
+
 ```typescript
 // Implement delays between requests
 await new Promise(resolve => setTimeout(resolve, 1000));
@@ -269,6 +285,8 @@ const delay = Math.pow(2, retryCount) * 1000;
 ```
 
 ### Error Handling Implementation
+
+For detailed error handling, see [Error Handling](/utils/error-handling).
 
 ```typescript
 try {
@@ -285,6 +303,8 @@ try {
 
 ### Authentication Implementation
 
+For security implementation details, see [Security Guidelines](/security).
+
 ```typescript
 // Check token expiration
 const token = await getAuthToken();
@@ -299,55 +319,18 @@ const headers = {
 };
 ```
 
-## Usage Example
-
-### TypeScript/Node.js
-
-```typescript
-import { getAuth } from 'firebase/auth';
-
-async function syncCards() {
-  const token = await getAuthToken();
-  
-  const response = await fetch(
-    'https://us-central1-fftcg-sync-service.cloudfunctions.net/testCardSync',
-    {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
-      params: {
-        dryRun: true,
-        limit: 5,
-        groupId: '23783'
-      }
-    }
-  );
-
-  if (!response.ok) {
-    throw new Error(`Sync failed: ${response.statusText}`);
-  }
-
-  return await response.json();
-}
-```
-
-## Status Codes
-
-| Code | Description |
-|------|-------------|
-| 200 | Success |
-| 400 | Bad Request |
-| 401 | Unauthorized |
-| 403 | Forbidden |
-| 429 | Too Many Requests |
-| 500 | Server Error |
-| 503 | Service Temporarily Down |
-
 ## Support
 
 For API support:
 
-- Check the [troubleshooting guide](/troubleshooting)
-- Review [system status](https://status.fftcg-sync-service.web.app)
+- Check the [Troubleshooting Guide](/troubleshooting)
+- Review [System Status](https://status.fftcg-sync-service.web.app)
 - Contact support team
+- See [Common Issues](/troubleshooting/common-issues)
+
+## Additional Resources
+
+- [Installation Guide](/setup/installation)
+- [Configuration Guide](/setup/configuration)
+- [Deployment Guide](/deployment/)
+- [Monitoring Guide](/monitoring/index)
