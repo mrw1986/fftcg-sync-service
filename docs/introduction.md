@@ -2,7 +2,10 @@
 
 ## Overview
 
-FFTCG Sync Service is a specialized Firebase application designed to synchronize Final Fantasy Trading Card Game (FFTCG) card data, prices, and images. The service provides automated synchronization of card information, price tracking, and image optimization through Firebase Functions.
+FFTCG Sync Service is a specialized Firebase application designed to synchronize
+ Final Fantasy Trading Card Game (FFTCG) card data, prices, and images. The
+ service provides automated synchronization of card information, price tracking,
+ and image optimization through Firebase Functions.
 
 ## Core Features
 

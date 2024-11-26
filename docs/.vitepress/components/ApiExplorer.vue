@@ -324,9 +324,8 @@ function getEnabledHeaders(): Record<string, string> {
 async function copyToClipboard(text: string) {
   try {
     await navigator.clipboard.writeText(text)
-    // Show success message
   } catch (err) {
-    // Show error message
+    console.error('Failed to copy to clipboard:', err)
   }
 }
 
@@ -364,6 +363,20 @@ async function replayRequest(historyEntry: HistoryEntry) {
   }
 }
 
+async function getAuthToken(): Promise<string | null> {
+  const auth = getAuth()
+  const user = auth.currentUser
+  if (user) {
+    try {
+      return await user.getIdToken(true) // Force token refresh
+    } catch (error) {
+      console.error('Error getting auth token:', error)
+      return null
+    }
+  }
+  return null
+}
+
 async function tryEndpoint(endpoint: ApiEndpoint) {
   responseState.value = {
     loading: true,
@@ -375,32 +388,21 @@ async function tryEndpoint(endpoint: ApiEndpoint) {
   }
 
   try {
-    const token = await getAuthToken()
-    
-    if (endpoint.authenticated && !token) {
-      throw new Error('Authentication required for this endpoint')
+    let headers: Record<string, string> = {
+      ...getEnabledHeaders(),
+      'Content-Type': 'application/json'
     }
 
-    // Replace path parameters
-    let finalPath = endpoint.path
-    if (endpoint.params) {
-      endpoint.params.forEach(param => {
-        if (param.required && !paramValues.value[param.name]) {
-          throw new Error(`Required parameter ${param.name} is missing`)
-        }
-        if (finalPath.includes(`{${param.name}}`)) {
-          finalPath = finalPath.replace(
-            `{${param.name}}`,
-            paramValues.value[param.name] || ''
-          )
-        }
-      })
+    if (endpoint.authenticated) {
+      const token = await getAuthToken()
+      if (!token) {
+        throw new Error('Authentication required for this endpoint')
+      }
+      headers['Authorization'] = `Bearer ${token}`
     }
 
-    // Build URL with query parameters
-    const url = new URL(`${BASE_URL}${finalPath}`)
+    const url = new URL(`${BASE_URL}${endpoint.path}`)
     
-    // Add query parameters
     if (endpoint.params) {
       Object.entries(paramValues.value).forEach(([key, value]) => {
         if (value !== '' && !endpoint.path.includes(`{${key}}`)) {
@@ -408,15 +410,6 @@ async function tryEndpoint(endpoint: ApiEndpoint) {
         }
       })
     }
-
-    const headers = {
-      ...getEnabledHeaders(),
-      'Content-Type': 'application/json',
-      ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-    }
-
-    console.log('Making request to:', url.toString())
-    console.log('With headers:', headers)
 
     const response = await fetch(url.toString(), {
       method: endpoint.method,
@@ -441,7 +434,7 @@ async function tryEndpoint(endpoint: ApiEndpoint) {
     }
 
     const data = await response.json()
-
+    
     responseState.value = {
       loading: false,
       data,
@@ -466,7 +459,7 @@ async function tryEndpoint(endpoint: ApiEndpoint) {
     responseState.value = {
       ...responseState.value,
       loading: false,
-      error: error instanceof Error ? error.message : 'An error occurred',
+      error: error instanceof Error ? error.message : 'An unknown error occurred',
       status: error instanceof Error && error.message.includes('Authentication') ? 401 : 500,
       data: null
     }
@@ -481,20 +474,6 @@ async function tryEndpoint(endpoint: ApiEndpoint) {
       success: false
     })
   }
-}
-
-async function getAuthToken(): Promise<string | null> {
-  const auth = getAuth()
-  const user = auth.currentUser
-  if (user) {
-    try {
-      return await user.getIdToken()
-    } catch (error) {
-      console.error('Error getting auth token:', error)
-      return null
-    }
-  }
-  return null
 }
 
 // Watch for endpoint changes
@@ -806,27 +785,6 @@ watch(selectedEndpoint, (newEndpoint) => {
   gap: 0.5rem;
 }
 
-.tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem;
-}
-
-.tag-button {
-  padding: 0.25rem 0.5rem;
-  border-radius: 4px;
-  border: 1px solid var(--vp-c-divider);
-  background: var(--vp-c-bg);
-  cursor: pointer;
-  font-size: 0.8rem;
-}
-
-.tag-button.active {
-  background: var(--vp-c-brand);
-  color: white;
-  border-color: var(--vp-c-brand);
-}
-
 .auth-toggle {
   display: flex;
   align-items: center;
@@ -966,20 +924,6 @@ watch(selectedEndpoint, (newEndpoint) => {
   cursor: help;
 }
 
-.endpoint-tags {
-  display: flex;
-  gap: 0.5rem;
-  margin: 0.5rem 0;
-}
-
-.tag {
-  padding: 0.25rem 0.5rem;
-  border-radius: 4px;
-  background: var(--vp-c-brand-dimm);
-  color: var(--vp-c-brand);
-  font-size: 0.8rem;
-}
-
 .headers-section {
   margin: 1rem 0;
   background: var(--vp-c-bg-soft);
@@ -1117,23 +1061,6 @@ watch(selectedEndpoint, (newEndpoint) => {
   font-size: 0.9em;
 }
 
-.response-headers {
-  margin: 1rem 0;
-  background: var(--vp-c-bg-soft);
-  border-radius: 4px;
-}
-
-.headers-list {
-  padding: 0.75rem;
-}
-
-.header-item {
-  display: flex;
-  gap: 0.5rem;
-  margin-bottom: 0.25rem;
-  font-size: 0.9em;
-}
-
 .error-message {
   color: var(--vp-c-red);
   padding: 0.75rem;
@@ -1148,60 +1075,6 @@ watch(selectedEndpoint, (newEndpoint) => {
   border-radius: 4px;
   overflow-x: auto;
   margin: 1rem 0;
-}
-
-.response-section {
-  margin: 1rem 0;
-}
-
-.response-section .status {
-  padding: 0.25rem 0.5rem;
-  border-radius: 4px;
-  font-weight: 600;
-}
-
-.response-section .status.success {
-  background: var(--vp-c-green-dimm);
-  color: var(--vp-c-green);
-}
-
-.response-section .status.error {
-  background: var(--vp-c-red-dimm);
-  color: var(--vp-c-red);
-}
-
-.schema {
-  background: var(--vp-c-bg-mute);
-  padding: 1rem;
-  border-radius: 4px;
-  overflow-x: auto;
-  margin-top: 0.5rem;
-}
-
-.loading-overlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-}
-
-.loading-spinner {
-  width: 2rem;
-  height: 2rem;
-  border: 2px solid var(--vp-c-brand);
-  border-radius: 50%;
-  border-top-color: transparent;
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
 }
 
 /* Responsive Design */
@@ -1223,33 +1096,5 @@ watch(selectedEndpoint, (newEndpoint) => {
   .header-input {
     grid-template-columns: 1fr;
   }
-
-  .endpoint-item-header {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .response-header {
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .response-actions {
-    width: 100%;
-    justify-content: space-between;
-  }
-
-  .action-button {
-    flex: 1;
-  }
-}
-
-/* Dark Mode Adjustments */
-:root[class~='dark'] .api-explorer {
-  --custom-api-bg: var(--vp-c-bg-soft);
-}
-
-:root[class~='dark'] .loading-overlay {
-  background: rgba(0, 0, 0, 0.7);
 }
 </style>

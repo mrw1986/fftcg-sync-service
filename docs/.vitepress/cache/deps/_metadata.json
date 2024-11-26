@@ -1,55 +1,55 @@
 {
-  "hash": "af03b2a6",
+  "hash": "ff707554",
   "configHash": "110b430d",
-  "lockfileHash": "22045c00",
-  "browserHash": "0a6a0b16",
+  "lockfileHash": "426fb73c",
+  "browserHash": "51892ae6",
   "optimized": {
     "vue": {
       "src": "../../../node_modules/vue/dist/vue.runtime.esm-bundler.js",
       "file": "vue.js",
-      "fileHash": "586fd058",
+      "fileHash": "e1fdd1d0",
       "needsInterop": false
     },
     "vitepress > @vue/devtools-api": {
       "src": "../../../node_modules/@vue/devtools-api/dist/index.js",
       "file": "vitepress___@vue_devtools-api.js",
-      "fileHash": "c8f116c2",
+      "fileHash": "fd363c30",
       "needsInterop": false
     },
     "vitepress > @vueuse/core": {
       "src": "../../../node_modules/vitepress/node_modules/@vueuse/core/index.mjs",
       "file": "vitepress___@vueuse_core.js",
-      "fileHash": "5b6d7c7d",
+      "fileHash": "dffee677",
       "needsInterop": false
     },
     "vitepress > @vueuse/integrations/useFocusTrap": {
       "src": "../../../node_modules/@vueuse/integrations/useFocusTrap.mjs",
       "file": "vitepress___@vueuse_integrations_useFocusTrap.js",
-      "fileHash": "be3801d6",
+      "fileHash": "dd7e80e7",
       "needsInterop": false
     },
     "vitepress > mark.js/src/vanilla.js": {
       "src": "../../../node_modules/mark.js/src/vanilla.js",
       "file": "vitepress___mark__js_src_vanilla__js.js",
-      "fileHash": "cfcaabb5",
+      "fileHash": "dd2b937a",
       "needsInterop": false
     },
     "vitepress > minisearch": {
       "src": "../../../node_modules/minisearch/dist/es/index.js",
       "file": "vitepress___minisearch.js",
-      "fileHash": "9e555b63",
-      "needsInterop": false
-    },
-    "firebase/app": {
-      "src": "../../../node_modules/firebase/app/dist/esm/index.esm.js",
-      "file": "firebase_app.js",
-      "fileHash": "e1f6e71f",
+      "fileHash": "7cdf2e07",
       "needsInterop": false
     },
     "firebase/auth": {
       "src": "../../../node_modules/firebase/auth/dist/esm/index.esm.js",
       "file": "firebase_auth.js",
-      "fileHash": "78fdba0c",
+      "fileHash": "079349c6",
+      "needsInterop": false
+    },
+    "firebase/app": {
+      "src": "../../../node_modules/firebase/app/dist/esm/index.esm.js",
+      "file": "firebase_app.js",
+      "fileHash": "0a0440ec",
       "needsInterop": false
     }
   },

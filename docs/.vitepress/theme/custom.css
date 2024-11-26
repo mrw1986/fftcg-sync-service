@@ -49,6 +49,24 @@
   height: var(--vp-nav-height);
 }
 
+.VPNavBar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 999;
+}
+
+.VPNavBar .container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.VPNavBar.has-sidebar {
+  padding-top: 0 !important;
+}
+
 .VPContent {
   padding-top: var(--vp-nav-height) !important;
 }
@@ -139,14 +157,87 @@
   overflow: hidden;
 }
 
+/* Navigation and Search */
+.VPNavBarSearch {
+  margin: 0 auto !important;
+  width: 100%;
+  max-width: 582px;
+  padding: 0 32px;
+  position: relative;
+}
+
+/* Center DocSearch-Button content */
+.DocSearch-Button {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Navigation Controls */
+.nav-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+  padding-right: 32px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+}
+
+/* Navbar Layout */
+.VPNavBarContent {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.VPNavBarContent .content {
+  flex: 1;
+}
+
+.nav-bar-content-after {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+}
+
+/* Auth-specific styles */
+.auth-container {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.auth-button {
+  padding: 6px 12px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.login-button {
+  background: var(--vp-c-brand);
+  color: white;
+  border: none;
+}
+
+.logout-button {
+  background: transparent;
+  border: 1px solid var(--vp-c-divider);
+  color: var(--vp-c-text-2);
+}
+
+.auth-button:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
 /* Responsive Layout */
 @media (min-width: 960px) {
   :root {
     --vp-sidebar-width: 320px;
-  }
-
-  .VPNavBar {
-    padding-right: 32px !important;
   }
 
   .VPDocAsideOutline .content {
@@ -169,12 +260,24 @@
 }
 
 @media (max-width: 768px) {
+  .VPNavBar.container {
+    padding: 0 16px;
+  }
+
+  .VPNavBarSearch {
+    padding: 0 16px;
+  }
+
   .nav-extra {
     right: 60px !important;
   }
 
   .user-email {
     max-width: 150px;
+  }
+
+  .nav-controls {
+    padding-right: 16px;
   }
 }
 

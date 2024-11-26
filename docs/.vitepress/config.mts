@@ -1,30 +1,74 @@
-// .vitepress/config.mts
+import { defineConfig } from 'vitepress'
+import { getAuth } from 'firebase/auth'
+import { app } from './theme/firebase'
 
-import { defineConfig } from 'vitepress/dist/node/index.js'
+// List of public paths that don't require authentication
+const PUBLIC_PATHS = ['/', '/index.html', '/index.md']
+
+async function isAuthenticated(): Promise<boolean> {
+  // Skip auth check during build
+  if (process.env.NODE_ENV === 'production' && process.env.VITEPRESS_BUILD) {
+    return true;
+  }
+
+  // Skip auth check on server side
+  if (typeof window === 'undefined') {
+    return true;
+  }
+
+  try {
+    const auth = getAuth(app);
+    return new Promise((resolve) => {
+      const unsubscribe = auth.onAuthStateChanged((user) => {
+        unsubscribe();
+        resolve(!!user);
+      });
+    });
+  } catch (error) {
+    console.error('Auth check failed:', error);
+    return false;
+  }
+}
 
 export default defineConfig({
   title: 'FFTCG Sync Service',
   description: 'Documentation for the FFTCG Card and Price Sync Service',
   
-  // Head tags
-  head: [
-    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/logo.svg' }],
-    ['meta', { name: 'theme-color', content: '#646cff' }]
-  ],
+  async transformPageData(pageData) {
+    const path = '/' + (pageData.relativePath === 'index.md' ? '' : pageData.relativePath)
+    
+    // Allow access to public paths without authentication
+    if (PUBLIC_PATHS.includes(path)) {
+      return pageData
+    }
 
-  // Markdown configuration
-  markdown: {
-    lineNumbers: true,
-    theme: 'github-dark'
+    // Skip auth check during build
+    if (process.env.NODE_ENV === 'production' && process.env.VITEPRESS_BUILD) {
+      return pageData;
+    }
+
+    // Check authentication for protected paths
+    const authenticated = await isAuthenticated()
+    if (!authenticated) {
+      return {
+        ...pageData,
+        frontmatter: {
+          ...pageData.frontmatter,
+          redirect: '/'
+        }
+      }
+    }
+
+    return pageData
   },
 
   themeConfig: {
     nav: [
       { text: 'Home', link: '/' },
-      { text: 'Getting Started', link: '/introduction' },
+      { text: 'Introduction', link: '/introduction' },
       { text: 'Architecture', link: '/architecture' },
       { text: 'API', link: '/api/' },
-      { text: 'Services', link: '/services/card-sync' }
+      { text: 'Testing', link: '/testing/' }
     ],
 
     sidebar: [
@@ -75,18 +119,18 @@ export default defineConfig({
         ]
       },
       {
-        text: 'Deployment',
-        items: [
-          { text: 'Deployment Guide', link: '/deployment/' }
-        ]
-      },
-      {
         text: 'Testing',
         items: [
           { text: 'Overview', link: '/testing/' },
           { text: 'Endpoints', link: '/testing/endpoints' },
           { text: 'Images', link: '/testing/images' },
           { text: 'Validation', link: '/testing/validation' }
+        ]
+      },
+      {
+        text: 'Deployment',
+        items: [
+          { text: 'Deployment Guide', link: '/deployment/' }
         ]
       },
       {
@@ -136,6 +180,21 @@ export default defineConfig({
       formatOptions: {
         dateStyle: 'full',
         timeStyle: 'medium'
+      }
+    }
+  },
+
+  vite: {
+    define: {
+      __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: 'false'
+    },
+    // Add CORS and other security headers
+    server: {
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'X-Frame-Options': 'DENY',
+        'X-Content-Type-Options': 'nosniff',
+        'X-XSS-Protection': '1; mode=block'
       }
     }
   }

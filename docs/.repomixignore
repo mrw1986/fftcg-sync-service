@@ -14,3 +14,5 @@ FirebaseAuth.vue
 .env.local
 .env
 docs_codebase.xml
+firebase.ts
+.vitepress/theme/firebase.ts

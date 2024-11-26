@@ -11,7 +11,8 @@ node_modules/
 codebase.xml
 docs_codebase.xml
 
-.vitepress/theme/FirebaseAuth.vue
 FirebaseAuth.vue
 .env.local
 .env
+firebase.ts
+.vitepress/theme/firebase.ts
