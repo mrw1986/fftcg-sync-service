@@ -17,9 +17,12 @@ service firebase.storage {
     }
 
     match /{allPaths=**} {
-      // Allow public read access to card images
+      // Allow public read access to all files (perfect for card images)
       allow read: if true;
-      // Allow write access from Cloud Functions or authorized users
+      
+      // Allow write access only from:
+      // 1. Cloud Functions (for automated syncs)
+      // 2. Authorized users (for manual updates)
       allow write: if isCloudFunction() || isAuthorizedUser();
     }
   }

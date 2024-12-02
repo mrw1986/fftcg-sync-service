@@ -7,3 +7,5 @@ service_account_key.json
 .repomixignore
 repomix.config.json
 functions-backup/
+# Backups
+backups/

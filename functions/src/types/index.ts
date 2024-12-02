@@ -1,4 +1,8 @@
-// functions/src/types/index.ts
+// src/types/index.ts
+
+import type * as express from "express";
+
+export {express};
 
 export interface GenericError extends Error {
   code?: string;
@@ -10,14 +14,16 @@ export interface CardProduct {
   productId: number;
   name: string;
   cleanName: string;
-  imageUrl: string;
-  storageImageUrl?: string; // Added for Firebase Storage URL
+  imageUrl?: string; // TCGPlayer URL (from API)
+  originalUrl: string; // TCGPlayer URL (our standardized field)
+  highResUrl: string; // Firebase Storage URL (_400w)
+  lowResUrl: string; // Firebase Storage URL (_200w)
   categoryId: number;
   groupId: number;
   url: string;
   modifiedOn: string;
   imageCount: number;
-  imageMetadata?: ImageMetadata; // Added for image metadata
+  imageMetadata?: ImageMetadata;
   extendedData: Array<{
     name: string;
     displayName: string;
@@ -41,7 +47,10 @@ export interface SyncOptions {
   groupId?: string;
   productId?: number;
   showAll?: boolean;
-  skipImages?: boolean; // Added to optionally skip image processing
+  skipImages?: boolean;
+  imagesOnly?: boolean; // New option
+  silent?: boolean;
+  force?: boolean;
 }
 
 export interface SyncMetadata {
@@ -53,8 +62,8 @@ export interface SyncMetadata {
   groupsUpdated: number;
   errors: string[];
   duration?: number;
-  imagesProcessed?: number; // Added for image tracking
-  imagesUpdated?: number; // Added for image tracking
+  imagesProcessed?: number;
+  imagesUpdated?: number;
 }
 
 export type CacheType = "card" | "price" | "image";
@@ -63,24 +72,28 @@ export interface PriceData {
   normal?: CardPrice;
   foil?: CardPrice;
   lastUpdated: Date;
+  productId: number;
+  cardNumber: string;
 }
 
-// New interfaces for image handling
 export interface ImageMetadata {
   contentType: string;
   size: number;
   updated: Date;
   hash: string;
-  originalUrl: string;
-  highResUrl: string;
   groupId?: string;
   productId?: number;
+  cardNumber?: string;
   lastUpdated?: Date;
   originalSize?: number;
   highResSize?: number;
+  lowResSize?: number;
 }
+
 export interface ImageProcessingResult {
-  url: string;
+  originalUrl: string; // TCGPlayer URL
+  highResUrl: string; // Firebase Storage URL (_400w)
+  lowResUrl: string; // Firebase Storage URL (_200w)
   metadata: ImageMetadata;
   updated: boolean;
 }
@@ -92,14 +105,12 @@ export interface ImageSyncStats {
   skipped: number;
 }
 
-// Update existing interfaces
 export interface LogData {
   imageMetadata?: ImageMetadata;
   imageSyncStats?: ImageSyncStats;
   [key: string]: any;
 }
 
-// Cache interfaces
 export interface CacheOptions {
   max: number;
   ttl: number;
@@ -111,7 +122,6 @@ export interface CacheEntry<T> {
   expires: number;
 }
 
-// Error types
 export interface ImageProcessingError extends GenericError {
   productId: number;
   groupId: string;
@@ -121,7 +131,6 @@ export interface ImageProcessingError extends GenericError {
 
 export type GenericObject = Record<string, any>;
 
-// Batch processing types
 export interface BatchProcessingStats {
   total: number;
   processed: number;
@@ -138,7 +147,13 @@ export interface BatchOptions {
   retryFailedImages?: boolean;
 }
 
-// Enhanced logging types for image processing
+export interface BatchProgress {
+  totalBatches: number;
+  currentBatch: number;
+  processedCount: number;
+  totalItems: number;
+}
+
 export interface ImageLogEntry {
   timestamp: Date;
   level: "INFO" | "WARNING" | "ERROR";
@@ -149,7 +164,6 @@ export interface ImageLogEntry {
   stats?: ImageSyncStats;
 }
 
-// Storage types
 export interface StoragePaths {
   original: string;
   processed: string;
@@ -161,7 +175,6 @@ export interface StorageOptions {
   cacheControl?: string;
 }
 
-// Progress tracking for image processing
 export interface ImageProcessingProgress {
   total: number;
   current: number;
@@ -174,4 +187,19 @@ export interface ImageProcessingProgress {
 export interface ImageValidationError {
   code: "FILE_TOO_LARGE" | "INVALID_FORMAT" | "VALIDATION_ERROR";
   message: string;
+}
+
+export interface SyncMode {
+  type: "data" | "images" | "full";
+  isForced: boolean;
+  isDryRun: boolean;
+}
+
+export interface RefreshOptions {
+  isDryRun: boolean;
+  isVerbose: boolean;
+  isForce: boolean;
+  groupId?: string;
+  skipImages: boolean;
+  imagesOnly: boolean;
 }

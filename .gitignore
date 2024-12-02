@@ -57,5 +57,8 @@ ui-debug.log*
 .npm
 *.tsbuildinfo
 
+# Backups
+backups/
+
 # Testing and Coverage
 coverage/

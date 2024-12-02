@@ -13,7 +13,7 @@
     "shell": "cd functions && npm run shell",
     "logs": "cd functions && npm run logs",
     "install:all": "npm install && cd functions && npm install && npm run build",
-    "clean": "cd functions && npm run clean"
+    "clean": "cd functions && npm run clean"    
   },
   "devDependencies": {
     "@types/express": "^4.17.21",

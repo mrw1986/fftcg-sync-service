@@ -8,6 +8,10 @@ const options = {
 
 export const cardCache = new LRUCache<string, CardProduct>(options);
 
-export const getCacheKey = (type: CacheType, id: number): string => {
-  return `${type}:${id}`;
+export const getCacheKey = (
+  type: CacheType,
+  id: number,
+  cardNumber?: string
+): string => {
+  return cardNumber ? `${type}:${id}:${cardNumber}` : `${type}:${id}`;
 };

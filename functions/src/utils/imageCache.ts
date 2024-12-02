@@ -1,3 +1,5 @@
+// src/utils/imageCache.ts
+
 import LRUCache from "lru-cache";
 import {ImageMetadata} from "../types";
 import {logInfo} from "./logger";
@@ -40,16 +42,30 @@ export class ImageCache {
     });
   }
 
-  getMetadataCacheKey(groupId: string, productId: number, isHighRes: boolean): string {
-    return `metadata:${groupId}:${productId}:${isHighRes ? "high" : "original"}`;
+  getMetadataCacheKey(
+    groupId: string,
+    productId: number,
+    cardNumber: string,
+    isHighRes: boolean
+  ): string {
+    return `metadata:${groupId}:${productId}:${cardNumber}:${
+      isHighRes ? "high" : "original"
+    }`;
   }
 
   getBufferCacheKey(url: string): string {
     return `buffer:${url}`;
   }
 
-  getExistsCacheKey(groupId: string, productId: number, isHighRes: boolean): string {
-    return `exists:${groupId}:${productId}:${isHighRes ? "high" : "original"}`;
+  getExistsCacheKey(
+    groupId: string,
+    productId: number,
+    cardNumber: string,
+    isHighRes: boolean
+  ): string {
+    return `exists:${groupId}:${productId}:${cardNumber}:${
+      isHighRes ? "high" : "original"
+    }`;
   }
 
   async getMetadata(key: string): Promise<ImageMetadata | undefined> {

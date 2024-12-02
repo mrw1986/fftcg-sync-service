@@ -19,30 +19,47 @@ async function testEndpoints() {
   try {
     // Test card sync
     console.log("\nTesting card sync...");
-    const cardResponse = await axios.get<SyncResponse>(`${BASE_URL}/testCardSync`, {
-      params: {
-        limit: 5,
-        dryRun: true,
-        groupId: "23783", // Example group ID
-      },
-    });
-    console.log("Card sync results:", JSON.stringify(cardResponse.data, null, 2));
+    const cardResponse = await axios.get<SyncResponse>(
+      `${BASE_URL}/testCardSync`,
+      {
+        params: {
+          limit: 5,
+          dryRun: true,
+          groupId: "23783",
+          productId: 477236, // Added specific product ID
+        },
+      }
+    );
+    console.log(
+      "Card sync results:",
+      JSON.stringify(cardResponse.data, null, 2)
+    );
 
     // Test price sync
     console.log("\nTesting price sync...");
-    const priceResponse = await axios.get<SyncResponse>(`${BASE_URL}/testPriceSync`, {
-      params: {
-        groupId: "23783", // Example group ID
-        dryRun: true,
-        limit: 5,
-      },
-    });
-    console.log("Price sync results:", JSON.stringify(priceResponse.data, null, 2));
+    const priceResponse = await axios.get<SyncResponse>(
+      `${BASE_URL}/testPriceSync`,
+      {
+        params: {
+          groupId: "23783",
+          dryRun: true,
+          limit: 5,
+          productId: 477236, // Added specific product ID
+        },
+      }
+    );
+    console.log(
+      "Price sync results:",
+      JSON.stringify(priceResponse.data, null, 2)
+    );
 
     // Test health check
     console.log("\nTesting health check...");
     const healthResponse = await axios.get(`${BASE_URL}/healthCheck`);
-    console.log("Health check response:", JSON.stringify(healthResponse.data, null, 2));
+    console.log(
+      "Health check response:",
+      JSON.stringify(healthResponse.data, null, 2)
+    );
   } catch (error) {
     if (isAxiosError(error)) {
       console.error("Test failed:", error.response?.data || error.message);
@@ -57,6 +74,8 @@ async function testEndpoints() {
 
 // Execute tests
 console.log("Starting endpoint tests...");
-testEndpoints().then(() => {
-  console.log("All tests completed!");
-}).catch(console.error);
+testEndpoints()
+  .then(() => {
+    console.log("All tests completed!");
+  })
+  .catch(console.error);

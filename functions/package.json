@@ -12,7 +12,27 @@
     "deploy": "npm run lint:fix && firebase deploy --only functions",
     "logs": "firebase functions:log",
     "lint:fix:force": "eslint . --ext .js,.ts --fix --config .eslintrc.fix.js",
-    "test:images": "ts-node src/test/testImageHandler.ts"
+    "test:images": "ts-node src/test/testImageHandler.ts",
+    "test:sync": "ts-node src/test/testSync.ts",
+    "test:all": "npm run test:images && npm run test:sync",
+    "backup-db": "ts-node src/utils/databaseBackup.ts",
+    "clear-db": "ts-node src/utils/databaseReset.ts",
+    "sync:data": "ts-node src/utils/databaseRefresh.ts --skip-images",
+    "sync:data:force": "ts-node src/utils/databaseRefresh.ts --skip-images --force",
+    "sync:data:dry": "ts-node src/utils/databaseRefresh.ts --skip-images --dry-run",
+    "sync:data:verbose": "ts-node src/utils/databaseRefresh.ts --skip-images --verbose",
+    "sync:images": "ts-node src/utils/databaseRefresh.ts --images-only",
+    "sync:images:force": "ts-node src/utils/databaseRefresh.ts --images-only --force",
+    "sync:images:dry": "ts-node src/utils/databaseRefresh.ts --images-only --dry-run",
+    "sync:images:verbose": "ts-node src/utils/databaseRefresh.ts --images-only --verbose",
+    "sync:full": "ts-node src/utils/databaseRefresh.ts",
+    "sync:full:force": "ts-node src/utils/databaseRefresh.ts --force",
+    "sync:full:dry": "ts-node src/utils/databaseRefresh.ts --dry-run",
+    "sync:full:verbose": "ts-node src/utils/databaseRefresh.ts --verbose",
+    "sync:group": "ts-node src/utils/databaseRefresh.ts --group-id",
+    "sync:group:images": "ts-node src/utils/databaseRefresh.ts --group-id --images-only",
+    "sync:group:data": "ts-node src/utils/databaseRefresh.ts --group-id --skip-images",
+    "cleanup:images": "ts-node src/utils/databaseCleanup.ts"
   },
   "engines": {
     "node": "18"
@@ -24,7 +44,8 @@
     "firebase-admin": "^12.0.0",
     "firebase-functions": "^6.1.1",
     "lru-cache": "^7.14.1",
-    "sharp": "^0.33.1"
+    "sharp": "^0.33.1",
+    "refresh-db": "ts-node src/utils/databaseRefresh.ts"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",

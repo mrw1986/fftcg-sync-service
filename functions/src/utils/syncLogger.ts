@@ -2,15 +2,17 @@ interface CardDetails {
   id: number;
   name: string;
   groupId: string;
+  cardNumber: string;
   normalPrice?: number;
   foilPrice?: number;
   rawPrices: Array<{
-    type: "Normal" | "Foil";
+    type: string;
     price: number;
     groupId: string;
   }>;
-  imageUrl?: string;
-  storageImageUrl?: string;
+  originalUrl?: string;
+  highResUrl?: string;
+  lowResUrl?: string;
 }
 
 interface SyncLoggerOptions {
@@ -25,7 +27,7 @@ interface SyncResults {
   success: number;
   failures: number;
   groupId?: string;
-  type: "Manual" | "Scheduled";
+  type: string;
   imagesProcessed?: number;
   imagesUpdated?: number;
 }
@@ -40,81 +42,121 @@ export class SyncLogger {
   }
 
   async start(): Promise<void> {
-    console.log("\nStarting sync test...");
+    console.log("\nStarting sync operation...");
     console.log(`Type: ${this.options.type}`);
     if (this.options.limit) console.log(`Limit: ${this.options.limit} cards`);
-    console.log(`Dry Run: ${this.options.dryRun ? "true" : "false"}`);
-    console.log("\n=== Fetching Raw Data ===");
+    if (this.options.groupId) console.log(`Group ID: ${this.options.groupId}`);
+    console.log(`Dry Run: ${this.options.dryRun ? "Yes" : "No"}`);
+    console.log("\n=== Processing Data ===");
   }
 
   async logGroupFound(totalGroups: number): Promise<void> {
-    console.log(`Found ${totalGroups} groups`);
+    if (this.options.groupId) {
+      console.log(`Processing group ${this.options.groupId}`);
+    } else {
+      console.log(`Found ${totalGroups} groups to process`);
+    }
   }
 
-  async logGroupDetails(groupId: string, products: number, prices: number): Promise<void> {
-    this.groups.set(groupId, {products, prices});
-    console.log(`Group ${groupId} has ${products} products and ${prices} prices`);
+  async logGroupDetails(
+    groupId: string,
+    products: number,
+    prices: number
+  ): Promise<void> {
+    if (!this.options.groupId || this.options.groupId === groupId) {
+      this.groups.set(groupId, {products, prices});
+      console.log(`Group ${groupId}: ${products} products, ${prices} prices`);
+    }
   }
 
   async logCardDetails(details: CardDetails): Promise<void> {
-    this.cards.push(details);
-    if (this.cards.length === 1) {
-      console.log("\n=== Card Details ===");
-    }
+    if (!this.options.groupId || this.options.groupId === details.groupId) {
+      this.cards.push(details);
+      if (this.cards.length === 1) {
+        console.log("\n=== Card Details ===");
+      }
 
-    console.log(`Card: ${details.name} (${details.groupId || "UNKNOWN"})`);
-    console.log(`- ID: ${details.id}`);
-    console.log(`- Group ID: ${details.groupId || "UNKNOWN"}`);
+      console.log(`\nCard: ${details.name}`);
+      console.log(`ID: ${details.id}`);
+      if (details.cardNumber) console.log(`Number: ${details.cardNumber}`);
+      console.log(`Group: ${details.groupId}`);
 
-    if (details.rawPrices.length > 0) {
-      console.log("- Raw Prices:");
-      details.rawPrices.forEach((price) => {
-        console.log(`  > ${price.type}: $${price.price.toFixed(2)} (Group: ${price.groupId})`);
-      });
-    }
+      if (details.rawPrices.length > 0) {
+        console.log("Prices:");
+        details.rawPrices.forEach((price) => {
+          console.log(`  ${price.type}: $${price.price.toFixed(2)}`);
+        });
+      }
 
-    if (details.imageUrl) {
-      console.log(`- Image URL: ${details.imageUrl}`);
-      if (details.storageImageUrl) {
-        console.log(`- Storage URL: ${details.storageImageUrl}`);
+      if (details.originalUrl || details.highResUrl || details.lowResUrl) {
+        console.log("Images:");
+        if (details.originalUrl) {
+          console.log(`  Original: ${details.originalUrl}`);
+        }
+        if (details.highResUrl) {
+          console.log(`  High Res: ${details.highResUrl}`);
+        }
+        if (details.lowResUrl) console.log(`  Low Res: ${details.lowResUrl}`);
       }
     }
-
-    console.log(`- Normal Price: $${details.normalPrice?.toFixed(2) || "0.00"}`);
-    console.log(`- Foil Price: $${details.foilPrice?.toFixed(2) || "0.00"}`);
-    console.log("---");
   }
 
   async logManualSyncStart(): Promise<void> {
-    console.log("\n=== Testing Manual Sync ===");
-    if (this.options.groupId) console.log(`Filtering for groups: ${this.options.groupId}`);
-    if (this.options.dryRun) console.log("DRY RUN MODE - No data will be modified");
-    if (this.options.limit) console.log(`Processing limited to ${this.options.limit} cards`);
-    if (this.options.batchSize) console.log(`Batch size: ${this.options.batchSize}`);
+    console.log("\n=== Starting Manual Sync ===");
+    if (this.options.groupId) {
+      console.log(`Filtering for group: ${this.options.groupId}`);
+    }
+    if (this.options.dryRun) {
+      console.log("DRY RUN MODE - No data will be modified");
+    }
+    if (this.options.limit) {
+      console.log(`Limited to ${this.options.limit} cards`);
+    }
+    if (this.options.batchSize) {
+      console.log(`Batch size: ${this.options.batchSize}`);
+    }
     console.log();
-  }
-
-  async logScheduledSyncStart(): Promise<void> {
-    console.log("\n=== Testing Scheduled Sync ===");
-  }
-
-  async logSyncProgress(message: string): Promise<void> {
-    console.log(message);
   }
 
   async logSyncResults(results: SyncResults): Promise<void> {
     const duration = (Date.now() - this.startTime) / 1000;
 
-    console.log(`\n${results.type} Sync Results:`);
-    console.log(`- Success: ${results.success}`);
-    console.log(`- Failures: ${results.failures}`);
-    console.log(`- Duration: ${duration.toFixed(1)} seconds`);
-    if (results.groupId) console.log(`- Group ID: ${results.groupId}`);
-    if (results.imagesProcessed) console.log(`- Images Processed: ${results.imagesProcessed}`);
-    if (results.imagesUpdated) console.log(`- Images Updated: ${results.imagesUpdated}`);
+    console.log("\n=== Sync Results ===");
+    console.log(`Operation: ${results.type}`);
+    if (results.groupId) {
+      console.log(`Group: ${results.groupId}`);
+    }
+    console.log(`Duration: ${duration.toFixed(1)} seconds`);
+    console.log(`Successful Operations: ${results.success}`);
+    console.log(`Failed Operations: ${results.failures}`);
+
+    if (typeof results.imagesProcessed === "number") {
+      console.log("\nImage Processing:");
+      console.log(`Total Processed: ${results.imagesProcessed}`);
+      console.log(`Updated: ${results.imagesUpdated || 0}`);
+      console.log(
+        `Unchanged: ${results.imagesProcessed - (results.imagesUpdated || 0)}`
+      );
+    }
+
+    if (this.cards.length > 0) {
+      console.log(`\nProcessed Cards: ${this.cards.length}`);
+      const withImages = this.cards.filter(
+        (card) => card.originalUrl || card.highResUrl || card.lowResUrl
+      ).length;
+      console.log(`Cards with Images: ${withImages}`);
+      console.log(`Cards without Images: ${this.cards.length - withImages}`);
+    }
   }
 
   async finish(): Promise<void> {
-    console.log("\nTest completed!");
+    const totalDuration = (Date.now() - this.startTime) / 1000;
+    console.log("\n=== Operation Complete ===");
+    console.log(`Total Duration: ${totalDuration.toFixed(1)} seconds`);
+
+    if (this.options.dryRun) {
+      console.log("\nThis was a dry run - no changes were made");
+      console.log("Remove --dry-run flag to perform actual updates");
+    }
   }
 }
