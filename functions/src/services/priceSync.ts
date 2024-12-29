@@ -15,7 +15,7 @@ import {
 } from "../types";
 import {logError, logInfo} from "../utils/logger";
 import {SyncLogger} from "../utils/syncLogger";
-import {makeRequest, processBatch} from
+import {makeRequest, processBatch, sanitizeDocumentId} from
   "../utils/syncUtils";
 import * as crypto from "crypto";
 
@@ -74,9 +74,7 @@ async function processPrices(
 
   for (const price of prices) {
     const cardNumber = await getCardNumberFromFirestore(price.productId);
-    // Sanitize the document ID by replacing forward slashes with hyphens
-    const sanitizedCardNumber = cardNumber.replace(/\//g, "-");
-    const docId = `${price.productId}_${sanitizedCardNumber}`;
+    const docId = sanitizeDocumentId(price.productId, cardNumber);
 
     if (!priceMap[docId]) {
       priceMap[docId] = {

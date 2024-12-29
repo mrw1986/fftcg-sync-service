@@ -11,6 +11,11 @@ export interface RequestOptions {
   metadata?: Record<string, unknown>;
 }
 
+export function sanitizeDocumentId(productId: number | string, cardNumber: string): string {
+  const sanitizedCardNumber = cardNumber.replace(/\//g, "_");
+  return `${productId}_${sanitizedCardNumber}`;
+}
+
 export async function makeRequest<T>(
   endpoint: string,
   baseUrl: string,

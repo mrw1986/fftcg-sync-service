@@ -15,7 +15,6 @@ export interface CardProduct {
   name: string;
   cleanName: string;
   imageUrl?: string; // TCGPlayer URL (from API)
-  originalUrl: string; // TCGPlayer URL (our standardized field)
   highResUrl: string; // Firebase Storage URL (_400w)
   lowResUrl: string; // Firebase Storage URL (_200w)
   categoryId: number;
@@ -91,7 +90,6 @@ export interface ImageMetadata {
 }
 
 export interface ImageProcessingResult {
-  originalUrl: string; // TCGPlayer URL
   highResUrl: string; // Firebase Storage URL (_400w)
   lowResUrl: string; // Firebase Storage URL (_200w)
   metadata: ImageMetadata;

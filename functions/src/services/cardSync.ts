@@ -18,7 +18,7 @@ import { logError, logInfo } from "../utils/logger";
 import * as crypto from "crypto";
 import { SyncLogger } from "../utils/syncLogger";
 import { ImageHandler } from "../utils/imageHandler";
-import { makeRequest, processBatch } from "../utils/syncUtils";
+import { makeRequest, processBatch, sanitizeDocumentId } from "../utils/syncUtils";
 import { Query } from '@google-cloud/firestore';
 
 // Add this type
@@ -56,7 +56,7 @@ function getCardNumber(product: CardProduct): string {
 
 function getDocumentId(product: CardProduct): string {
   const cardNumber = getCardNumber(product);
-  return `${product.productId}_${cardNumber}`;
+  return sanitizeDocumentId(product.productId, cardNumber);
 }
 
 function getDataHash(data: any): string {
@@ -103,7 +103,6 @@ async function processGroupProducts(
           name: product.name,
           groupId: groupId,
           cardNumber,
-          originalUrl: product.imageUrl || "",
           highResUrl: product.highResUrl || "",
           lowResUrl: product.lowResUrl || "",
           rawPrices: [],
@@ -146,7 +145,6 @@ async function processGroupProducts(
 
             const productData = {
               ...product,
-              originalUrl: product.imageUrl || "",
               highResUrl: product.highResUrl || "",
               lowResUrl: product.lowResUrl || "",
               lastUpdated: new Date(),

@@ -34,7 +34,7 @@ export const STORAGE = {
   },
 };
 
-export const BASE_URL = "https://tcgcsv.com";
+export const BASE_URL = "https://tcgcsv.com/tcgplayer";
 export const FFTCG_CATEGORY_ID = "24";
 
 export const runtimeOpts = {

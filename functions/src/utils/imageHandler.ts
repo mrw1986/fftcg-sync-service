@@ -1,13 +1,11 @@
-// src/utils/imageHandler.ts
-
-import axios, {AxiosError} from "axios";
-import {storage, STORAGE, COLLECTION, db} from "../config/firebase";
-import {logError, logInfo, logWarning} from "./logger";
+import axios, { AxiosError } from "axios";
+import { storage, STORAGE, COLLECTION, db } from "../config/firebase";
+import { logError, logInfo, logWarning } from "./logger";
 import * as crypto from "crypto";
-import {GenericError, ImageMetadata, ImageProcessingResult} from "../types";
-import {ImageValidator} from "./imageValidator";
-import {imageCache} from "./imageCache";
-import {ImageCompressor} from "./imageCompressor";
+import { GenericError, ImageMetadata, ImageProcessingResult } from "../types";
+import { ImageValidator } from "./imageValidator";
+import { imageCache } from "./imageCache";
+import { ImageCompressor } from "./imageCompressor";
 
 interface ImagePathOptions {
   groupId: string;
@@ -21,12 +19,13 @@ export class ImageHandler {
   private bucket = storage.bucket(STORAGE.BUCKETS.CARD_IMAGES);
   private baseStorageUrl = `https://storage.googleapis.com/${STORAGE.BUCKETS.CARD_IMAGES}`;
 
-  private getHighResUrl(imageUrl: string): string {
-    return imageUrl.replace(/_200w\.jpg$/, "_400w.jpg");
+  private sanitizeCardNumber(cardNumber: string): string {
+    // Replace forward slashes with underscores or another safe character
+    return cardNumber.replace(/\//g, "_");
   }
 
-  private getLowResUrl(imageUrl: string): string {
-    return imageUrl.replace(/\.jpg$/, "_200w.jpg");
+  private getHighResUrl(imageUrl: string): string {
+    return imageUrl.replace(/_200w\.jpg$/, "_400w.jpg");
   }
 
   private getStoragePath(options: ImagePathOptions): string {
@@ -34,7 +33,8 @@ export class ImageHandler {
     if (options.isHighRes) {
       suffix = "_400w";
     }
-    const fileName = `${options.productId}_${options.cardNumber}${suffix}.jpg`;
+    const sanitizedCardNumber = this.sanitizeCardNumber(options.cardNumber);
+    const fileName = `${options.productId}_${sanitizedCardNumber}${suffix}.jpg`;
     return `${STORAGE.PATHS.IMAGES}/${options.groupId}/${fileName}`;
   }
 
@@ -74,6 +74,11 @@ export class ImageHandler {
     const cachedBuffer = await imageCache.getBuffer(cacheKey);
 
     if (cachedBuffer) {
+      await logInfo("Using cached image", {
+        url,
+        size: cachedBuffer.length,
+        timestamp: new Date().toISOString(),
+      });
       return cachedBuffer;
     }
 
@@ -87,7 +92,7 @@ export class ImageHandler {
         responseType: "arraybuffer",
         timeout: 30000,
         headers: {
-          "Accept": "image/jpeg",
+          Accept: "image/jpeg",
           "User-Agent": "FFTCG-Sync-Service/1.0",
         },
       });
@@ -122,11 +127,15 @@ export class ImageHandler {
     options: ImagePathOptions,
     imageBuffer: Buffer
   ): Promise<boolean> {
-    // Always update in test mode or if force update is enabled
     if (
       process.env.NODE_ENV === "test" ||
       process.env.FORCE_UPDATE === "true"
     ) {
+      await logInfo("Force update enabled", {
+        env: process.env.NODE_ENV,
+        forceUpdate: process.env.FORCE_UPDATE,
+        timestamp: new Date().toISOString(),
+      });
       return true;
     }
 
@@ -134,16 +143,32 @@ export class ImageHandler {
       const storagePath = this.getStoragePath(options);
       const [fileExists] = await this.bucket.file(storagePath).exists();
 
-      // If file doesn't exist, we should update
-      if (!fileExists) return true;
+      if (!fileExists) {
+        await logInfo("Image does not exist in storage", {
+          path: storagePath,
+          timestamp: new Date().toISOString(),
+        });
+        return true;
+      }
 
       const [metadata] = await this.bucket.file(storagePath).getMetadata();
       const currentHash = metadata.metadata?.hash;
       const newHash = await this.getImageHash(imageBuffer);
 
+      await logInfo("Image hash comparison", {
+        path: storagePath,
+        currentHash,
+        newHash,
+        needsUpdate: currentHash !== newHash,
+        timestamp: new Date().toISOString(),
+      });
+
       return currentHash !== newHash;
     } catch (error) {
-      // If there's any error checking, attempt to update
+      await logWarning("Error checking image update status", {
+        error: error instanceof Error ? error.message : "Unknown error",
+        timestamp: new Date().toISOString(),
+      });
       return true;
     }
   }
@@ -160,6 +185,22 @@ export class ImageHandler {
     });
 
     const hash = await this.getImageHash(buffer);
+
+    await logInfo(
+      `Attempting to save ${isHighRes ? "high-res" : "low-res"} image`,
+      {
+        path: storagePath,
+        size: buffer.length,
+        hash,
+        timestamp: new Date().toISOString(),
+        metadata: {
+          groupId: options.groupId,
+          productId: options.productId,
+          cardNumber: options.cardNumber,
+        },
+      }
+    );
+
     await this.bucket.file(storagePath).save(buffer, {
       metadata: {
         contentType: "image/jpeg",
@@ -173,27 +214,53 @@ export class ImageHandler {
       public: true,
     });
 
-    return this.getPublicUrl(storagePath);
+    const [exists] = await this.bucket.file(storagePath).exists();
+    const publicUrl = this.getPublicUrl(storagePath);
+
+    await logInfo(
+      `${isHighRes ? "High-res" : "Low-res"} image saved successfully`,
+      {
+        path: storagePath,
+        size: buffer.length,
+        hash,
+        exists,
+        publicUrl,
+        timestamp: new Date().toISOString(),
+      }
+    );
+
+    return publicUrl;
   }
 
   private async saveMetadata(
     options: ImagePathOptions,
     metadata: ImageMetadata
   ): Promise<void> {
-    const docRef = db
-      .collection(COLLECTION.IMAGE_METADATA)
-      .doc(`${options.groupId}_${options.productId}_${options.cardNumber}`);
+    const sanitizedCardNumber = this.sanitizeCardNumber(options.cardNumber);
+const docRef = db
+  .collection(COLLECTION.IMAGE_METADATA)
+  .doc(`${options.groupId}_${options.productId}_${sanitizedCardNumber}`);
 
     await docRef.set(
       {
         ...metadata,
         groupId: options.groupId,
         productId: options.productId,
-        cardNumber: options.cardNumber,
+        cardNumber: options.cardNumber, // Keep the original card number in the metadata
+        sanitizedCardNumber, // Optionally store the sanitized version
         lastUpdated: new Date(),
       },
-      {merge: true}
+      { merge: true }
     );
+
+    await logInfo("Saved image metadata", {
+      groupId: options.groupId,
+      productId: options.productId,
+      cardNumber: options.cardNumber,
+      sanitizedCardNumber,
+      metadata,
+      timestamp: new Date().toISOString(),
+    });
   }
 
   async processImage(
@@ -209,35 +276,39 @@ export class ImageHandler {
     };
 
     try {
-      const highResUrl = this.getHighResUrl(imageUrl);
-      const lowResUrl = this.getLowResUrl(imageUrl);
-
-      await logInfo("Processing image", {
-        productId,
+      await logInfo("Starting image processing", {
+        imageUrl,
         groupId,
+        productId,
         cardNumber,
-        originalUrl: imageUrl,
-        highResUrl,
-        lowResUrl,
         timestamp: new Date().toISOString(),
-        cacheStats: imageCache.getStats(),
       });
 
-      let originalBuffer: Buffer | null = null;
+      const highResUrl = this.getHighResUrl(imageUrl);
       let highResBuffer: Buffer | null = null;
       let lowResBuffer: Buffer | null = null;
       let updated = false;
       let lowResStorageUrl = "";
       let highResStorageUrl = "";
 
-      // Download and process original/low-res image
+      // Process low-res image
       try {
-        originalBuffer = await this.downloadImage(imageUrl);
-        if (originalBuffer) {
-          lowResBuffer = await this.compressImage(originalBuffer, false);
+        await logInfo("Downloading low-res image", {
+          url: imageUrl,
+          timestamp: new Date().toISOString(),
+        });
+
+        lowResBuffer = await this.downloadImage(imageUrl);
+        if (lowResBuffer) {
+          await logInfo("Compressing low-res image", {
+            originalSize: lowResBuffer.length,
+            timestamp: new Date().toISOString(),
+          });
+
+          lowResBuffer = await this.compressImage(lowResBuffer, false);
           if (
             await this.shouldUpdateImage(
-              {...options, isLowRes: true},
+              { ...options, isLowRes: true },
               lowResBuffer
             )
           ) {
@@ -247,24 +318,45 @@ export class ImageHandler {
               false
             );
             updated = true;
+
+            await logInfo("Low-res image updated", {
+              url: lowResStorageUrl,
+              size: lowResBuffer.length,
+              timestamp: new Date().toISOString(),
+            });
+          } else {
+            await logInfo("Low-res image unchanged", {
+              timestamp: new Date().toISOString(),
+            });
           }
         }
       } catch (error) {
-        await logWarning("Original/low-res image processing failed", {
+        await logWarning("Low-res image processing failed", {
           productId,
           url: imageUrl,
           error: error instanceof Error ? error.message : "Unknown error",
+          timestamp: new Date().toISOString(),
         });
       }
 
-      // Download and process high-res image
+      // Process high-res image
       try {
+        await logInfo("Downloading high-res image", {
+          url: highResUrl,
+          timestamp: new Date().toISOString(),
+        });
+
         highResBuffer = await this.downloadImage(highResUrl);
         if (highResBuffer) {
+          await logInfo("Compressing high-res image", {
+            originalSize: highResBuffer.length,
+            timestamp: new Date().toISOString(),
+          });
+
           highResBuffer = await this.compressImage(highResBuffer, true);
           if (
             await this.shouldUpdateImage(
-              {...options, isHighRes: true},
+              { ...options, isHighRes: true },
               highResBuffer
             )
           ) {
@@ -274,6 +366,16 @@ export class ImageHandler {
               true
             );
             updated = true;
+
+            await logInfo("High-res image updated", {
+              url: highResStorageUrl,
+              size: highResBuffer.length,
+              timestamp: new Date().toISOString(),
+            });
+          } else {
+            await logInfo("High-res image unchanged", {
+              timestamp: new Date().toISOString(),
+            });
           }
         }
       } catch (error) {
@@ -281,18 +383,19 @@ export class ImageHandler {
           productId,
           url: highResUrl,
           error: error instanceof Error ? error.message : "Unknown error",
+          timestamp: new Date().toISOString(),
         });
       }
 
-      // In test mode or if URLs weren't generated, create the expected URLs
-      if (process.env.NODE_ENV === "test" || !lowResStorageUrl) {
+      // Set storage URLs if not generated
+      if (!lowResStorageUrl) {
         lowResStorageUrl = this.getPublicUrl(
-          this.getStoragePath({...options, isLowRes: true})
+          this.getStoragePath({ ...options, isLowRes: true })
         );
       }
-      if (process.env.NODE_ENV === "test" || !highResStorageUrl) {
+      if (!highResStorageUrl) {
         highResStorageUrl = this.getPublicUrl(
-          this.getStoragePath({...options, isHighRes: true})
+          this.getStoragePath({ ...options, isHighRes: true })
         );
       }
 
@@ -301,15 +404,26 @@ export class ImageHandler {
         size: lowResBuffer?.length || 0,
         updated: new Date(),
         hash: lowResBuffer ? await this.getImageHash(lowResBuffer) : "",
-        originalSize: originalBuffer?.length,
         highResSize: highResBuffer?.length,
         lowResSize: lowResBuffer?.length,
       };
 
       await this.saveMetadata(options, metadata);
 
+      await logInfo("Image processing completed", {
+        productId,
+        groupId,
+        updated,
+        highResUrl: highResStorageUrl,
+        lowResUrl: lowResStorageUrl,
+        sizes: {
+          highRes: highResBuffer?.length,
+          lowRes: lowResBuffer?.length,
+        },
+        timestamp: new Date().toISOString(),
+      });
+
       return {
-        originalUrl: imageUrl,
         highResUrl: highResStorageUrl,
         lowResUrl: lowResStorageUrl,
         metadata,
@@ -324,7 +438,6 @@ export class ImageHandler {
       };
       await logError(genericError, "processImage");
       return {
-        originalUrl: imageUrl,
         highResUrl: "",
         lowResUrl: "",
         metadata: {
@@ -332,7 +445,6 @@ export class ImageHandler {
           size: 0,
           updated: new Date(),
           hash: "",
-          originalSize: 0,
           highResSize: 0,
           lowResSize: 0,
         },
@@ -340,103 +452,6 @@ export class ImageHandler {
       };
     }
   }
-
-  async cleanup(dryRun = true): Promise<void> {
-    try {
-      const [files] = await this.bucket.getFiles({
-        prefix: STORAGE.PATHS.IMAGES,
-      });
-
-      const activeImages = await db.collection(COLLECTION.IMAGE_METADATA).get();
-      const activeImagePaths = new Set(
-        activeImages.docs.flatMap((doc) => {
-          const data = doc.data();
-          return [
-            this.getStoragePath({
-              groupId: data.groupId,
-              productId: data.productId,
-              cardNumber: data.cardNumber,
-              isHighRes: true,
-            }),
-            this.getStoragePath({
-              groupId: data.groupId,
-              productId: data.productId,
-              cardNumber: data.cardNumber,
-              isLowRes: true,
-            }),
-          ];
-        })
-      );
-
-      let deletedCount = 0;
-      for (const file of files) {
-        if (!activeImagePaths.has(file.name)) {
-          if (!dryRun) {
-            await file.delete();
-          }
-          deletedCount++;
-        }
-      }
-
-      if (!dryRun) {
-        imageCache.clear();
-      }
-
-      await logInfo("Cleanup complete", {
-        deletedCount,
-        mode: dryRun ? "dry-run" : "actual",
-        timestamp: new Date().toISOString(),
-        cacheStats: imageCache.getStats(),
-      });
-    } catch (error) {
-      const genericError: GenericError = {
-        message: error instanceof Error ? error.message : "Unknown error",
-        name: error instanceof Error ? error.name : "UnknownError",
-        code: error instanceof AxiosError ? error.code : undefined,
-        stack: error instanceof Error ? error.stack : undefined,
-      };
-      await logError(genericError, "cleanup");
-    }
-  }
-
-  async getStorageStats(): Promise<{
-    totalFiles: number;
-    activeFiles: number;
-    orphanedFiles: number;
-  }> {
-    const [files] = await this.bucket.getFiles({
-      prefix: STORAGE.PATHS.IMAGES,
-    });
-
-    const activeImages = await db.collection(COLLECTION.IMAGE_METADATA).get();
-    const activeImagePaths = new Set(
-      activeImages.docs.flatMap((doc) => {
-        const data = doc.data();
-        return [
-          this.getStoragePath({
-            groupId: data.groupId,
-            productId: data.productId,
-            cardNumber: data.cardNumber,
-            isHighRes: true,
-          }),
-          this.getStoragePath({
-            groupId: data.groupId,
-            productId: data.productId,
-            cardNumber: data.cardNumber,
-            isLowRes: true,
-          }),
-        ];
-      })
-    );
-
-    const totalFiles = files.length;
-    const activeFiles = activeImagePaths.size;
-    const orphanedFiles = totalFiles - activeFiles;
-
-    return {
-      totalFiles,
-      activeFiles,
-      orphanedFiles,
-    };
-  }
 }
+
+export const imageHandler = new ImageHandler();

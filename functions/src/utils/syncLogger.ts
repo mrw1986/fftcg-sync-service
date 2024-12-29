@@ -10,7 +10,6 @@ interface CardDetails {
     price: number;
     groupId: string;
   }>;
-  originalUrl?: string;
   highResUrl?: string;
   lowResUrl?: string;
 }
@@ -64,7 +63,7 @@ export class SyncLogger {
     prices: number
   ): Promise<void> {
     if (!this.options.groupId || this.options.groupId === groupId) {
-      this.groups.set(groupId, {products, prices});
+      this.groups.set(groupId, { products, prices });
       console.log(`Group ${groupId}: ${products} products, ${prices} prices`);
     }
   }
@@ -88,15 +87,14 @@ export class SyncLogger {
         });
       }
 
-      if (details.originalUrl || details.highResUrl || details.lowResUrl) {
+      if (details.highResUrl || details.lowResUrl) {
         console.log("Images:");
-        if (details.originalUrl) {
-          console.log(`  Original: ${details.originalUrl}`);
-        }
         if (details.highResUrl) {
           console.log(`  High Res: ${details.highResUrl}`);
         }
-        if (details.lowResUrl) console.log(`  Low Res: ${details.lowResUrl}`);
+        if (details.lowResUrl) {
+          console.log(`  Low Res: ${details.lowResUrl}`);
+        }
       }
     }
   }
@@ -142,7 +140,7 @@ export class SyncLogger {
     if (this.cards.length > 0) {
       console.log(`\nProcessed Cards: ${this.cards.length}`);
       const withImages = this.cards.filter(
-        (card) => card.originalUrl || card.highResUrl || card.lowResUrl
+        (card) => card.highResUrl || card.lowResUrl
       ).length;
       console.log(`Cards with Images: ${withImages}`);
       console.log(`Cards without Images: ${this.cards.length - withImages}`);

@@ -4,34 +4,18 @@ firebase-debug.log
 firebase-debug.*.log
 ui-debug.log
 .runtimeconfig.json
-FirebaseAuth.vue
-docs/codebase.xml
-docs/.vitepress/theme/FirebaseAuth.vue
-docs/codebase.xml
-codebase.xml
-.env.local
 .env
-docs/.env.local
-docs/.env
-functions-backup/
+.env.*
+!.env.example
+FirebaseAuth.vue
+service_account_key.json
 
 # Build and Dependencies
 functions/lib/
 node_modules/
 functions/node_modules/
 dist/
-
-# Environment and Configuration
-.env
-.env.*
-.env.local
-.env.*.local
-*.local
-service_account_key.json
-functions/.env
-functions/.env.*
-functions/.runtimeconfig.json
-functions-backup/
+*.tsbuildinfo
 
 # IDE and Editors
 .idea/
@@ -40,6 +24,7 @@ functions-backup/
 *.swo
 .DS_Store
 Thumbs.db
+*.code-workspace
 
 # Logs and Debug
 logs/
@@ -54,11 +39,33 @@ ui-debug.log*
 .npm/
 .eslintcache
 .cache/
-.npm
-*.tsbuildinfo
+.temp/
+*.tmp
+.vitepress/cache/
+.vitepress/dist/
 
-# Backups
-backups/
+# Documentation Build
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+docs/codebase.xml
+sync_service_codebase.xml
+file_structure.xml
 
 # Testing and Coverage
 coverage/
+.nyc_output/
+
+# Backup Files
+backups/
+functions-backup/
+*.bak
+
+# Environment Files
+.env.local
+.env.*.local
+functions/.env
+functions/.env.*
+functions/.runtimeconfig.json
+
+# Generated Files
+repomix-output.txt
