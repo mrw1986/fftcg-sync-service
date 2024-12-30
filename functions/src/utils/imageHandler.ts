@@ -1,11 +1,11 @@
-import axios, { AxiosError } from "axios";
-import { storage, STORAGE, COLLECTION, db } from "../config/firebase";
-import { logError, logInfo, logWarning } from "./logger";
+import axios, {AxiosError} from "axios";
+import {storage, STORAGE, COLLECTION, db} from "../config/firebase";
+import {logError, logInfo, logWarning} from "./logger";
 import * as crypto from "crypto";
-import { GenericError, ImageMetadata, ImageProcessingResult } from "../types";
-import { ImageValidator } from "./imageValidator";
-import { imageCache } from "./imageCache";
-import { ImageCompressor } from "./imageCompressor";
+import {GenericError, ImageMetadata, ImageProcessingResult} from "../types";
+import {ImageValidator} from "./imageValidator";
+import {imageCache} from "./imageCache";
+import {ImageCompressor} from "./imageCompressor";
 
 interface ImagePathOptions {
   groupId: string;
@@ -92,7 +92,7 @@ export class ImageHandler {
         responseType: "arraybuffer",
         timeout: 30000,
         headers: {
-          Accept: "image/jpeg",
+          "Accept": "image/jpeg",
           "User-Agent": "FFTCG-Sync-Service/1.0",
         },
       });
@@ -237,9 +237,9 @@ export class ImageHandler {
     metadata: ImageMetadata
   ): Promise<void> {
     const sanitizedCardNumber = this.sanitizeCardNumber(options.cardNumber);
-const docRef = db
-  .collection(COLLECTION.IMAGE_METADATA)
-  .doc(`${options.groupId}_${options.productId}_${sanitizedCardNumber}`);
+    const docRef = db
+      .collection(COLLECTION.IMAGE_METADATA)
+      .doc(`${options.groupId}_${options.productId}_${sanitizedCardNumber}`);
 
     await docRef.set(
       {
@@ -250,7 +250,7 @@ const docRef = db
         sanitizedCardNumber, // Optionally store the sanitized version
         lastUpdated: new Date(),
       },
-      { merge: true }
+      {merge: true}
     );
 
     await logInfo("Saved image metadata", {
@@ -308,7 +308,7 @@ const docRef = db
           lowResBuffer = await this.compressImage(lowResBuffer, false);
           if (
             await this.shouldUpdateImage(
-              { ...options, isLowRes: true },
+              {...options, isLowRes: true},
               lowResBuffer
             )
           ) {
@@ -356,7 +356,7 @@ const docRef = db
           highResBuffer = await this.compressImage(highResBuffer, true);
           if (
             await this.shouldUpdateImage(
-              { ...options, isHighRes: true },
+              {...options, isHighRes: true},
               highResBuffer
             )
           ) {
@@ -390,12 +390,12 @@ const docRef = db
       // Set storage URLs if not generated
       if (!lowResStorageUrl) {
         lowResStorageUrl = this.getPublicUrl(
-          this.getStoragePath({ ...options, isLowRes: true })
+          this.getStoragePath({...options, isLowRes: true})
         );
       }
       if (!highResStorageUrl) {
         highResStorageUrl = this.getPublicUrl(
-          this.getStoragePath({ ...options, isHighRes: true })
+          this.getStoragePath({...options, isHighRes: true})
         );
       }
 

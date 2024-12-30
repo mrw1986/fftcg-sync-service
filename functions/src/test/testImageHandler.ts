@@ -54,7 +54,6 @@ async function testImageProcessing() {
       console.log("\nProcessing Results:");
       console.log(`Status: ${result.updated ? "Updated" : "Unchanged"}`);
       console.log("\nURL Structure:");
-      console.log(`Original URL: ${result.originalUrl}`);
       console.log(`High-res URL: ${result.highResUrl}`);
       console.log(`Low-res URL: ${result.lowResUrl}`);
 
@@ -116,7 +115,6 @@ async function testImageProcessing() {
 
     // Test cleanup (dry run)
     console.log("\n=== Cleanup Test (Dry Run) ===");
-    await imageHandler.cleanup(true);
   } catch (error) {
     console.error("\nTest failed:", error);
     process.exit(1);

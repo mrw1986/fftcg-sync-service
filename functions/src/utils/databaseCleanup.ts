@@ -1,6 +1,6 @@
-import { db, COLLECTION } from "../config/firebase";
-import { logInfo } from "./logger";
-import { FieldValue } from "firebase-admin/firestore";
+import {db, COLLECTION} from "../config/firebase";
+import {logInfo} from "./logger";
+import {FieldValue} from "firebase-admin/firestore";
 
 export async function cleanupImageUrls(): Promise<void> {
   let count = 0;

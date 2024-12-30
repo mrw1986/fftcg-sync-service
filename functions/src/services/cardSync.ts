@@ -13,13 +13,13 @@ import {
   GenericError,
   BatchProcessingStats,
 } from "../types";
-import { cardCache, getCacheKey } from "../utils/cache";
-import { logError, logInfo } from "../utils/logger";
+import {cardCache, getCacheKey} from "../utils/cache";
+import {logError, logInfo} from "../utils/logger";
 import * as crypto from "crypto";
-import { SyncLogger } from "../utils/syncLogger";
-import { ImageHandler } from "../utils/imageHandler";
-import { makeRequest, processBatch, sanitizeDocumentId } from "../utils/syncUtils";
-import { Query } from '@google-cloud/firestore';
+import {SyncLogger} from "../utils/syncLogger";
+import {ImageHandler} from "../utils/imageHandler";
+import {makeRequest, processBatch, sanitizeDocumentId} from "../utils/syncUtils";
+import {Query} from "@google-cloud/firestore";
 
 // Add this type
 type FirestoreQuery = Query<FirebaseFirestore.DocumentData>;
@@ -81,7 +81,7 @@ async function processGroupProducts(
     const productsResponse = await makeRequest<{ results: CardProduct[] }>(
       `${FFTCG_CATEGORY_ID}/${groupId}/products`,
       BASE_URL,
-      { metadata: { groupId, groupName: group.name } }
+      {metadata: {groupId, groupName: group.name}}
     );
 
     const products = productsResponse.results;
@@ -184,7 +184,7 @@ async function processGroupProducts(
               };
             }
 
-            writeBatch.set(cardRef, productData, { merge: true });
+            writeBatch.set(cardRef, productData, {merge: true});
 
             cardCache.set(
               getCacheKey("card", product.productId, cardNumber),
@@ -264,11 +264,11 @@ async function processGroupProducts(
     return processedCards;
   } catch (error) {
     const syncError =
-      error instanceof Error
-        ? new SyncError(error.message, "GROUP_PROCESSING_ERROR", { groupId })
-        : new SyncError("Unknown group processing error", "UNKNOWN_ERROR", {
-            groupId,
-          });
+      error instanceof Error ?
+        new SyncError(error.message, "GROUP_PROCESSING_ERROR", {groupId}) :
+        new SyncError("Unknown group processing error", "UNKNOWN_ERROR", {
+          groupId,
+        });
 
     const errorMessage = `Error processing group ${groupId}: ${syncError.message}`;
     metadata.errors.push(errorMessage);
@@ -280,15 +280,15 @@ async function processGroupProducts(
 export async function syncCards(
   options: SyncOptions = {}
 ): Promise<SyncMetadata> {
-  const logger = options.silent
-    ? undefined
-    : new SyncLogger({
-        type: options.dryRun ? "manual" : "scheduled",
-        limit: options.limit,
-        dryRun: options.dryRun,
-        groupId: options.groupId,
-        batchSize: 25,
-      });
+  const logger = options.silent ?
+    undefined :
+    new SyncLogger({
+      type: options.dryRun ? "manual" : "scheduled",
+      limit: options.limit,
+      dryRun: options.dryRun,
+      groupId: options.groupId,
+      batchSize: 25,
+    });
 
   if (logger) await logger.start();
 
@@ -313,7 +313,7 @@ export async function syncCards(
         const groupResponse = await makeRequest<{ results: any[] }>(
           `${FFTCG_CATEGORY_ID}/groups`,
           BASE_URL,
-          { metadata: { operation: "fetchGroups" } }
+          {metadata: {operation: "fetchGroups"}}
         );
 
         const group = groupResponse.results.find(
@@ -323,7 +323,7 @@ export async function syncCards(
           throw new SyncError(
             `Group ${options.groupId} not found`,
             "GROUP_NOT_FOUND",
-            { groupId: options.groupId }
+            {groupId: options.groupId}
           );
         }
 
@@ -333,7 +333,7 @@ export async function syncCards(
         const groupsResponse = await makeRequest<{ results: any[] }>(
           `${FFTCG_CATEGORY_ID}/groups`,
           BASE_URL,
-          { metadata: { operation: "fetchGroups" } }
+          {metadata: {operation: "fetchGroups"}}
         );
         groups = groupsResponse.results;
       }
@@ -391,12 +391,12 @@ export async function syncCards(
         }
       } catch (error) {
         const syncError =
-          error instanceof Error
-            ? new SyncError(error.message, "IMAGE_PROCESSING_ERROR")
-            : new SyncError(
-                "Unknown error during image processing",
-                "UNKNOWN_ERROR"
-              );
+          error instanceof Error ?
+            new SyncError(error.message, "IMAGE_PROCESSING_ERROR") :
+            new SyncError(
+              "Unknown error during image processing",
+              "UNKNOWN_ERROR"
+            );
 
         metadata.status = "failed";
         metadata.errors.push(syncError.message);
@@ -423,9 +423,9 @@ export async function syncCards(
       metadata.errors.length > 0 ? "completed_with_errors" : "success";
   } catch (error) {
     const syncError =
-      error instanceof Error
-        ? new SyncError(error.message, "SYNC_MAIN_ERROR")
-        : new SyncError("Unknown sync error", "UNKNOWN_ERROR");
+      error instanceof Error ?
+        new SyncError(error.message, "SYNC_MAIN_ERROR") :
+        new SyncError("Unknown sync error", "UNKNOWN_ERROR");
 
     metadata.status = "failed";
     metadata.errors.push(syncError.message);

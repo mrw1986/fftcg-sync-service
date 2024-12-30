@@ -47,7 +47,7 @@ async function parseCommandLineArgs(): Promise<RefreshOptions> {
     isDryRun: args.includes("--dry-run"),
     isVerbose: args.includes("--verbose"),
     isForce: args.includes("--force"),
-    groupId: args.includes("--group-id") ? 
+    groupId: args.includes("--group-id") ?
       args[args.indexOf("--group-id") + 1] : undefined,
     skipImages: args.includes("--skip-images"),
     imagesOnly: args.includes("--images-only"),
@@ -84,9 +84,9 @@ function validateOptions(options: RefreshOptions): void {
 
 function getSyncMode(options: RefreshOptions): SyncMode {
   return {
-    type: options.imagesOnly ? 'images' : options.skipImages ? 'data' : 'full',
+    type: options.imagesOnly ? "images" : options.skipImages ? "data" : "full",
     isForced: options.isForce,
-    isDryRun: options.isDryRun
+    isDryRun: options.isDryRun,
   };
 }
 
@@ -133,18 +133,18 @@ export async function refreshDatabase(): Promise<void> {
     });
 
     // Price Sync Analysis (skip if images-only)
-    const priceResult = !options.imagesOnly
-      ? await syncPrices({
-          dryRun: true,
-          silent: !options.isVerbose,
-          force: options.isForce,
-          groupId: options.groupId,
-        })
-      : {
-          cardCount: 0,
-          groupsUpdated: 0,
-          errors: [],
-        };
+    const priceResult = !options.imagesOnly ?
+      await syncPrices({
+        dryRun: true,
+        silent: !options.isVerbose,
+        force: options.isForce,
+        groupId: options.groupId,
+      }) :
+      {
+        cardCount: 0,
+        groupsUpdated: 0,
+        errors: [],
+      };
 
     // Display Analysis Results
     console.log("\nAnalysis Results:");
@@ -185,18 +185,18 @@ export async function refreshDatabase(): Promise<void> {
       });
 
       // Perform Price Updates (skip if images-only)
-      const priceUpdateResult = !options.imagesOnly
-        ? await syncPrices({
-            dryRun: false,
-            silent: !options.isVerbose,
-            force: options.isForce,
-            groupId: options.groupId,
-          })
-        : {
-            cardCount: 0,
-            groupsUpdated: 0,
-            errors: [],
-          };
+      const priceUpdateResult = !options.imagesOnly ?
+        await syncPrices({
+          dryRun: false,
+          silent: !options.isVerbose,
+          force: options.isForce,
+          groupId: options.groupId,
+        }) :
+        {
+          cardCount: 0,
+          groupsUpdated: 0,
+          errors: [],
+        };
 
       // Display Update Results
       console.log("\nUpdate Results:");

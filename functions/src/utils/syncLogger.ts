@@ -63,7 +63,7 @@ export class SyncLogger {
     prices: number
   ): Promise<void> {
     if (!this.options.groupId || this.options.groupId === groupId) {
-      this.groups.set(groupId, { products, prices });
+      this.groups.set(groupId, {products, prices});
       console.log(`Group ${groupId}: ${products} products, ${prices} prices`);
     }
   }
