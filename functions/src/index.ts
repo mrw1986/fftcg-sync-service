@@ -63,7 +63,29 @@ export const scheduledCardSync = onSchedule(
     retryCount: 3,
   },
   async (_context) => {
-    await syncCards();
+    try {
+      console.log("Starting scheduled card sync...");
+
+      // Use syncCards with specific options for scheduled run
+      const result = await syncCards({
+        dryRun: false,
+        skipImages: false, // Ensure images are processed
+        imagesOnly: false,
+        silent: false,
+        force: false, // Only update changed cards
+      });
+
+      console.log(`Sync completed. Processed ${result.cardCount} cards`);
+      console.log(`Images processed: ${result.imagesProcessed || 0}`);
+      console.log(`Images updated: ${result.imagesUpdated || 0}`);
+
+      if (result.errors.length > 0) {
+        console.error("Errors during sync:", result.errors);
+      }
+    } catch (error) {
+      console.error("Card sync failed:", error);
+      throw error; // Allow Firebase to handle retry
+    }
   }
 );
 

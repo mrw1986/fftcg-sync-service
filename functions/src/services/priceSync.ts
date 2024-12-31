@@ -10,6 +10,7 @@ import {
   SyncMetadata,
   GenericError,
   GenericObject,
+  PriceData,
 } from "../types";
 import {logInfo, logError} from "../utils/logger";
 
@@ -21,7 +22,7 @@ async function fetchPricesForGroup(groupId: string): Promise<CardPrice[]> {
   const pricesResponse = await makeRequest<{ results: CardPrice[] }>(
     constructTCGCSVPath(endpoint)
   );
-  logInfo("Fetched prices for group", {
+  await logInfo("Fetched prices for group", {
     groupId,
     count: pricesResponse.results.length,
   });
@@ -29,9 +30,34 @@ async function fetchPricesForGroup(groupId: string): Promise<CardPrice[]> {
 }
 
 /**
+ * Process and organize price data
+ */
+function organizePriceData(prices: CardPrice[]): Map<number, PriceData> {
+  const priceMap = new Map<number, PriceData>();
+
+  for (const price of prices) {
+    const existingData = priceMap.get(price.productId) || {
+      lastUpdated: new Date(),
+      productId: price.productId,
+      cardNumber: price.cardNumber || "",
+    };
+
+    if (price.subTypeName === "Normal") {
+      existingData.normal = price;
+    } else if (price.subTypeName === "Foil") {
+      existingData.foil = price;
+    }
+
+    priceMap.set(price.productId, existingData);
+  }
+
+  return priceMap;
+}
+
+/**
  * Generate a document ID for price data.
  */
-function getDocumentIdForPrice(productId: number, cardNumber: string): string {
+function getPriceDocumentId(productId: number, cardNumber: string): string {
   return validateAndFixDocumentId(productId, cardNumber);
 }
 
@@ -51,36 +77,71 @@ export async function syncPrices(
     errors: [],
   };
 
-  logInfo("Starting price sync", {options});
+  await logInfo("Starting price sync", {options});
 
   try {
     const prices = await fetchPricesForGroup(options.groupId || "");
+    const priceMap = organizePriceData(prices);
     const writeBatch = db.batch();
+    let batchCount = 0;
 
-    for (const price of prices) {
-      const cardNumber = (price as any).cardNumber || "unknown"; // Using fallback if cardNumber is missing
-      const documentId = getDocumentIdForPrice(price.productId, cardNumber);
+    for (const [productId, priceData] of priceMap) {
+      try {
+        if (!priceData.cardNumber) {
+          throw new Error(`Missing card number for product ${productId}`);
+        }
 
-      logInfo("Processing price", {
-        productId: price.productId,
-        cardNumber,
-        documentId,
-      });
+        const documentId = getPriceDocumentId(productId, priceData.cardNumber);
 
-      writeBatch.set(db.collection(COLLECTION.PRICES).doc(documentId), price);
-      metadata.cardCount++;
+        await logInfo("Processing price", {
+          productId,
+          cardNumber: priceData.cardNumber,
+          documentId,
+        });
+
+        writeBatch.set(db.collection(COLLECTION.PRICES).doc(documentId), {
+          ...priceData,
+          lastUpdated: new Date(),
+        });
+
+        batchCount++;
+        metadata.cardCount++;
+
+        // Commit batch if it reaches the limit
+        if (batchCount >= 500) {
+          await writeBatch.commit();
+          batchCount = 0;
+        }
+
+        // Break if limit reached
+        if (options.limit && metadata.cardCount >= options.limit) {
+          break;
+        }
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
+        metadata.errors.push(
+          `Error processing price for product ${productId}: ${errorMessage}`
+        );
+        await logError(error as GenericError, "syncPrices");
+      }
     }
 
-    await writeBatch.commit();
+    // Commit any remaining batch operations
+    if (batchCount > 0) {
+      await writeBatch.commit();
+    }
 
-    metadata.status = "success";
-    logInfo("Price sync completed successfully", {metadata});
+    metadata.status =
+      metadata.errors.length > 0 ? "completed_with_errors" : "success";
+    await logInfo("Price sync completed", {metadata});
   } catch (error) {
     metadata.status = "failed";
     metadata.errors.push(
       error instanceof Error ? error.message : "Unknown error"
     );
-    logError(error as GenericError | GenericObject, "syncPrices");
+    await logError(error as GenericError | GenericObject, "syncPrices");
+    throw error;
   }
 
   return metadata;

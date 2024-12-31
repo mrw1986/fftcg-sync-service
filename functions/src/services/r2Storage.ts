@@ -4,9 +4,12 @@ import {
   HeadObjectCommand,
   DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
-import {R2_CONFIG} from "../config/r2"; // Import the R2 configuration
-import {logInfo, logWarning} from "../utils/logger";
+import {R2_CONFIG} from "../config/r2";
+import {db, COLLECTION} from "../config/firebase";
+import {logInfo, logWarning, logError} from "../utils/logger";
 import {ImagePathOptions} from "../utils/imageHandler";
+import {GenericError} from "../types";
+import type {DocumentData} from "firebase-admin/firestore";
 
 // Define RollbackInfo type
 interface RollbackInfo {
@@ -78,7 +81,7 @@ export class R2Storage {
       // Store current metadata for potential rollback
       const existingMetadata = await this.getImageMetadata(path);
       if (existingMetadata) {
-        this.addToRollback(path, existingMetadata); // Add to rollback queue
+        this.addToRollback(path, existingMetadata);
       }
 
       // Upload to R2
@@ -219,7 +222,7 @@ export class R2Storage {
     const storedMetadata = await this.getImageMetadata(path);
     if (!storedMetadata) return false;
 
-    const relevantFields = ["hash", "type", "size"]; // Compare only relevant fields
+    const relevantFields = ["hash", "type", "size"];
     const matches = relevantFields.every(
       (field) => storedMetadata[field] === expectedMetadata[field]
     );
@@ -295,9 +298,69 @@ export class R2Storage {
     return `${this.customDomain}/${this.getFullPath(path)}`;
   }
 
-  // Add the 'addToRollback' method
   private addToRollback(path: string, metadata: Record<string, string>): void {
     this.rollbackQueue.push({path, metadata});
+  }
+
+  async validateStorageSetup(): Promise<boolean> {
+    try {
+      const testKey = `test/validate-${Date.now()}.txt`;
+      const testContent = Buffer.from("Storage validation test");
+
+      // Test write
+      await this.uploadImage(testKey, testContent, {
+        type: "test",
+        timestamp: new Date().toISOString(),
+      });
+
+      // Test read
+      const exists = await this.fileExists(testKey);
+      const metadata = await this.getImageMetadata(testKey);
+
+      // Test delete
+      await this.deleteFile(testKey);
+
+      return exists && !!metadata;
+    } catch (error) {
+      await logError(error as GenericError, "R2 storage validation failed");
+      return false;
+    }
+  }
+
+  async cleanupOrphanedImages(): Promise<void> {
+    try {
+      // Get all image references from Firestore
+      const cardDocs = await db.collection(COLLECTION.CARDS).get();
+      const validPaths = new Set<string>();
+
+      cardDocs.forEach((doc: DocumentData) => {
+        const data = doc.data();
+        if (data.highResUrl) {
+          validPaths.add(this.getPathFromUrl(data.highResUrl));
+        }
+        if (data.lowResUrl) {
+          validPaths.add(this.getPathFromUrl(data.lowResUrl));
+        }
+      });
+
+      await logInfo("Found valid image paths", {
+        count: validPaths.size,
+        paths: Array.from(validPaths),
+      });
+
+      // TODO: Implement R2 bucket listing and cleanup
+      // Note: Implementation depends on your R2 setup
+    } catch (error) {
+      await logError(
+        error as GenericError,
+        "Failed to cleanup orphaned images"
+      );
+      throw error;
+    }
+  }
+
+  private getPathFromUrl(url: string): string {
+    return url.replace(this.customDomain, "").replace(/^\/+/, "");
   }
 }
 

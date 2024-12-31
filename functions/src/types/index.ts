@@ -10,6 +10,16 @@ export interface GenericError extends Error {
   stack?: string;
 }
 
+export interface MigrationResult {
+  success: boolean;
+  error?: string;
+  stats: {
+    processed: number;
+    skipped: number;
+    errors: string[];
+  };
+}
+
 export interface CardProduct {
   productId: number;
   name: string;
