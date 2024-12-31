@@ -1,13 +1,16 @@
+// src/utils/imageHandler.ts
+
 import axios, {AxiosError} from "axios";
-import {storage, STORAGE, COLLECTION, db} from "../config/firebase";
+import {COLLECTION, db} from "../config/firebase";
 import {logError, logInfo, logWarning} from "./logger";
 import * as crypto from "crypto";
 import {GenericError, ImageMetadata, ImageProcessingResult} from "../types";
 import {ImageValidator} from "./imageValidator";
 import {imageCache} from "./imageCache";
 import {ImageCompressor} from "./imageCompressor";
+import {r2Storage} from "../services/r2Storage";
 
-interface ImagePathOptions {
+export interface ImagePathOptions {
   groupId: string;
   productId: number;
   cardNumber: string;
@@ -16,16 +19,19 @@ interface ImagePathOptions {
 }
 
 export class ImageHandler {
-  private bucket = storage.bucket(STORAGE.BUCKETS.CARD_IMAGES);
-  private baseStorageUrl = `https://storage.googleapis.com/${STORAGE.BUCKETS.CARD_IMAGES}`;
-
-  private sanitizeCardNumber(cardNumber: string): string {
-    // Replace forward slashes with underscores or another safe character
+  private sanitizeCardNumber(cardNumber: string | undefined): string {
+    if (!cardNumber) {
+      throw new Error("Card number is required");
+    }
     return cardNumber.replace(/\//g, "_");
   }
 
   private getHighResUrl(imageUrl: string): string {
     return imageUrl.replace(/_200w\.jpg$/, "_400w.jpg");
+  }
+
+  private getPublicUrl(path: string): string {
+    return r2Storage.getPublicUrl(path);
   }
 
   private getStoragePath(options: ImagePathOptions): string {
@@ -35,11 +41,7 @@ export class ImageHandler {
     }
     const sanitizedCardNumber = this.sanitizeCardNumber(options.cardNumber);
     const fileName = `${options.productId}_${sanitizedCardNumber}${suffix}.jpg`;
-    return `${STORAGE.PATHS.IMAGES}/${options.groupId}/${fileName}`;
-  }
-
-  private getPublicUrl(storagePath: string): string {
-    return `${this.baseStorageUrl}/${storagePath}`;
+    return `${options.groupId}/${fileName}`;
   }
 
   private async getImageHash(imageBuffer: Buffer): Promise<string> {
@@ -98,10 +100,10 @@ export class ImageHandler {
       });
 
       const buffer = Buffer.from(response.data);
-      const validationError = await ImageValidator.validateImage(buffer);
+      const validationResult = await ImageValidator.validateImage(buffer);
 
-      if (validationError) {
-        throw new Error(`Image validation failed: ${validationError.message}`);
+      if (!validationResult.isValid) {
+        throw new Error(`Image validation failed: ${validationResult.error}`);
       }
 
       imageCache.setBuffer(cacheKey, buffer);
@@ -141,9 +143,9 @@ export class ImageHandler {
 
     try {
       const storagePath = this.getStoragePath(options);
-      const [fileExists] = await this.bucket.file(storagePath).exists();
+      const exists = await r2Storage.fileExists(storagePath);
 
-      if (!fileExists) {
+      if (!exists) {
         await logInfo("Image does not exist in storage", {
           path: storagePath,
           timestamp: new Date().toISOString(),
@@ -151,8 +153,8 @@ export class ImageHandler {
         return true;
       }
 
-      const [metadata] = await this.bucket.file(storagePath).getMetadata();
-      const currentHash = metadata.metadata?.hash;
+      const metadata = await r2Storage.getImageMetadata(storagePath);
+      const currentHash = metadata?.hash;
       const newHash = await this.getImageHash(imageBuffer);
 
       await logInfo("Image hash comparison", {
@@ -201,21 +203,11 @@ export class ImageHandler {
       }
     );
 
-    await this.bucket.file(storagePath).save(buffer, {
-      metadata: {
-        contentType: "image/jpeg",
-        metadata: {
-          hash,
-          type: isHighRes ? "highres" : "lowres",
-          updatedAt: new Date().toISOString(),
-        },
-        cacheControl: "public, max-age=31536000",
-      },
-      public: true,
+    const url = await r2Storage.uploadImage(storagePath, buffer, {
+      hash,
+      type: isHighRes ? "highres" : "original",
+      updatedAt: new Date().toISOString(),
     });
-
-    const [exists] = await this.bucket.file(storagePath).exists();
-    const publicUrl = this.getPublicUrl(storagePath);
 
     await logInfo(
       `${isHighRes ? "High-res" : "Low-res"} image saved successfully`,
@@ -223,13 +215,12 @@ export class ImageHandler {
         path: storagePath,
         size: buffer.length,
         hash,
-        exists,
-        publicUrl,
+        url,
         timestamp: new Date().toISOString(),
       }
     );
 
-    return publicUrl;
+    return url;
   }
 
   private async saveMetadata(
@@ -246,8 +237,8 @@ export class ImageHandler {
         ...metadata,
         groupId: options.groupId,
         productId: options.productId,
-        cardNumber: options.cardNumber, // Keep the original card number in the metadata
-        sanitizedCardNumber, // Optionally store the sanitized version
+        cardNumber: options.cardNumber,
+        sanitizedCardNumber,
         lastUpdated: new Date(),
       },
       {merge: true}
@@ -293,18 +284,8 @@ export class ImageHandler {
 
       // Process low-res image
       try {
-        await logInfo("Downloading low-res image", {
-          url: imageUrl,
-          timestamp: new Date().toISOString(),
-        });
-
         lowResBuffer = await this.downloadImage(imageUrl);
         if (lowResBuffer) {
-          await logInfo("Compressing low-res image", {
-            originalSize: lowResBuffer.length,
-            timestamp: new Date().toISOString(),
-          });
-
           lowResBuffer = await this.compressImage(lowResBuffer, false);
           if (
             await this.shouldUpdateImage(
@@ -317,42 +298,43 @@ export class ImageHandler {
               lowResBuffer,
               false
             );
-            updated = true;
 
-            await logInfo("Low-res image updated", {
-              url: lowResStorageUrl,
-              size: lowResBuffer.length,
-              timestamp: new Date().toISOString(),
+            // Add validation after upload
+            const lowResPath = this.getStoragePath({
+              ...options,
+              isLowRes: true,
             });
+            const lowResValid = await r2Storage.validateUpload(
+              lowResPath,
+              lowResBuffer.length
+            );
+            if (!lowResValid) {
+              throw new Error(
+                `Low-res image validation failed for ${lowResPath}`
+              );
+            }
+
+            updated = true;
           } else {
-            await logInfo("Low-res image unchanged", {
-              timestamp: new Date().toISOString(),
-            });
+            lowResStorageUrl = this.getPublicUrl(
+              this.getStoragePath({...options, isLowRes: true})
+            );
           }
         }
       } catch (error) {
         await logWarning("Low-res image processing failed", {
-          productId,
-          url: imageUrl,
           error: error instanceof Error ? error.message : "Unknown error",
-          timestamp: new Date().toISOString(),
+          imageUrl,
+          groupId,
+          productId,
         });
+        throw error;
       }
 
       // Process high-res image
       try {
-        await logInfo("Downloading high-res image", {
-          url: highResUrl,
-          timestamp: new Date().toISOString(),
-        });
-
         highResBuffer = await this.downloadImage(highResUrl);
         if (highResBuffer) {
-          await logInfo("Compressing high-res image", {
-            originalSize: highResBuffer.length,
-            timestamp: new Date().toISOString(),
-          });
-
           highResBuffer = await this.compressImage(highResBuffer, true);
           if (
             await this.shouldUpdateImage(
@@ -365,29 +347,40 @@ export class ImageHandler {
               highResBuffer,
               true
             );
-            updated = true;
 
-            await logInfo("High-res image updated", {
-              url: highResStorageUrl,
-              size: highResBuffer.length,
-              timestamp: new Date().toISOString(),
+            // Add validation after upload
+            const highResPath = this.getStoragePath({
+              ...options,
+              isHighRes: true,
             });
+            const highResValid = await r2Storage.validateUpload(
+              highResPath,
+              highResBuffer.length
+            );
+            if (!highResValid) {
+              throw new Error(
+                `High-res image validation failed for ${highResPath}`
+              );
+            }
+
+            updated = true;
           } else {
-            await logInfo("High-res image unchanged", {
-              timestamp: new Date().toISOString(),
-            });
+            highResStorageUrl = this.getPublicUrl(
+              this.getStoragePath({...options, isHighRes: true})
+            );
           }
         }
       } catch (error) {
         await logWarning("High-res image processing failed", {
-          productId,
-          url: highResUrl,
           error: error instanceof Error ? error.message : "Unknown error",
-          timestamp: new Date().toISOString(),
+          imageUrl: highResUrl,
+          groupId,
+          productId,
         });
+        throw error;
       }
 
-      // Set storage URLs if not generated
+      // Set default storage URLs if not generated
       if (!lowResStorageUrl) {
         lowResStorageUrl = this.getPublicUrl(
           this.getStoragePath({...options, isLowRes: true})
@@ -437,19 +430,8 @@ export class ImageHandler {
         stack: error instanceof Error ? error.stack : undefined,
       };
       await logError(genericError, "processImage");
-      return {
-        highResUrl: "",
-        lowResUrl: "",
-        metadata: {
-          contentType: "image/jpeg",
-          size: 0,
-          updated: new Date(),
-          hash: "",
-          highResSize: 0,
-          lowResSize: 0,
-        },
-        updated: false,
-      };
+      await r2Storage.rollback();
+      throw error;
     }
   }
 }

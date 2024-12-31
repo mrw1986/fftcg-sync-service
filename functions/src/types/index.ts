@@ -38,6 +38,7 @@ export interface CardPrice {
   marketPrice: number | null;
   directLowPrice: number | null;
   subTypeName: "Normal" | "Foil";
+  cardNumber?: string; // Add this if cardNumber exists
 }
 
 export interface SyncOptions {

@@ -11,9 +11,7 @@ db.settings({
   timestampsInSnapshots: true,
 });
 
-const storage = admin.storage(app);
-
-export {db, storage};
+export {db};
 
 export const COLLECTION = {
   CARDS: "cards",
@@ -23,15 +21,6 @@ export const COLLECTION = {
   CARD_HASHES: "cardHashes",
   PRICE_HASHES: "priceHashes",
   IMAGE_METADATA: "imageMetadata",
-};
-
-export const STORAGE = {
-  BUCKETS: {
-    CARD_IMAGES: "fftcg-sync-service.firebasestorage.app",
-  },
-  PATHS: {
-    IMAGES: "card-images",
-  },
 };
 
 export const BASE_URL = "https://tcgcsv.com/tcgplayer";

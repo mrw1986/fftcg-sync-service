@@ -39,19 +39,59 @@ interface RefreshOptions {
   groupId?: string;
   skipImages: boolean;
   imagesOnly: boolean;
+  limit?: number; // Add this line
 }
 
 async function parseCommandLineArgs(): Promise<RefreshOptions> {
   const args = process.argv.slice(2);
-  return {
-    isDryRun: args.includes("--dry-run"),
-    isVerbose: args.includes("--verbose"),
-    isForce: args.includes("--force"),
-    groupId: args.includes("--group-id") ?
-      args[args.indexOf("--group-id") + 1] : undefined,
-    skipImages: args.includes("--skip-images"),
-    imagesOnly: args.includes("--images-only"),
+  console.log("Raw command line arguments:", args);
+
+  const options: RefreshOptions = {
+    isDryRun: false,
+    isVerbose: false,
+    isForce: false,
+    skipImages: false,
+    imagesOnly: false,
+    limit: undefined,
+    groupId: undefined,
   };
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    const nextArg = args[i + 1];
+
+    switch (arg) {
+    case "--dry-run":
+      options.isDryRun = true;
+      break;
+    case "--verbose":
+      options.isVerbose = true;
+      break;
+    case "--force":
+      options.isForce = true;
+      break;
+    case "--skip-images":
+      options.skipImages = true;
+      break;
+    case "--images-only":
+      options.imagesOnly = true;
+      break;
+    case "--group-id":
+      if (nextArg && !nextArg.startsWith("--")) {
+        options.groupId = nextArg;
+        i++; // Skip next argument since we used it
+      }
+      break;
+    case "--limit":
+      if (nextArg && !nextArg.startsWith("--")) {
+        options.limit = parseInt(nextArg, 10);
+        i++; // Skip next argument since we used it
+      }
+      break;
+    }
+  }
+
+  return options;
 }
 
 async function resetDatabase(): Promise<void> {
@@ -90,11 +130,15 @@ function getSyncMode(options: RefreshOptions): SyncMode {
   };
 }
 
-async function displayInitialSummary(options: RefreshOptions, mode: SyncMode): Promise<void> {
+async function displayInitialSummary(
+  options: RefreshOptions,
+  mode: SyncMode
+): Promise<void> {
   console.log(`\nFFTCG Database ${options.isDryRun ? "Analysis" : "Refresh"}`);
   console.log("==========================");
   console.log(`Mode: ${mode.type.toUpperCase()}`);
   if (options.groupId) console.log(`Processing group: ${options.groupId}`);
+  if (options.limit) console.log(`Limit: ${options.limit} items`); // Add this line
   console.log("Force mode:", options.isForce ? "enabled" : "disabled");
   console.log("Verbose mode:", options.isVerbose ? "enabled" : "disabled");
   console.log("Dry run:", options.isDryRun ? "yes" : "no");
@@ -108,6 +152,21 @@ export async function refreshDatabase(): Promise<void> {
   try {
     validateOptions(options);
     const mode = getSyncMode(options);
+
+    // Add detailed options logging
+    console.log("\nParsed Options:");
+    console.log("==============");
+    console.log({
+      isDryRun: options.isDryRun,
+      isVerbose: options.isVerbose,
+      isForce: options.isForce,
+      groupId: options.groupId,
+      skipImages: options.skipImages,
+      imagesOnly: options.imagesOnly,
+      limit: options.limit,
+    });
+    console.log(); // Add blank line for readability
+
     await displayInitialSummary(options, mode);
 
     const summary: RefreshSummary = {
@@ -117,6 +176,11 @@ export async function refreshDatabase(): Promise<void> {
 
     // Analysis Phase
     console.log("\nAnalyzing current state...");
+    console.log("Applied query parameters:");
+    console.log("- Group ID:", options.groupId || "all groups");
+    console.log("- Limit:", options.limit || "no limit");
+    console.log("- Images Only:", options.imagesOnly);
+    console.log(); // Add blank line for readability
 
     if (options.isForce && !options.isDryRun) {
       await clearHashes();
@@ -130,7 +194,23 @@ export async function refreshDatabase(): Promise<void> {
       silent: !options.isVerbose,
       force: options.isForce,
       groupId: options.groupId,
+      limit: options.limit,
     });
+
+    // Log the results of the card sync
+    console.log("\nCard Sync Configuration:");
+    console.log("======================");
+    console.log({
+      dryRun: true,
+      skipImages: options.skipImages,
+      imagesOnly: options.imagesOnly,
+      silent: !options.isVerbose,
+      force: options.isForce,
+      groupId: options.groupId,
+      limit: options.limit,
+      cardsFound: cardResult.cardCount,
+    });
+    console.log(); // Add blank line for readability
 
     // Price Sync Analysis (skip if images-only)
     const priceResult = !options.imagesOnly ?
@@ -240,8 +320,6 @@ export async function refreshDatabase(): Promise<void> {
 
     // Calculate and display duration
     const duration = (Date.now() - startTime) / 1000;
-    summary.duration = duration;
-
     console.log("\nOperation Summary:");
     console.log("-----------------");
     console.log(`Total Duration: ${duration.toFixed(2)} seconds`);
@@ -249,6 +327,14 @@ export async function refreshDatabase(): Promise<void> {
     console.log(`Operation Type: ${options.isDryRun ? "Analysis" : "Update"}`);
     if (options.groupId) {
       console.log(`Processed Group: ${options.groupId}`);
+    }
+    if (options.limit) {
+      console.log(`Limit Applied: ${options.limit}`);
+    }
+    console.log(`Total Cards Processed: ${cardResult.cardCount}`);
+    if (cardResult.imagesProcessed) {
+      console.log(`Images Processed: ${cardResult.imagesProcessed}`);
+      console.log(`Images Updated: ${cardResult.imagesUpdated || 0}`);
     }
   } catch (error) {
     const genericError: GenericError = {

@@ -1,31 +1,52 @@
 import axios, {AxiosError} from "axios";
 import {logWarning} from "./logger";
-import {BatchProcessingStats} from "../types";
 
+// Centralized constants
+export const BASE_URL = "https://tcgcsv.com/tcgplayer";
 export const MAX_RETRIES = 3;
 export const BASE_DELAY = 1000;
 
-export interface RequestOptions {
-  retryCount?: number;
-  customDelay?: number;
-  metadata?: Record<string, unknown>;
+/**
+ * Validates and constructs full paths for TCGCSV requests.
+ */
+export function constructTCGCSVPath(endpoint: string): string {
+  if (!endpoint.startsWith("/tcgplayer")) {
+    throw new Error(
+      `Invalid path: ${endpoint}. All paths must start with /tcgplayer.`
+    );
+  }
+  return `${BASE_URL}${endpoint}`;
 }
 
-export function sanitizeDocumentId(productId: number | string, cardNumber: string): string {
+/**
+ * Validates and fixes document IDs, including promo cards.
+ */
+export function validateAndFixDocumentId(
+  productId: number,
+  cardNumber: string
+): string {
+  if (!productId || !cardNumber) {
+    throw new Error(
+      "Missing productId or cardNumber for document ID generation."
+    );
+  }
+
   const sanitizedCardNumber = cardNumber.replace(/\//g, "_");
   return `${productId}_${sanitizedCardNumber}`;
 }
 
+/**
+ * Handles network requests with retries.
+ */
 export async function makeRequest<T>(
   endpoint: string,
-  baseUrl: string,
-  options: RequestOptions = {}
+  options: { retryCount?: number; customDelay?: number } = {}
 ): Promise<T> {
   const {retryCount = 0, customDelay = BASE_DELAY} = options;
 
   try {
+    const url = constructTCGCSVPath(endpoint);
     await new Promise((resolve) => setTimeout(resolve, customDelay));
-    const url = `${baseUrl}/${endpoint}`;
     const response = await axios.get<T>(url, {
       timeout: 30000,
       headers: {
@@ -33,21 +54,17 @@ export async function makeRequest<T>(
         "User-Agent": "FFTCG-Sync-Service/1.0",
       },
     });
-
     return response.data;
   } catch (error) {
     if (retryCount < MAX_RETRIES - 1 && error instanceof AxiosError) {
       const delay = Math.pow(2, retryCount) * BASE_DELAY;
       await logWarning(`Request failed, retrying in ${delay}ms...`, {
-        url: `${baseUrl}/${endpoint}`,
+        endpoint,
         attempt: retryCount + 1,
         maxRetries: MAX_RETRIES,
         error: error.message,
-        ...options.metadata,
       });
-
-      return makeRequest<T>(endpoint, baseUrl, {
-        ...options,
+      return makeRequest<T>(endpoint, {
         retryCount: retryCount + 1,
         customDelay: delay,
       });
@@ -56,44 +73,29 @@ export async function makeRequest<T>(
   }
 }
 
-export interface BatchOptions {
-  batchSize?: number;
-  onBatchComplete?: (stats: BatchProcessingStats) => Promise<void>;
-}
-
 export async function processBatch<T>(
   items: T[],
-  processor: (batch: T[]) => Promise<void>,
-  options: BatchOptions = {}
+  processFn: (batch: T[]) => Promise<void>,
+  options: {
+    batchSize?: number;
+    onBatchComplete?: (stats: {
+      processed: number;
+      total: number;
+    }) => Promise<void>;
+  } = {}
 ): Promise<void> {
-  const {batchSize = 500, onBatchComplete} = options;
+  const batchSize = options.batchSize || 500; // Default batch size
+  const totalItems = items.length;
 
-  let processedCount = 0;
-  const totalBatches = Math.ceil(items.length / batchSize);
-
-  for (let i = 0; i < items.length; i += batchSize) {
+  for (let i = 0; i < totalItems; i += batchSize) {
     const batch = items.slice(i, i + batchSize);
-    const currentBatch = Math.floor(i / batchSize) + 1;
+    await processFn(batch);
 
-    await processor(batch);
-    processedCount += batch.length;
-
-    if (onBatchComplete) {
-      await onBatchComplete({
-        total: items.length,
-        processed: processedCount,
-        successful: processedCount,
-        failed: 0,
-        skipped: 0,
+    if (options.onBatchComplete) {
+      await options.onBatchComplete({
+        processed: i + batch.length,
+        total: totalItems,
       });
-    }
-
-    console.log(
-      `Processing batch ${currentBatch}/${totalBatches} (${processedCount}/${items.length} items)`
-    );
-
-    if (i + batchSize < items.length) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
 }

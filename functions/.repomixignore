@@ -9,3 +9,4 @@ repomix.config.json
 functions-backup/
 # Backups
 backups/
+.env
