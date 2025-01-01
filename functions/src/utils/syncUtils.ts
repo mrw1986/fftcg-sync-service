@@ -1,8 +1,8 @@
-import axios, {AxiosError} from "axios";
+import axios, {isAxiosError} from "axios";
 import {logWarning} from "./logger";
 
 // Centralized constants
-export const BASE_URL = "https://tcgcsv.com/tcgplayer";
+export const BASE_URL = "https://tcgcsv.com/tcgplayer"; // Base URL without category
 export const MAX_RETRIES = 3;
 export const BASE_DELAY = 1000;
 
@@ -10,12 +10,11 @@ export const BASE_DELAY = 1000;
  * Validates and constructs full paths for TCGCSV requests.
  */
 export function constructTCGCSVPath(endpoint: string): string {
-  if (!endpoint.startsWith("/tcgplayer")) {
-    throw new Error(
-      `Invalid path: ${endpoint}. All paths must start with /tcgplayer.`
-    );
-  }
-  return `${BASE_URL}${endpoint}`;
+  // Remove any leading slashes
+  endpoint = endpoint.replace(/^\/+/, "");
+
+  // Construct the full URL
+  return `${BASE_URL}/${endpoint}`;
 }
 
 /**
@@ -47,22 +46,36 @@ export async function makeRequest<T>(
   try {
     const url = constructTCGCSVPath(endpoint);
     await new Promise((resolve) => setTimeout(resolve, customDelay));
+
     const response = await axios.get<T>(url, {
       timeout: 30000,
       headers: {
         "Accept": "application/json",
         "User-Agent": "FFTCG-Sync-Service/1.0",
+        "Origin": "https://fftcgcompanion.com",
+      },
+      validateStatus: (status) => {
+        return status < 500; // Don't retry on client errors (4xx)
       },
     });
+
+    // Check for 403 specifically
+    if (response.status === 403) {
+      throw new Error(`Access denied to TCGCSV API at path: ${url}`);
+    }
+
     return response.data;
   } catch (error) {
-    if (retryCount < MAX_RETRIES - 1 && error instanceof AxiosError) {
+    if (
+      retryCount < MAX_RETRIES - 1 &&
+      (!isAxiosError(error) || error.response?.status !== 403)
+    ) {
       const delay = Math.pow(2, retryCount) * BASE_DELAY;
       await logWarning(`Request failed, retrying in ${delay}ms...`, {
         endpoint,
         attempt: retryCount + 1,
         maxRetries: MAX_RETRIES,
-        error: error.message,
+        error: error instanceof Error ? error.message : "Unknown error",
       });
       return makeRequest<T>(endpoint, {
         retryCount: retryCount + 1,

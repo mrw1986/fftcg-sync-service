@@ -25,14 +25,15 @@ export interface CardProduct {
   name: string;
   cleanName: string;
   imageUrl?: string; // TCGPlayer URL (from API)
-  highResUrl: string; // Firebase Storage URL (_400w)
-  lowResUrl: string; // Firebase Storage URL (_200w)
+  highResUrl: string; // R2 Storage URL (_400w)
+  lowResUrl: string; // R2 Storage URL (_200w)
   categoryId: number;
   groupId: number;
   url: string;
   modifiedOn: string;
   imageCount: number;
   imageMetadata?: ImageMetadata;
+  isPlaceholder?: boolean;
   extendedData: Array<{
     name: string;
     displayName: string;
@@ -48,7 +49,7 @@ export interface CardPrice {
   marketPrice: number | null;
   directLowPrice: number | null;
   subTypeName: "Normal" | "Foil";
-  cardNumber?: string; // Add this if cardNumber exists
+  cardNumber?: string;
 }
 
 export interface SyncOptions {
@@ -58,9 +59,11 @@ export interface SyncOptions {
   productId?: number;
   showAll?: boolean;
   skipImages?: boolean;
-  imagesOnly?: boolean; // New option
+  imagesOnly?: boolean;
   silent?: boolean;
   force?: boolean;
+  maxRetries?: number;
+  retryDelay?: number;
 }
 
 export interface SyncMetadata {
@@ -74,6 +77,8 @@ export interface SyncMetadata {
   duration?: number;
   imagesProcessed?: number;
   imagesUpdated?: number;
+  placeholderImages?: number;
+  retryAttempts?: number;
 }
 
 export type CacheType = "card" | "price" | "image";
@@ -83,7 +88,8 @@ export interface PriceData {
   foil?: CardPrice;
   lastUpdated: Date;
   productId: number;
-  cardNumber: string;
+  cardNumber?: string; // Made optional
+  retryCount?: number;
 }
 
 export interface ImageMetadata {
@@ -98,13 +104,23 @@ export interface ImageMetadata {
   originalSize?: number;
   highResSize?: number;
   lowResSize?: number;
+  isPlaceholder?: boolean;
+}
+
+export interface PlaceholderImageRecord {
+  productId: number;
+  groupId: string;
+  name: string;
+  timestamp: Date;
+  originalUrl?: string;
 }
 
 export interface ImageProcessingResult {
-  highResUrl: string; // Firebase Storage URL (_400w)
-  lowResUrl: string; // Firebase Storage URL (_200w)
+  highResUrl: string;
+  lowResUrl: string;
   metadata: ImageMetadata;
   updated: boolean;
+  isPlaceholder?: boolean;
 }
 
 export interface ImageSyncStats {
@@ -112,6 +128,7 @@ export interface ImageSyncStats {
   updated: number;
   failed: number;
   skipped: number;
+  placeholders: number;
 }
 
 export interface LogData {
@@ -146,6 +163,7 @@ export interface BatchProcessingStats {
   successful: number;
   failed: number;
   skipped: number;
+  placeholders: number;
 }
 
 export interface BatchOptions {
@@ -154,6 +172,8 @@ export interface BatchOptions {
   onBatchComplete?: (stats: BatchProcessingStats) => Promise<void>;
   skipImages?: boolean;
   retryFailedImages?: boolean;
+  maxRetries?: number;
+  retryDelay?: number;
 }
 
 export interface BatchProgress {
@@ -211,4 +231,42 @@ export interface RefreshOptions {
   groupId?: string;
   skipImages: boolean;
   imagesOnly: boolean;
+}
+
+export interface RetryOptions {
+  maxRetries: number;
+  baseDelay: number;
+  maxDelay: number;
+  shouldRetry?: (error: Error) => boolean;
+}
+
+export interface HistoricalPrice {
+  productId: number;
+  date: Date;
+  prices: {
+    normal?: {
+      low: number;
+      mid: number;
+      high: number;
+      market: number | null;
+      directLow: number | null;
+    };
+    foil?: {
+      low: number;
+      mid: number;
+      high: number;
+      market: number | null;
+      directLow: number | null;
+    };
+  };
+  groupId: string;
+  cardNumber?: string;
+}
+
+export interface PriceArchive {
+  date: string;
+  url: string;
+  processed: boolean;
+  processedAt?: Date;
+  error?: string;
 }

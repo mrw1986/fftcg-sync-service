@@ -1,3 +1,4 @@
+// src/test/testImageHandler.ts
 process.env.NODE_ENV = "test";
 process.env.FORCE_UPDATE = "true";
 
@@ -8,16 +9,17 @@ const TEST_CASES = [
     imageUrl: "https://tcgplayer-cdn.tcgplayer.com/product/477236_200w.jpg",
     groupId: "23783",
     productId: 477236,
-    cardNumber: "1-001H",
-    description: "FFVII Boss Deck - Test Card",
+    cardNumber: "P477236", // Using the new prefix format
+    description: "FFVII Boss Deck",
+    isNonCard: true,
   },
-  // Add a second test case to verify consistency
   {
-    imageUrl: "https://tcgplayer-cdn.tcgplayer.com/product/477237_200w.jpg",
+    imageUrl: "https://tcgplayer-cdn.tcgplayer.com/product/478471_200w.jpg",
     groupId: "23783",
-    productId: 477237,
-    cardNumber: "1-002H",
-    description: "FFVII Boss Deck - Second Test Card",
+    productId: 478471,
+    cardNumber: "23783-001L",
+    description: "FFVII Cloud - Legend",
+    isNonCard: false,
   },
 ];
 
@@ -44,11 +46,12 @@ async function testImageProcessing() {
 
       // Test full image processing
       console.log("\n=== Processing Test ===");
-      const result = await imageHandler.processImage(
+      const result = await imageHandler.processAndStoreImage(
         testCase.imageUrl,
-        testCase.groupId,
         testCase.productId,
-        testCase.cardNumber
+        testCase.groupId,
+        testCase.cardNumber,
+        testCase.isNonCard // Pass the isNonCard flag
       );
 
       console.log("\nProcessing Results:");

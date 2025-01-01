@@ -69,10 +69,11 @@ export const scheduledCardSync = onSchedule(
       // Use syncCards with specific options for scheduled run
       const result = await syncCards({
         dryRun: false,
-        skipImages: false, // Ensure images are processed
+        skipImages: false,
         imagesOnly: false,
         silent: false,
-        force: false, // Only update changed cards
+        force: false,
+        // No groupId specified means it will process all groups
       });
 
       console.log(`Sync completed. Processed ${result.cardCount} cards`);
@@ -87,6 +88,51 @@ export const scheduledCardSync = onSchedule(
       throw error; // Allow Firebase to handle retry
     }
   }
+);
+
+export const manualGroupSync = onRequest(
+  {
+    timeoutSeconds: runtimeOpts.timeoutSeconds,
+    memory: runtimeOpts.memory,
+    maxInstances: 1,
+  },
+  withCorsAndErrors(async (req: Request, res: Response): Promise<void> => {
+    if (req.method !== "POST") {
+      res.status(405).send("Method Not Allowed");
+      return;
+    }
+
+    const {groupId, dryRun = false} = req.body;
+
+    if (!groupId) {
+      res.status(400).json({error: "groupId is required in request body"});
+      return;
+    }
+
+    console.log(`Starting manual sync for group ${groupId}...`);
+    console.log(`Dry run: ${dryRun}`);
+
+    const result = await syncCards({
+      dryRun,
+      skipImages: false,
+      imagesOnly: false,
+      silent: false,
+      force: false,
+      groupId,
+    });
+
+    res.json({
+      status: "success",
+      groupId,
+      dryRun,
+      result: {
+        cardsProcessed: result.cardCount,
+        imagesProcessed: result.imagesProcessed || 0,
+        imagesUpdated: result.imagesUpdated || 0,
+        errors: result.errors,
+      },
+    });
+  })
 );
 
 export const testCardSync = onRequest(

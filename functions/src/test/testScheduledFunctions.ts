@@ -5,7 +5,7 @@ import {syncPrices} from "../services/priceSync";
 interface TestOptions {
   type?: "card" | "price" | "both";
   dryRun?: boolean;
-  groupId?: string;
+  groupId?: string | number; // Update to allow both string and number
   limit?: number;
 }
 
@@ -26,7 +26,7 @@ async function testScheduledFunctions(options: TestOptions = {}) {
       const cardResult = await syncCards({
         dryRun,
         limit,
-        groupId,
+        groupId: groupId?.toString(), // Ensure groupId is passed as string
         skipImages: false,
         imagesOnly: false,
         silent: false,
@@ -46,13 +46,14 @@ async function testScheduledFunctions(options: TestOptions = {}) {
       const priceResult = await syncPrices({
         dryRun,
         limit,
-        groupId,
+        groupId: groupId?.toString(), // Ensure groupId is passed as string
         silent: false,
         force: false,
       });
       console.log("Price sync completed");
       console.log("Results:", {
         pricesProcessed: priceResult.cardCount,
+        groupsUpdated: priceResult.groupsUpdated,
         errors: priceResult.errors,
       });
     }
@@ -63,20 +64,55 @@ async function testScheduledFunctions(options: TestOptions = {}) {
 }
 
 // Parse command line arguments if running directly
+// src/test/testScheduledFunctions.ts
 if (require.main === module) {
   const args = process.argv.slice(2);
   const options: TestOptions = {
-    type: (args.includes("--type") ?
-      args[args.indexOf("--type") + 1] :
-      "both") as "card" | "price" | "both",
-    dryRun: args.includes("--dry-run"),
-    groupId: args.includes("--group-id") ?
-      args[args.indexOf("--group-id") + 1] :
-      undefined,
-    limit: args.includes("--limit") ?
-      parseInt(args[args.indexOf("--limit") + 1]) :
-      undefined,
+    type: "both",
+    dryRun: false,
+    groupId: undefined,
+    limit: undefined,
   };
+
+  // First, check for positional arguments (for backward compatibility)
+  if (args.length > 0 && !args[0].startsWith("--")) {
+    options.groupId = args[0];
+  }
+
+  // Then check for named arguments
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    const nextArg = args[i + 1];
+
+    switch (arg) {
+    case "--type":
+      if (nextArg && ["card", "price", "both"].includes(nextArg)) {
+        options.type = nextArg as "card" | "price" | "both";
+        i++;
+      }
+      break;
+    case "--group-id":
+      if (nextArg && !nextArg.startsWith("--")) {
+        options.groupId = nextArg;
+        i++;
+      }
+      break;
+    case "--dry-run":
+      options.dryRun = true;
+      break;
+    case "--limit":
+      if (nextArg && !isNaN(Number(nextArg))) {
+        options.limit = parseInt(nextArg, 10);
+        i++;
+      }
+      break;
+    }
+  }
+
+  // Debug logging
+  console.log("\nCommand line parsing:");
+  console.log("Raw arguments:", args);
+  console.log("Parsed options:", JSON.stringify(options, null, 2));
 
   testScheduledFunctions(options)
     .then(() => {

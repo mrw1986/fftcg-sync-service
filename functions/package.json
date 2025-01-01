@@ -17,26 +17,6 @@
     "test:all": "npm run test:images && npm run test:sync",
     "backup-db": "ts-node src/utils/databaseBackup.ts",
     "clear-db": "ts-node src/utils/databaseReset.ts",
-    "sync:data": "ts-node src/utils/databaseRefresh.ts --skip-images",
-    "sync:data:force": "ts-node src/utils/databaseRefresh.ts --skip-images --force",
-    "sync:data:dry": "ts-node src/utils/databaseRefresh.ts --skip-images --dry-run",
-    "sync:data:verbose": "ts-node src/utils/databaseRefresh.ts --skip-images --verbose",
-    "sync:images": "ts-node src/utils/databaseRefresh.ts --images-only",
-    "sync:images:force": "ts-node src/utils/databaseRefresh.ts --images-only --force",
-    "sync:images:dry": "ts-node src/utils/databaseRefresh.ts --images-only --dry-run",
-    "sync:images:verbose": "ts-node src/utils/databaseRefresh.ts --images-only --verbose",
-    "sync:full": "ts-node src/utils/databaseRefresh.ts",
-    "sync:full:force": "ts-node src/utils/databaseRefresh.ts --force",
-    "sync:full:dry": "ts-node src/utils/databaseRefresh.ts --dry-run",
-    "sync:full:verbose": "ts-node src/utils/databaseRefresh.ts --verbose",
-    "sync:group": "ts-node src/utils/databaseRefresh.ts --group-id",
-    "sync:group:images": "ts-node src/utils/databaseRefresh.ts --group-id --images-only",
-    "sync:group:data": "ts-node src/utils/databaseRefresh.ts --group-id --skip-images",
-    "cleanup:images": "ts-node src/utils/databaseCleanup.ts",
-    "migrate:images": "ts-node src/utils/imageMigration.ts",
-    "migrate:images:dry": "ts-node src/utils/imageMigration.ts --dry-run",
-    "migrate:images:force": "ts-node src/utils/imageMigration.ts --force",
-    "migrate:images:group": "ts-node src/utils/imageMigration.ts --group-id",
     "test:sync:cards": "ts-node src/test/validateSync.ts --type cards",
     "test:sync:prices": "ts-node src/test/validateSync.ts --type prices",
     "test:sync:all": "ts-node src/test/validateSync.ts --type all",
@@ -45,7 +25,12 @@
     "test:scheduled": "ts-node src/test/testScheduledFunctions.ts",
     "test:scheduled:card": "ts-node src/test/testScheduledFunctions.ts --type card",
     "test:scheduled:price": "ts-node src/test/testScheduledFunctions.ts --type price",
-    "test:scheduled:dry": "ts-node src/test/testScheduledFunctions.ts --dry-run"
+    "test:scheduled:dry": "ts-node src/test/testScheduledFunctions.ts --dry-run",
+    "sync:group": "curl -X POST \"https://us-central1-fftcg-sync-service.cloudfunctions.net/manualGroupSync\" -H \"Content-Type: application/json\" -d \"{\\\"groupId\\\": \\\"%npm_config_groupid%\\\"}\"",
+    "sync:group:dry": "curl -X POST \"https://us-central1-fftcg-sync-service.cloudfunctions.net/manualGroupSync\" -H \"Content-Type: application/json\" -d \"{\\\"groupId\\\": \\\"%npm_config_groupid%\\\", \\\"dryRun\\\": true}\"",
+    "sync:historical": "ts-node src/test/testHistoricalPrices.ts",
+    "sync:historical:date": "ts-node src/test/testHistoricalPrices.ts --date",
+    "sync:historical:range": "ts-node src/test/testHistoricalPrices.ts --start-date --end-date"
   },
   "engines": {
     "node": "18"
@@ -61,7 +46,6 @@
     "firebase-functions": "^6.2.0",
     "glob": "^10.4.5",
     "lru-cache": "^7.14.1",
-    "refresh-db": "ts-node src/utils/databaseRefresh.ts",
     "sharp": "^0.33.1"
   },
   "devDependencies": {

@@ -1,136 +1,96 @@
 import {db, COLLECTION} from "../config/firebase";
-import {logError, logInfo, logWarning} from "../utils/logger";
-import type {Query, DocumentData} from "firebase-admin/firestore";
+import {logError, logInfo} from "./logger";
 import {imageHandler} from "./imageHandler";
+import {CardProduct} from "../types";
+import {isNonCardProduct} from "./productValidation";
 
-interface MigrationStats {
-  processed: number;
-  updated: number;
-  skipped: number;
-  failed: number;
-  errors: string[];
+function getCardNumber(product: CardProduct): string {
+  // Skip card number validation for non-card products
+  if (isNonCardProduct(product.name)) {
+    return product.productId.toString();
+  }
+
+  const numberField = product.extendedData.find(
+    (data) => data.name === "Number"
+  );
+  if (!numberField) {
+    throw new Error(`Missing card number for productId: ${product.productId}`);
+  }
+  return numberField.value;
 }
 
-export async function migrateImages(
-  options: { dryRun?: boolean; limit?: number; groupId?: string } = {}
-): Promise<MigrationStats> {
-  const stats: MigrationStats = {
-    processed: 0,
-    updated: 0,
-    skipped: 0,
-    failed: 0,
-    errors: [],
-  };
-
+export async function migrateImages(): Promise<void> {
   try {
-    await logInfo("Starting image migration", {options});
-
-    // Build the query
-    let query: Query<DocumentData> = db.collection(COLLECTION.CARDS);
-
-    if (options.groupId) {
-      query = query.where("groupId", "==", options.groupId);
-    }
-
-    if (options.limit) {
-      query = query.limit(options.limit);
-    }
-
-    const snapshot = await query.get();
-    const totalDocuments = snapshot.size;
-
-    await logInfo(`Found ${totalDocuments} documents to process`);
+    const snapshot = await db.collection(COLLECTION.CARDS).get();
+    let processed = 0;
+    let failed = 0;
 
     for (const doc of snapshot.docs) {
-      try {
-        const data = doc.data();
-        stats.processed++;
+      const card = doc.data() as CardProduct;
 
-        if (!data.imageUrl) {
-          await logInfo(`Skipping document ${doc.id} - no image URL`);
-          stats.skipped++;
+      try {
+        if (!card.imageUrl) {
           continue;
         }
 
-        // Process the image
-        if (!options.dryRun) {
-          const result = await imageHandler.processImage(
-            data.imageUrl,
-            data.groupId.toString(),
-            data.productId,
-            data.cardNumber
-          );
+        const isNonCard = isNonCardProduct(card.name);
+        const cardNumber = isNonCard ?
+          card.productId.toString() :
+          getCardNumber(card);
 
-          if (result.updated) {
-            stats.updated++;
-            await logInfo(`Updated images for document ${doc.id}`, {
-              highResUrl: result.highResUrl,
-              lowResUrl: result.lowResUrl,
-            });
-          } else {
-            stats.skipped++;
-            await logInfo(`No updates needed for document ${doc.id}`);
-          }
-        }
-
-        // Log progress
-        if (stats.processed % 10 === 0) {
-          await logInfo(`Progress: ${stats.processed}/${totalDocuments}`, {
-            updated: stats.updated,
-            skipped: stats.skipped,
-            failed: stats.failed,
-          });
-        }
-      } catch (error) {
-        stats.failed++;
-        stats.errors.push(
-          `Error processing document ${doc.id}: ${
-            error instanceof Error ? error.message : "Unknown error"
-          }`
+        // Use the new processAndStoreImage method
+        const result = await imageHandler.processAndStoreImage(
+          card.imageUrl,
+          card.productId,
+          card.groupId.toString(),
+          cardNumber
         );
-        await logWarning(`Failed to process document ${doc.id}`, {
-          error: error instanceof Error ? error.message : "Unknown error",
+
+        // Update the document with new URLs
+        await doc.ref.update({
+          highResUrl: result.highResUrl,
+          lowResUrl: result.lowResUrl,
+          imageMetadata: result.metadata,
+          lastUpdated: new Date(),
+          imageUrl: null, // Remove the old imageUrl
         });
+
+        await logInfo("Migrated image", {
+          productId: card.productId,
+          groupId: card.groupId,
+          highResUrl: result.highResUrl,
+          lowResUrl: result.lowResUrl,
+          updated: result.updated,
+        });
+
+        processed++;
+      } catch (error) {
+        failed++;
+        await logError(
+          {
+            message: error instanceof Error ? error.message : "Unknown error",
+            name: error instanceof Error ? error.name : "UnknownError",
+            code: "IMAGE_MIGRATION_ERROR",
+          },
+          `Failed to migrate image for ${card.productId}`
+        );
       }
     }
 
-    await logInfo("Migration completed", stats);
-    return stats;
+    await logInfo("Migration completed", {
+      processed,
+      failed,
+      total: snapshot.size,
+    });
   } catch (error) {
-    await logError(error as Error, "Migration failed");
+    await logError(
+      {
+        message: error instanceof Error ? error.message : "Unknown error",
+        name: error instanceof Error ? error.name : "UnknownError",
+        code: "MIGRATION_ERROR",
+      },
+      "Failed to complete migration"
+    );
     throw error;
   }
-}
-
-// Execute if run directly
-if (require.main === module) {
-  const args = process.argv.slice(2);
-  const options = {
-    dryRun: args.includes("--dry-run"),
-    limit: args.includes("--limit") ?
-      parseInt(args[args.indexOf("--limit") + 1]) :
-      undefined,
-    groupId: args.includes("--group-id") ?
-      args[args.indexOf("--group-id") + 1] :
-      undefined,
-  };
-
-  migrateImages(options)
-    .then((stats) => {
-      console.log("\nMigration Summary:");
-      console.log("-----------------");
-      console.log(`Total Processed: ${stats.processed}`);
-      console.log(`Updated: ${stats.updated}`);
-      console.log(`Skipped: ${stats.skipped}`);
-      console.log(`Failed: ${stats.failed}`);
-      if (stats.errors.length > 0) {
-        console.log("\nErrors:");
-        stats.errors.forEach((error) => console.log(`- ${error}`));
-      }
-      process.exit(0);
-    })
-    .catch((error) => {
-      console.error("Fatal error:", error);
-      process.exit(1);
-    });
 }

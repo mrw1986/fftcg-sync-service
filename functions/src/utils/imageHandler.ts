@@ -1,14 +1,17 @@
-// src/utils/imageHandler.ts
-
 import axios, {AxiosError} from "axios";
-import {COLLECTION, db} from "../config/firebase";
 import {logError, logInfo, logWarning} from "./logger";
 import * as crypto from "crypto";
-import {GenericError, ImageMetadata, ImageProcessingResult} from "../types";
-import {ImageValidator} from "./imageValidator";
-import {imageCache} from "./imageCache";
-import {ImageCompressor} from "./imageCompressor";
+import * as fs from "fs/promises";
+import * as path from "path";
+import {
+  ImageMetadata,
+  ImageProcessingResult,
+  PlaceholderImageRecord,
+  GenericError,
+} from "../types";
 import {r2Storage} from "../services/r2Storage";
+import {db, COLLECTION} from "../config/firebase";
+import sharp from "sharp";
 
 export interface ImagePathOptions {
   groupId: string;
@@ -16,9 +19,64 @@ export interface ImagePathOptions {
   cardNumber: string;
   isHighRes?: boolean;
   isLowRes?: boolean;
+  isNonCard?: boolean;
 }
 
 export class ImageHandler {
+  private readonly PLACEHOLDER_IMAGE_PATH =
+    "/public/assets/image-coming-soon.jpeg";
+  private readonly MISSING_IMAGE_IDENTIFIER = "image-missing.svg";
+  private readonly MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
+
+  private async loadPlaceholderImage(): Promise<Buffer> {
+    try {
+      const imagePath = path.join(process.cwd(), this.PLACEHOLDER_IMAGE_PATH);
+      return await fs.readFile(imagePath);
+    } catch (error) {
+      throw new Error(
+        `Failed to load placeholder image: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
+  }
+
+  private async recordPlaceholderUse(
+    productId: number,
+    groupId: string,
+    cardNumber: string,
+    originalUrl?: string
+  ): Promise<void> {
+    const record: PlaceholderImageRecord = {
+      productId,
+      groupId,
+      name: cardNumber,
+      timestamp: new Date(),
+      originalUrl,
+    };
+
+    try {
+      await db
+        .collection(COLLECTION.IMAGE_METADATA)
+        .doc(`placeholder_${productId}`)
+        .set(record);
+    } catch (error) {
+      await logWarning("Failed to record placeholder use", {
+        productId,
+        groupId,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  }
+
+  private isPlaceholderNeeded(imageUrl: string): boolean {
+    return (
+      !imageUrl ||
+      imageUrl.includes("image-missing.svg") ||
+      imageUrl.endsWith(this.MISSING_IMAGE_IDENTIFIER)
+    );
+  }
+
   private sanitizeCardNumber(cardNumber: string | undefined): string {
     if (!cardNumber) {
       throw new Error("Card number is required");
@@ -26,12 +84,19 @@ export class ImageHandler {
     return cardNumber.replace(/\//g, "_");
   }
 
-  private getHighResUrl(imageUrl: string): string {
-    return imageUrl.replace(/_200w\.jpg$/, "_400w.jpg");
-  }
+  private validateImageUrl(url: string): { isValid: boolean; error?: string } {
+    if (!url) {
+      return {isValid: false, error: "No URL provided"};
+    }
 
-  private getPublicUrl(path: string): string {
-    return r2Storage.getPublicUrl(path);
+    if (!url.match(/.*\.(jpg|jpeg|svg)$/i)) {
+      return {
+        isValid: false,
+        error: "URL does not match expected format (.jpg, .jpeg, .svg)",
+      };
+    }
+
+    return {isValid: true};
   }
 
   private getStoragePath(options: ImagePathOptions): string {
@@ -39,399 +104,283 @@ export class ImageHandler {
     if (options.isHighRes) {
       suffix = "_400w";
     }
-    const sanitizedCardNumber = this.sanitizeCardNumber(options.cardNumber);
-    const fileName = `${options.productId}_${sanitizedCardNumber}${suffix}.jpg`;
-    return `${options.groupId}/${fileName}`;
+
+    // For non-card products, use a different path structure
+    if (options.isNonCard) {
+      return `${options.groupId}/products/${options.productId}${suffix}.jpg`;
+    }
+
+    return `${options.groupId}/cards/${
+      options.productId
+    }_${this.sanitizeCardNumber(options.cardNumber)}${suffix}.jpg`;
   }
 
   private async getImageHash(imageBuffer: Buffer): Promise<string> {
     return crypto.createHash("md5").update(imageBuffer).digest("hex");
   }
 
-  private async compressImage(
-    buffer: Buffer,
-    isHighRes: boolean
-  ): Promise<Buffer> {
-    try {
-      const result = await ImageCompressor.compress(buffer, isHighRes);
-      await logInfo("Image compression successful", {
-        originalSize: buffer.length,
-        compressedSize: result.buffer.length,
-        quality: result.info.quality,
-        dimensions: `${result.info.width}x${result.info.height}`,
-        timestamp: new Date().toISOString(),
-      });
-      return result.buffer;
-    } catch (error) {
-      await logWarning("Image compression skipped", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        timestamp: new Date().toISOString(),
-      });
-      return buffer;
-    }
-  }
-
   private async downloadImage(url: string): Promise<Buffer> {
-    const cacheKey = imageCache.getBufferCacheKey(url);
-    const cachedBuffer = await imageCache.getBuffer(cacheKey);
-
-    if (cachedBuffer) {
-      await logInfo("Using cached image", {
-        url,
-        size: cachedBuffer.length,
-        timestamp: new Date().toISOString(),
-      });
-      return cachedBuffer;
-    }
-
     try {
-      await logInfo("Attempting to download image", {
-        url,
-        timestamp: new Date().toISOString(),
-      });
+      // Convert URL to high-res version if it's not already
+      const highResUrl = url.replace("_200w.jpg", "_400w.jpg");
 
-      const response = await axios.get(url, {
+      const response = await axios.get(highResUrl, {
         responseType: "arraybuffer",
         timeout: 30000,
-        headers: {
-          "Accept": "image/jpeg",
-          "User-Agent": "FFTCG-Sync-Service/1.0",
-        },
+        maxContentLength: this.MAX_IMAGE_SIZE,
       });
-
-      const buffer = Buffer.from(response.data);
-      const validationResult = await ImageValidator.validateImage(buffer);
-
-      if (!validationResult.isValid) {
-        throw new Error(`Image validation failed: ${validationResult.error}`);
-      }
-
-      imageCache.setBuffer(cacheKey, buffer);
-
-      await logInfo("Successfully downloaded and validated image", {
-        url,
-        size: buffer.length,
-        timestamp: new Date().toISOString(),
-      });
-
-      return buffer;
+      return Buffer.from(response.data, "binary");
     } catch (error) {
-      await logWarning("Failed to download or validate image", {
-        url,
-        error: error instanceof Error ? error.message : "Unknown error",
-        timestamp: new Date().toISOString(),
-      });
+      // If 400w fails, try falling back to original URL
+      if (error instanceof AxiosError && error.response?.status === 404) {
+        const response = await axios.get(url, {
+          responseType: "arraybuffer",
+          timeout: 30000,
+          maxContentLength: this.MAX_IMAGE_SIZE,
+        });
+        return Buffer.from(response.data, "binary");
+      }
+      if (error instanceof AxiosError) {
+        if (error.response?.status === 404) {
+          throw new Error(`Image not found at URL: ${url}`);
+        }
+        throw new Error(
+          `Failed to download image: ${error.message} (Status: ${error.response?.status})`
+        );
+      }
       throw error;
     }
   }
 
-  private async shouldUpdateImage(
-    options: ImagePathOptions,
-    imageBuffer: Buffer
-  ): Promise<boolean> {
-    if (
-      process.env.NODE_ENV === "test" ||
-      process.env.FORCE_UPDATE === "true"
-    ) {
-      await logInfo("Force update enabled", {
-        env: process.env.NODE_ENV,
-        forceUpdate: process.env.FORCE_UPDATE,
-        timestamp: new Date().toISOString(),
-      });
-      return true;
-    }
-
-    try {
-      const storagePath = this.getStoragePath(options);
-      const exists = await r2Storage.fileExists(storagePath);
-
-      if (!exists) {
-        await logInfo("Image does not exist in storage", {
-          path: storagePath,
-          timestamp: new Date().toISOString(),
-        });
-        return true;
-      }
-
-      const metadata = await r2Storage.getImageMetadata(storagePath);
-      const currentHash = metadata?.hash;
-      const newHash = await this.getImageHash(imageBuffer);
-
-      await logInfo("Image hash comparison", {
-        path: storagePath,
-        currentHash,
-        newHash,
-        needsUpdate: currentHash !== newHash,
-        timestamp: new Date().toISOString(),
-      });
-
-      return currentHash !== newHash;
-    } catch (error) {
-      await logWarning("Error checking image update status", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        timestamp: new Date().toISOString(),
-      });
-      return true;
-    }
-  }
-
-  private async saveToStorage(
-    options: ImagePathOptions,
-    buffer: Buffer,
-    isHighRes: boolean
-  ): Promise<string> {
-    const storagePath = this.getStoragePath({
-      ...options,
-      isHighRes,
-      isLowRes: !isHighRes,
-    });
-
-    const hash = await this.getImageHash(buffer);
-
-    await logInfo(
-      `Attempting to save ${isHighRes ? "high-res" : "low-res"} image`,
-      {
-        path: storagePath,
-        size: buffer.length,
-        hash,
-        timestamp: new Date().toISOString(),
-        metadata: {
-          groupId: options.groupId,
-          productId: options.productId,
-          cardNumber: options.cardNumber,
-        },
-      }
-    );
-
-    const url = await r2Storage.uploadImage(storagePath, buffer, {
-      hash,
-      type: isHighRes ? "highres" : "original",
-      updatedAt: new Date().toISOString(),
-    });
-
-    await logInfo(
-      `${isHighRes ? "High-res" : "Low-res"} image saved successfully`,
-      {
-        path: storagePath,
-        size: buffer.length,
-        hash,
-        url,
-        timestamp: new Date().toISOString(),
-      }
-    );
-
-    return url;
-  }
-
-  private async saveMetadata(
-    options: ImagePathOptions,
-    metadata: ImageMetadata
-  ): Promise<void> {
-    const sanitizedCardNumber = this.sanitizeCardNumber(options.cardNumber);
-    const docRef = db
-      .collection(COLLECTION.IMAGE_METADATA)
-      .doc(`${options.groupId}_${options.productId}_${sanitizedCardNumber}`);
-
-    await docRef.set(
-      {
-        ...metadata,
-        groupId: options.groupId,
-        productId: options.productId,
-        cardNumber: options.cardNumber,
-        sanitizedCardNumber,
-        lastUpdated: new Date(),
-      },
-      {merge: true}
-    );
-
-    await logInfo("Saved image metadata", {
-      groupId: options.groupId,
-      productId: options.productId,
-      cardNumber: options.cardNumber,
-      sanitizedCardNumber,
-      metadata,
-      timestamp: new Date().toISOString(),
-    });
-  }
-
-  async processImage(
-    imageUrl: string,
-    groupId: string,
+  private async processImage(
+    imageBuffer: Buffer,
     productId: number,
-    cardNumber: string
-  ): Promise<ImageProcessingResult> {
-    const options: ImagePathOptions = {
+    groupId: string
+  ): Promise<{
+    highResBuffer: Buffer;
+    lowResBuffer: Buffer;
+    metadata: ImageMetadata;
+  }> {
+    // Validate image using sharp
+    const metadata = await sharp(imageBuffer).metadata();
+    if (!metadata.format || !["jpeg", "jpg"].includes(metadata.format)) {
+      throw new Error("Invalid image format. Only JPEG images are supported.");
+    }
+
+    // Process high-res version (400px width)
+    const highResBuffer = await sharp(imageBuffer)
+      .resize(400, null, {fit: "inside", withoutEnlargement: true})
+      .jpeg({quality: 85, progressive: true})
+      .toBuffer();
+
+    // Process low-res version (200px width)
+    const lowResBuffer = await sharp(imageBuffer)
+      .resize(200, null, {fit: "inside", withoutEnlargement: true})
+      .jpeg({quality: 80, progressive: true})
+      .toBuffer();
+
+    const originalHash = await this.getImageHash(imageBuffer);
+
+    const imageMetadata: ImageMetadata = {
+      contentType: "image/jpeg",
+      size: imageBuffer.length,
+      updated: new Date(),
+      hash: originalHash,
       groupId,
       productId,
-      cardNumber,
+      originalSize: imageBuffer.length,
+      highResSize: highResBuffer.length,
+      lowResSize: lowResBuffer.length,
     };
 
+    return {
+      highResBuffer,
+      lowResBuffer,
+      metadata: imageMetadata,
+    };
+  }
+
+  public async processAndStoreImage(
+    imageUrl: string,
+    productId: number,
+    groupId: string,
+    cardNumber: string,
+    isNonCard: boolean = false
+  ): Promise<ImageProcessingResult> {
     try {
-      await logInfo("Starting image processing", {
-        imageUrl,
-        groupId,
+      // Check if placeholder is needed
+      if (this.isPlaceholderNeeded(imageUrl)) {
+        return await this.handlePlaceholderImage(
+          productId,
+          groupId,
+          cardNumber
+        );
+      }
+
+      // Validate URL
+      const urlValidation = this.validateImageUrl(imageUrl);
+      if (!urlValidation.isValid) {
+        throw new Error(urlValidation.error);
+      }
+
+      // Download and process image
+      const imageBuffer = await this.downloadImage(imageUrl);
+      const {highResBuffer, lowResBuffer, metadata} = await this.processImage(
+        imageBuffer,
         productId,
+        groupId
+      );
+
+      // Upload to R2
+      const [highResUrl, lowResUrl] = await Promise.all([
+        r2Storage.uploadImage(
+          highResBuffer,
+          this.getStoragePath({
+            groupId,
+            productId,
+            cardNumber,
+            isHighRes: true,
+            isNonCard,
+          }),
+          metadata
+        ),
+        r2Storage.uploadImage(
+          lowResBuffer,
+          this.getStoragePath({
+            groupId,
+            productId,
+            cardNumber,
+            isLowRes: true,
+            isNonCard,
+          }),
+          metadata
+        ),
+      ]);
+
+      await logInfo("Image processed and stored", {
+        productId,
+        groupId,
         cardNumber,
-        timestamp: new Date().toISOString(),
-      });
-
-      const highResUrl = this.getHighResUrl(imageUrl);
-      let highResBuffer: Buffer | null = null;
-      let lowResBuffer: Buffer | null = null;
-      let updated = false;
-      let lowResStorageUrl = "";
-      let highResStorageUrl = "";
-
-      // Process low-res image
-      try {
-        lowResBuffer = await this.downloadImage(imageUrl);
-        if (lowResBuffer) {
-          lowResBuffer = await this.compressImage(lowResBuffer, false);
-          if (
-            await this.shouldUpdateImage(
-              {...options, isLowRes: true},
-              lowResBuffer
-            )
-          ) {
-            lowResStorageUrl = await this.saveToStorage(
-              options,
-              lowResBuffer,
-              false
-            );
-
-            // Add validation after upload
-            const lowResPath = this.getStoragePath({
-              ...options,
-              isLowRes: true,
-            });
-            const lowResValid = await r2Storage.validateUpload(
-              lowResPath,
-              lowResBuffer.length
-            );
-            if (!lowResValid) {
-              throw new Error(
-                `Low-res image validation failed for ${lowResPath}`
-              );
-            }
-
-            updated = true;
-          } else {
-            lowResStorageUrl = this.getPublicUrl(
-              this.getStoragePath({...options, isLowRes: true})
-            );
-          }
-        }
-      } catch (error) {
-        await logWarning("Low-res image processing failed", {
-          error: error instanceof Error ? error.message : "Unknown error",
-          imageUrl,
-          groupId,
-          productId,
-        });
-        throw error;
-      }
-
-      // Process high-res image
-      try {
-        highResBuffer = await this.downloadImage(highResUrl);
-        if (highResBuffer) {
-          highResBuffer = await this.compressImage(highResBuffer, true);
-          if (
-            await this.shouldUpdateImage(
-              {...options, isHighRes: true},
-              highResBuffer
-            )
-          ) {
-            highResStorageUrl = await this.saveToStorage(
-              options,
-              highResBuffer,
-              true
-            );
-
-            // Add validation after upload
-            const highResPath = this.getStoragePath({
-              ...options,
-              isHighRes: true,
-            });
-            const highResValid = await r2Storage.validateUpload(
-              highResPath,
-              highResBuffer.length
-            );
-            if (!highResValid) {
-              throw new Error(
-                `High-res image validation failed for ${highResPath}`
-              );
-            }
-
-            updated = true;
-          } else {
-            highResStorageUrl = this.getPublicUrl(
-              this.getStoragePath({...options, isHighRes: true})
-            );
-          }
-        }
-      } catch (error) {
-        await logWarning("High-res image processing failed", {
-          error: error instanceof Error ? error.message : "Unknown error",
-          imageUrl: highResUrl,
-          groupId,
-          productId,
-        });
-        throw error;
-      }
-
-      // Set default storage URLs if not generated
-      if (!lowResStorageUrl) {
-        lowResStorageUrl = this.getPublicUrl(
-          this.getStoragePath({...options, isLowRes: true})
-        );
-      }
-      if (!highResStorageUrl) {
-        highResStorageUrl = this.getPublicUrl(
-          this.getStoragePath({...options, isHighRes: true})
-        );
-      }
-
-      const metadata: ImageMetadata = {
-        contentType: "image/jpeg",
-        size: lowResBuffer?.length || 0,
-        updated: new Date(),
-        hash: lowResBuffer ? await this.getImageHash(lowResBuffer) : "",
-        highResSize: highResBuffer?.length,
-        lowResSize: lowResBuffer?.length,
-      };
-
-      await this.saveMetadata(options, metadata);
-
-      await logInfo("Image processing completed", {
-        productId,
-        groupId,
-        updated,
-        highResUrl: highResStorageUrl,
-        lowResUrl: lowResStorageUrl,
-        sizes: {
-          highRes: highResBuffer?.length,
-          lowRes: lowResBuffer?.length,
-        },
-        timestamp: new Date().toISOString(),
+        highResUrl,
+        lowResUrl,
       });
 
       return {
-        highResUrl: highResStorageUrl,
-        lowResUrl: lowResStorageUrl,
+        highResUrl,
+        lowResUrl,
         metadata,
-        updated,
+        updated: true,
       };
     } catch (error) {
-      const genericError: GenericError = {
+      const errorObj: GenericError = {
         message: error instanceof Error ? error.message : "Unknown error",
         name: error instanceof Error ? error.name : "UnknownError",
-        code: error instanceof AxiosError ? error.code : undefined,
-        stack: error instanceof Error ? error.stack : undefined,
+        code: "IMAGE_PROCESSING_ERROR",
       };
-      await logError(genericError, "processImage");
-      await r2Storage.rollback();
+      await logError(errorObj, "Image processing failed");
+
+      return this.handlePlaceholderImage(
+        productId,
+        groupId,
+        cardNumber,
+        imageUrl
+      );
+    }
+  }
+
+  private async handlePlaceholderImage(
+    productId: number,
+    groupId: string,
+    cardNumber: string,
+    originalUrl?: string
+  ): Promise<ImageProcessingResult> {
+    try {
+      const placeholderBuffer = await this.loadPlaceholderImage();
+      const {highResBuffer, lowResBuffer, metadata} = await this.processImage(
+        placeholderBuffer,
+        productId,
+        groupId
+      );
+
+      metadata.isPlaceholder = true;
+
+      const [highResUrl, lowResUrl] = await Promise.all([
+        r2Storage.uploadImage(
+          highResBuffer,
+          this.getStoragePath({
+            groupId,
+            productId,
+            cardNumber,
+            isHighRes: true,
+          }),
+          metadata
+        ),
+        r2Storage.uploadImage(
+          lowResBuffer,
+          this.getStoragePath({
+            groupId,
+            productId,
+            cardNumber,
+            isLowRes: true,
+          }),
+          metadata
+        ),
+      ]);
+
+      await this.recordPlaceholderUse(
+        productId,
+        groupId,
+        cardNumber,
+        originalUrl
+      );
+
+      return {
+        highResUrl,
+        lowResUrl,
+        metadata,
+        updated: true,
+        isPlaceholder: true,
+      };
+    } catch (error) {
+      const errorObj: GenericError = {
+        message: error instanceof Error ? error.message : "Unknown error",
+        name: error instanceof Error ? error.name : "UnknownError",
+        code: "PLACEHOLDER_PROCESSING_ERROR",
+      };
+      await logError(errorObj, "Placeholder image processing failed");
       throw error;
+    }
+  }
+
+  public async getPlaceholderStats(): Promise<{
+    total: number;
+    byGroup: Record<string, number>;
+  }> {
+    try {
+      const snapshot = await db
+        .collection(COLLECTION.IMAGE_METADATA)
+        .where("isPlaceholder", "==", true)
+        .get();
+
+      const stats = {
+        total: snapshot.size,
+        byGroup: {} as Record<string, number>,
+      };
+
+      snapshot.forEach((doc) => {
+        const data = doc.data() as PlaceholderImageRecord;
+        stats.byGroup[data.groupId] = (stats.byGroup[data.groupId] || 0) + 1;
+      });
+
+      return stats;
+    } catch (error) {
+      const errorObj: GenericError = {
+        message: error instanceof Error ? error.message : "Unknown error",
+        name: error instanceof Error ? error.name : "UnknownError",
+        code: "STATS_ERROR",
+      };
+      await logError(errorObj, "Failed to get placeholder stats");
+      return {total: 0, byGroup: {}};
     }
   }
 }

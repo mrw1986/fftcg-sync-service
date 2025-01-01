@@ -21,6 +21,8 @@ export const COLLECTION = {
   CARD_HASHES: "cardHashes",
   PRICE_HASHES: "priceHashes",
   IMAGE_METADATA: "imageMetadata",
+  HISTORICAL_PRICES: "historicalPrices",
+  PRICE_ARCHIVES: "priceArchives",
 };
 
 export const BASE_URL = "https://tcgcsv.com/tcgplayer";

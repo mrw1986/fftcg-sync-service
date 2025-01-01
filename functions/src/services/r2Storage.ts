@@ -5,24 +5,14 @@ import {
   DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
 import {R2_CONFIG} from "../config/r2";
-import {db, COLLECTION} from "../config/firebase";
-import {logInfo, logWarning, logError} from "../utils/logger";
-import {ImagePathOptions} from "../utils/imageHandler";
-import {GenericError} from "../types";
-import type {DocumentData} from "firebase-admin/firestore";
-
-// Define RollbackInfo type
-interface RollbackInfo {
-  path: string;
-  metadata: Record<string, string>;
-}
+import {logInfo, logWarning} from "../utils/logger";
+import {ImageMetadata} from "../types";
 
 export class R2Storage {
   private client: S3Client;
   private bucket: string;
   private storagePath: string;
   private customDomain: string;
-  private rollbackQueue: RollbackInfo[] = []; // Rollback queue
 
   constructor() {
     this.client = new S3Client({
@@ -42,47 +32,32 @@ export class R2Storage {
     return `${this.storagePath}/${path}`;
   }
 
-  sanitizeCardNumber(cardNumber: string | undefined): string {
-    if (!cardNumber) {
-      throw new Error("Card number is required");
-    }
-    return cardNumber.replace(/\//g, "_");
-  }
-
-  getStoragePath(options: ImagePathOptions): string {
-    let suffix = "_200w"; // default to low res
-    if (options.isHighRes) {
-      suffix = "_400w";
-    }
-    const sanitizedCardNumber = this.sanitizeCardNumber(options.cardNumber);
-    const fileName = `${options.productId}_${sanitizedCardNumber}${suffix}.jpg`;
-    return `${options.groupId}/${fileName}`;
-  }
-
   async uploadImage(
-    path: string,
     buffer: Buffer,
-    metadata: Record<string, string>
+    path: string,
+    metadata: ImageMetadata
   ): Promise<string> {
     const fullPath = this.getFullPath(path);
 
     try {
       // Pre-upload validation
-      await logInfo("Validating image upload", {
-        path: fullPath,
-        size: buffer.length,
-        metadata,
-      });
-
       if (!buffer || buffer.length === 0) {
         throw new Error("Empty buffer provided for upload");
       }
 
-      // Store current metadata for potential rollback
-      const existingMetadata = await this.getImageMetadata(path);
-      if (existingMetadata) {
-        this.addToRollback(path, existingMetadata);
-      }
+      // Convert metadata to string values for S3 compatibility
+      const stringMetadata: Record<string, string> = Object.entries(
+        metadata
+      ).reduce((acc, [key, value]) => {
+        if (value !== undefined && value !== null) {
+          if (value instanceof Date) {
+            acc[key] = value.toISOString();
+          } else {
+            acc[key] = String(value);
+          }
+        }
+        return acc;
+      }, {} as Record<string, string>);
 
       // Upload to R2
       await this.client.send(
@@ -92,21 +67,15 @@ export class R2Storage {
           Body: buffer,
           ContentType: "image/jpeg",
           ContentLength: buffer.length,
-          Metadata: metadata,
+          Metadata: stringMetadata,
           CacheControl: "public, max-age=31536000",
         })
       );
 
       // Verify upload
-      const uploadedMetadata = await this.getImageMetadata(path);
-      if (!uploadedMetadata) {
-        throw new Error("Upload verification failed - metadata not found");
-      }
-
-      // Verify metadata matches
-      const metadataMatch = await this.compareMetadata(path, metadata);
-      if (!metadataMatch) {
-        throw new Error("Upload verification failed - metadata mismatch");
+      const exists = await this.fileExists(path);
+      if (!exists) {
+        throw new Error("Upload verification failed - file not found");
       }
 
       const publicUrl = this.getPublicUrl(fullPath);
@@ -115,7 +84,6 @@ export class R2Storage {
         path: fullPath,
         size: buffer.length,
         url: publicUrl,
-        metadata: uploadedMetadata,
       });
 
       return publicUrl;
@@ -138,23 +106,11 @@ export class R2Storage {
         })
       );
 
-      await logInfo("Retrieved image metadata", {
-        path: fullPath,
-        metadata: response.Metadata,
-        contentLength: response.ContentLength,
-        lastModified: response.LastModified,
-      });
-
       return response.Metadata || null;
     } catch (error) {
       if ((error as any).name === "NotFound") {
-        await logInfo("Image metadata not found", {path: fullPath});
         return null;
       }
-      await logWarning("Failed to retrieve image metadata", {
-        path: fullPath,
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
       throw error;
     }
   }
@@ -168,110 +124,13 @@ export class R2Storage {
           Key: fullPath,
         })
       );
-
-      await logInfo("Image file exists", {path: fullPath});
       return true;
     } catch (error) {
       if ((error as any).name === "NotFound") {
-        await logInfo("Image file does not exist", {path: fullPath});
         return false;
       }
-      await logWarning("Error checking file existence", {
-        path: fullPath,
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
       throw error;
     }
-  }
-
-  async validateUpload(path: string, expectedSize: number): Promise<boolean> {
-    try {
-      const response = await this.client.send(
-        new HeadObjectCommand({
-          Bucket: this.bucket,
-          Key: this.getFullPath(path),
-        })
-      );
-
-      const actualSize = response.ContentLength || 0;
-      const isValid = actualSize === expectedSize;
-
-      await logInfo("Validating uploaded image", {
-        path,
-        expectedSize,
-        actualSize,
-        isValid,
-        metadata: response.Metadata,
-      });
-
-      return isValid;
-    } catch (error) {
-      await logWarning("Image validation failed", {
-        path,
-        expectedSize,
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
-      return false;
-    }
-  }
-
-  async compareMetadata(
-    path: string,
-    expectedMetadata: Record<string, string>
-  ): Promise<boolean> {
-    const storedMetadata = await this.getImageMetadata(path);
-    if (!storedMetadata) return false;
-
-    const relevantFields = ["hash", "type", "size"];
-    const matches = relevantFields.every(
-      (field) => storedMetadata[field] === expectedMetadata[field]
-    );
-
-    await logInfo("Metadata comparison result", {
-      path,
-      matches,
-      stored: storedMetadata,
-      expected: expectedMetadata,
-    });
-
-    return matches;
-  }
-
-  async rollback(): Promise<void> {
-    await logInfo("Starting rollback", {
-      queueLength: this.rollbackQueue.length,
-    });
-
-    for (const {path, metadata} of this.rollbackQueue.reverse()) {
-      try {
-        await this.client.send(
-          new PutObjectCommand({
-            Bucket: this.bucket,
-            Key: this.getFullPath(path),
-            Metadata: metadata,
-          })
-        );
-
-        await logInfo("Rollback successful for path", {
-          path,
-          metadata,
-        });
-      } catch (rollbackError) {
-        await logWarning("Rollback failed for path", {
-          path,
-          metadata,
-          error:
-            rollbackError instanceof Error ?
-              rollbackError.message :
-              "Unknown error",
-        });
-      }
-    }
-
-    this.rollbackQueue = [];
-    await logInfo("Rollback complete", {
-      timestamp: new Date().toISOString(),
-    });
   }
 
   async deleteFile(path: string): Promise<void> {
@@ -295,11 +154,9 @@ export class R2Storage {
   }
 
   getPublicUrl(path: string): string {
-    return `${this.customDomain}/${this.getFullPath(path)}`;
-  }
-
-  private addToRollback(path: string, metadata: Record<string, string>): void {
-    this.rollbackQueue.push({path, metadata});
+    // Ensure path starts without a slash and storagePath is included
+    const cleanPath = path.replace(/^\/+/, "");
+    return `${this.customDomain}/${cleanPath}`;
   }
 
   async validateStorageSetup(): Promise<boolean> {
@@ -308,59 +165,26 @@ export class R2Storage {
       const testContent = Buffer.from("Storage validation test");
 
       // Test write
-      await this.uploadImage(testKey, testContent, {
-        type: "test",
-        timestamp: new Date().toISOString(),
+      await this.uploadImage(testContent, testKey, {
+        contentType: "text/plain",
+        size: testContent.length,
+        updated: new Date(),
+        hash: "test",
       });
 
       // Test read
       const exists = await this.fileExists(testKey);
-      const metadata = await this.getImageMetadata(testKey);
 
       // Test delete
       await this.deleteFile(testKey);
 
-      return exists && !!metadata;
+      return exists;
     } catch (error) {
-      await logError(error as GenericError, "R2 storage validation failed");
+      await logWarning("Storage validation failed", {
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
       return false;
     }
-  }
-
-  async cleanupOrphanedImages(): Promise<void> {
-    try {
-      // Get all image references from Firestore
-      const cardDocs = await db.collection(COLLECTION.CARDS).get();
-      const validPaths = new Set<string>();
-
-      cardDocs.forEach((doc: DocumentData) => {
-        const data = doc.data();
-        if (data.highResUrl) {
-          validPaths.add(this.getPathFromUrl(data.highResUrl));
-        }
-        if (data.lowResUrl) {
-          validPaths.add(this.getPathFromUrl(data.lowResUrl));
-        }
-      });
-
-      await logInfo("Found valid image paths", {
-        count: validPaths.size,
-        paths: Array.from(validPaths),
-      });
-
-      // TODO: Implement R2 bucket listing and cleanup
-      // Note: Implementation depends on your R2 setup
-    } catch (error) {
-      await logError(
-        error as GenericError,
-        "Failed to cleanup orphaned images"
-      );
-      throw error;
-    }
-  }
-
-  private getPathFromUrl(url: string): string {
-    return url.replace(this.customDomain, "").replace(/^\/+/, "");
   }
 }
 

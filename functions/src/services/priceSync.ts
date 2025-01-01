@@ -1,8 +1,4 @@
-import {
-  constructTCGCSVPath,
-  makeRequest,
-  validateAndFixDocumentId,
-} from "../utils/syncUtils";
+import {makeRequest, validateAndFixDocumentId} from "../utils/syncUtils";
 import {db, COLLECTION} from "../config/firebase";
 import {
   CardPrice,
@@ -13,20 +9,62 @@ import {
   PriceData,
 } from "../types";
 import {logInfo, logError} from "../utils/logger";
+import {isAxiosError} from "axios";
+import {historicalPriceSync} from "./historicalPriceSync";
 
 /**
  * Fetch prices for a specific group.
  */
-async function fetchPricesForGroup(groupId: string): Promise<CardPrice[]> {
-  const endpoint = `/${COLLECTION.CARDS}/${groupId}/prices`;
-  const pricesResponse = await makeRequest<{ results: CardPrice[] }>(
-    constructTCGCSVPath(endpoint)
-  );
-  await logInfo("Fetched prices for group", {
-    groupId,
-    count: pricesResponse.results.length,
-  });
-  return pricesResponse.results;
+export async function fetchPricesForGroup(
+  groupId: string
+): Promise<CardPrice[]> {
+  const categoryId = "24"; // FFTCG category ID
+  let allPrices: CardPrice[] = [];
+
+  try {
+    if (!groupId) {
+      // First fetch all groups
+      const groupsResponse = await makeRequest<{
+        results: Array<{ groupId: string }>;
+      }>(`${categoryId}/groups`);
+
+      await logInfo("Fetched groups", {
+        count: groupsResponse.results.length,
+      });
+
+      // Process all groups
+      for (const group of groupsResponse.results) {
+        const pricesResponse = await makeRequest<{ results: CardPrice[] }>(
+          `${categoryId}/${group.groupId}/prices`
+        );
+        allPrices = allPrices.concat(pricesResponse.results);
+      }
+    } else {
+      // Fetch prices for specific group
+      const pricesResponse = await makeRequest<{ results: CardPrice[] }>(
+        `${categoryId}/${groupId}/prices`
+      );
+      allPrices = pricesResponse.results;
+    }
+
+    await logInfo("Fetched prices", {
+      groupId: groupId || "all",
+      count: allPrices.length,
+    });
+
+    return allPrices;
+  } catch (error) {
+    if (isAxiosError(error) && error.response?.status === 403) {
+      await logError(
+        error,
+        `Access denied when fetching prices for group ${groupId}`
+      );
+      throw new Error(
+        "Access denied to TCGCSV API. Please check API access and paths."
+      );
+    }
+    throw error;
+  }
 }
 
 /**
@@ -39,7 +77,6 @@ function organizePriceData(prices: CardPrice[]): Map<number, PriceData> {
     const existingData = priceMap.get(price.productId) || {
       lastUpdated: new Date(),
       productId: price.productId,
-      cardNumber: price.cardNumber || "",
     };
 
     if (price.subTypeName === "Normal") {
@@ -55,18 +92,15 @@ function organizePriceData(prices: CardPrice[]): Map<number, PriceData> {
 }
 
 /**
- * Generate a document ID for price data.
- */
-function getPriceDocumentId(productId: number, cardNumber: string): string {
-  return validateAndFixDocumentId(productId, cardNumber);
-}
-
-/**
  * Main function to sync prices.
  */
 export async function syncPrices(
   options: SyncOptions = {}
 ): Promise<SyncMetadata> {
+  await logInfo("Starting price sync", {
+    options,
+    endpoint: options.groupId ? `24/${options.groupId}/prices` : "24/groups",
+  });
   const metadata: SyncMetadata = {
     lastSync: new Date(),
     status: "in_progress",
@@ -87,15 +121,13 @@ export async function syncPrices(
 
     for (const [productId, priceData] of priceMap) {
       try {
-        if (!priceData.cardNumber) {
-          throw new Error(`Missing card number for product ${productId}`);
-        }
-
-        const documentId = getPriceDocumentId(productId, priceData.cardNumber);
+        const documentId = validateAndFixDocumentId(
+          productId,
+          productId.toString()
+        );
 
         await logInfo("Processing price", {
           productId,
-          cardNumber: priceData.cardNumber,
           documentId,
         });
 
@@ -117,6 +149,9 @@ export async function syncPrices(
         if (options.limit && metadata.cardCount >= options.limit) {
           break;
         }
+
+        // Save historical data after processing current prices
+        await historicalPriceSync.saveDailyPrices(prices);
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
