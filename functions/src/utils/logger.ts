@@ -1,164 +1,83 @@
-import * as functions from "firebase-functions";
-import {db, COLLECTION} from "../config/firebase";
-import {GenericError, LogData, GenericObject} from "../types";
+// src/utils/logger.ts
+import { db } from "../config/firebase";
+import { environment } from "../config/environment";
+import { SyncResult } from "../types";
 
-export const logger = functions.logger;
+export type LogData = Record<string, unknown>;
 
-interface LogEntry {
-  timestamp: Date;
-  level: "INFO" | "WARNING" | "ERROR";
-  message: string;
-  context?: string;
-  data?: Record<string, unknown>;
+export interface SyncStats {
+  startTime: Date;
+  endTime?: Date;
+  totalItems: number;
+  successCount: number;
+  errorCount: number;
+  duration?: number;
 }
 
-function cleanLogData(
-  data: Record<string, unknown>,
-  depth = 0
-): Record<string, unknown> {
-  // Prevent infinite recursion
-  if (depth > 10) {
-    return {error: "Maximum recursion depth exceeded"};
+export class Logger {
+  private readonly COLLECTION = "logs";
+
+  async info(message: string, data?: LogData | SyncResult): Promise<void> {
+    await this.log("INFO", message, data);
   }
 
-  // Handle null or undefined
-  if (!data) {
-    return {};
+  async error(message: string, data?: LogData | { error: unknown }): Promise<void> {
+    await this.log("ERROR", message, data);
   }
 
-  try {
-    return Object.entries(data).reduce((acc, [key, value]) => {
-      // Skip undefined and null values
-      if (value === undefined || value === null) {
-        return acc;
-      }
+  async logSyncStats(stats: SyncStats): Promise<void> {
+    const duration = stats.endTime ? (stats.endTime.getTime() - stats.startTime.getTime()) / 1000 : undefined;
 
-      // Handle different types of values
-      if (value instanceof Date) {
-        acc[key] = value.toISOString();
-      } else if (typeof value === "function") {
-        // Skip functions
-        return acc;
-      } else if (Array.isArray(value)) {
-        // Handle arrays
-        acc[key] = value.map((item) =>
-          typeof item === "object" && item !== null ?
-            cleanLogData(item as Record<string, unknown>, depth + 1) :
-            item
-        );
-      } else if (typeof value === "object") {
-        // Handle objects
-        try {
-          // Check if object can be safely converted to string
-          JSON.stringify(value);
-          acc[key] = cleanLogData(value as Record<string, unknown>, depth + 1);
-        } catch (e) {
-          // If circular reference is detected, return a simplified version
-          acc[key] = "[Circular]";
-        }
-      } else {
-        // Handle primitive values
-        acc[key] = value;
-      }
+    const successRate = ((stats.successCount / stats.totalItems) * 100).toFixed(1);
 
-      return acc;
-    }, {} as Record<string, unknown>);
-  } catch (error) {
-    // If any error occurs during cleaning, return a simplified object
-    return {
-      error: "Error cleaning log data",
-      message: error instanceof Error ? error.message : "Unknown error",
-    };
-  }
-}
-
-async function saveLogEntry(entry: LogEntry): Promise<void> {
-  try {
-    const cleanEntry = {
-      timestamp: entry.timestamp,
-      level: entry.level,
-      message: entry.message,
-      ...(entry.context && {context: entry.context}),
-      ...(entry.data && {data: cleanLogData(entry.data)}),
-    };
-
-    await db.collection(COLLECTION.LOGS).add(cleanEntry);
-  } catch (error) {
-    console.error("Error saving log entry:", error);
-  }
-}
-
-export const logError = async (
-  error: GenericError | GenericObject,
-  context: string
-) => {
-  try {
-    const errorData = cleanLogData({
-      stack: error.stack,
-      code: error.code,
-      ...(error as GenericObject),
-      timestamp: new Date().toISOString(),
+    console.log({
+      duration: duration ? `${duration}s` : "unknown",
+      successRate: `${successRate}%`,
+      totalItems: stats.totalItems,
+      successful: stats.successCount,
+      errors: stats.errorCount,
     });
 
-    const entry: LogEntry = {
-      timestamp: new Date(),
-      level: "ERROR",
-      message: error.message || "Unknown error",
-      context,
-      data: errorData,
-    };
-
-    logger.error(entry.message, errorData);
-    await saveLogEntry(entry);
-  } catch (e) {
-    console.error("Error in logError:", e);
+    if (!environment.isLocal) {
+      await db.collection(this.COLLECTION).add({
+        type: "SYNC_STATS",
+        timestamp: new Date(),
+        stats: {
+          ...stats,
+          duration,
+          successRate: parseFloat(successRate),
+        },
+      });
+    }
   }
-};
 
-export const logInfo = async (message: string, data?: LogData) => {
-  try {
-    const cleanedData = data ?
-      cleanLogData({
-        ...data,
-        timestamp: new Date().toISOString(),
-      }) :
-      undefined;
-
-    const entry: LogEntry = {
+  async log(
+    level: "INFO" | "ERROR",
+    message: string,
+    metadata?: LogData | SyncResult | { error: unknown }
+  ): Promise<void> {
+    const entry = {
       timestamp: new Date(),
-      level: "INFO",
+      level,
       message,
-      ...(cleanedData &&
-        Object.keys(cleanedData).length > 0 && {data: cleanedData}),
+      metadata: metadata || null,
+      environment: environment.nodeEnv,
     };
 
-    logger.info(message, cleanedData);
-    await saveLogEntry(entry);
-  } catch (e) {
-    console.error("Error in logInfo:", e);
+    // Always log to console with appropriate level
+    const logFn = level === "ERROR" ? console.error : console.log;
+    logFn(`[${level}] ${message}`, metadata || "");
+
+    // Only log to Firestore if not in local development
+    if (!environment.isLocal) {
+      try {
+        await db.collection(this.COLLECTION).add(entry);
+      } catch (error) {
+        console.error("Failed to write log to Firestore:", error);
+        // Don't throw the error to prevent disrupting the application
+      }
+    }
   }
-};
+}
 
-export const logWarning = async (message: string, data?: LogData) => {
-  try {
-    const cleanedData = data ?
-      cleanLogData({
-        ...data,
-        timestamp: new Date().toISOString(),
-      }) :
-      undefined;
-
-    const entry: LogEntry = {
-      timestamp: new Date(),
-      level: "WARNING",
-      message,
-      ...(cleanedData &&
-        Object.keys(cleanedData).length > 0 && {data: cleanedData}),
-    };
-
-    logger.warn(message, cleanedData);
-    await saveLogEntry(entry);
-  } catch (e) {
-    console.error("Error in logWarning:", e);
-  }
-};
+export const logger = new Logger();

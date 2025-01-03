@@ -1,326 +1,196 @@
 // src/services/cardSync.ts
+import { db } from "../config/firebase";
+import { tcgcsvApi } from "../utils/api";
+import { storageService } from "./storageService";
+import { CardProduct, SyncResult, CardHashData, SyncTiming } from "../types";
+import { logger } from "../utils/logger";
+import * as crypto from "crypto";
 
-import {makeRequest, validateAndFixDocumentId} from "../utils/syncUtils";
-import {db, COLLECTION} from "../config/firebase";
-import {
-  CardProduct,
-  SyncOptions,
-  SyncMetadata,
-  GenericError,
-  GenericObject,
-} from "../types";
-import {logInfo, logError, logWarning} from "../utils/logger";
-import {imageHandler} from "../utils/imageHandler";
-import {FieldValue} from "firebase-admin/firestore";
-import {isAxiosError} from "axios";
-import {
-  validateFFTCGProduct,
-  isNonCardProduct,
-} from "../utils/productValidation";
+export class CardSyncService {
+  private readonly CARDS_COLLECTION = "cards";
+  private readonly HASH_COLLECTION = "cardHashes";
+  private readonly BATCH_SIZE = 5;
 
-/**
- * Extract card number from a product.
- */
-function getCardNumber(product: CardProduct): string {
-  // For non-card products, use productId and add a prefix
-  if (isNonCardProduct(product.name)) {
-    return `P${product.productId}`; // Add 'P' prefix to distinguish from card numbers
+  private calculateHash(data: CardHashData): string {
+    return crypto.createHash("md5").update(JSON.stringify(data)).digest("hex");
   }
 
-  const numberField = product.extendedData.find(
-    (data) => data.name === "Number"
-  );
-  if (!numberField) {
-    throw new Error(`Missing card number for productId: ${product.productId}`);
-  }
-  return numberField.value;
-}
-
-/**
- * Generate a document ID for a product.
- */
-function getDocumentId(product: CardProduct): string {
-  if (isNonCardProduct(product.name)) {
-    // For non-card products, use productId as the base
-    return product.productId.toString();
+  private async getStoredHash(productId: number): Promise<string | null> {
+    const doc = await db.collection(this.HASH_COLLECTION).doc(productId.toString()).get();
+    return doc.exists ? doc.data()?.hash : null;
   }
 
-  const cardNumber = getCardNumber(product);
-  return validateAndFixDocumentId(product.productId, cardNumber);
-}
-
-/**
- * Handle promo cards to ensure proper document ID generation.
- */
-function getPromoDocumentId(product: CardProduct): string {
-  const extNumber = product.extendedData.find(
-    (data) => data.name === "extNumber"
-  );
-  if (!extNumber) {
-    throw new Error(
-      `Missing extNumber for promo productId: ${product.productId}`
-    );
-  }
-
-  const [promoCardNumber] = extNumber.value.split("/");
-  return validateAndFixDocumentId(product.productId, promoCardNumber);
-}
-
-/**
- * Process images for a card product
- */
-async function processImages(card: CardProduct): Promise<void> {
-  if (!card.imageUrl) {
-    await logWarning(`No image URL for card ${card.productId}`, {
-      cardName: card.name,
-      groupId: card.groupId,
-    });
-    return;
-  }
-
-  try {
-    const isNonCard = isNonCardProduct(card.name);
-    const cardNumber = isNonCard ?
-      card.productId.toString() :
-      getCardNumber(card);
-
-    const result = await imageHandler.processAndStoreImage(
-      card.imageUrl,
-      card.productId,
-      card.groupId.toString(),
-      cardNumber,
-      isNonCard
-    );
-
-    const documentId = getDocumentId(card);
-    const docRef = db.collection(COLLECTION.CARDS).doc(documentId);
-
-    // Check if document exists
-    const doc = await docRef.get();
-
-    const updateData = {
-      highResUrl: result.highResUrl,
-      lowResUrl: result.lowResUrl,
-      imageMetadata: result.metadata,
+  private async updateStoredHash(productId: number, hash: string): Promise<void> {
+    await db.collection(this.HASH_COLLECTION).doc(productId.toString()).set({
+      hash,
       lastUpdated: new Date(),
-      isNonCard: isNonCard,
+    });
+  }
+
+  private getCardNumber(card: CardProduct): string {
+    const numberField = card.extendedData.find((data) => data.name === "Number");
+    return numberField ? numberField.value : `P${card.productId}`;
+  }
+
+  private getDocumentId(card: CardProduct): string {
+    const cardNumber = this.getCardNumber(card);
+    return `${card.productId}_${cardNumber}`;
+  }
+
+  private isNonCardProduct(card: CardProduct): boolean {
+    const cardType = card.extendedData.find((data) => data.name === "CardType")?.value;
+    return !cardType || cardType.toLowerCase() === "sealed product";
+  }
+
+  private updateTiming(timing: SyncTiming): void {
+    timing.lastUpdateTime = new Date();
+    if (timing.startTime) {
+      timing.duration = (timing.lastUpdateTime.getTime() - timing.startTime.getTime()) / 1000;
+    }
+  }
+
+  private async processCardBatch(
+    cards: CardProduct[],
+    groupId: string,
+    options: { forceUpdate?: boolean } = {}
+  ): Promise<{
+    processed: number;
+    updated: number;
+    errors: string[];
+  }> {
+    const result = {
+      processed: 0,
+      updated: 0,
+      errors: [] as string[],
     };
 
-    if (card.imageUrl) {
-      Object.assign(updateData, {
-        imageUrl: FieldValue.delete(),
-      });
+    const batches = [];
+    for (let i = 0; i < cards.length; i += this.BATCH_SIZE) {
+      batches.push(cards.slice(i, i + this.BATCH_SIZE));
     }
 
-    if (!doc.exists) {
-      // Create new document if it doesn't exist
-      await docRef.set({
-        ...card,
-        ...updateData,
-      });
-    } else {
-      // Update existing document
-      await docRef.update(updateData);
-    }
+    for (const batch of batches) {
+      try {
+        await Promise.all(
+          batch.map(async (card) => {
+            try {
+              result.processed++;
 
-    await logInfo(
-      `Processed images for ${isNonCard ? "product" : "card"} ${
-        card.productId
-      }`,
-      {
-        cardName: card.name,
-        groupId: card.groupId,
-        highResUrl: result.highResUrl,
-        lowResUrl: result.lowResUrl,
-        updated: result.updated,
-        isNonCard,
-      }
-    );
-  } catch (error) {
-    await logError(
-      {
-        message: error instanceof Error ? error.message : "Unknown error",
-        name: error instanceof Error ? error.name : "UnknownError",
-        code: "IMAGE_PROCESSING_ERROR",
-      },
-      `Failed to process images for ${card.productId}`
-    );
-    throw error;
-  }
-}
+              const relevantData: CardHashData = {
+                name: card.name,
+                cleanName: card.cleanName,
+                modifiedOn: card.modifiedOn,
+                extendedData: card.extendedData,
+              };
+              const currentHash = this.calculateHash(relevantData);
+              const storedHash = await this.getStoredHash(card.productId);
 
-/**
- * Fetch products for a specific group.
- */
-async function fetchProductsForGroup(groupId: string): Promise<CardProduct[]> {
-  const categoryId = "24"; // FFTCG category ID
-  let allProducts: CardProduct[] = [];
+              if (currentHash === storedHash && !options.forceUpdate) {
+                logger.info(`Skipping card ${card.productId} - no changes`);
+                return;
+              }
 
-  try {
-    if (!groupId) {
-      // First fetch all groups
-      const groupsResponse = await makeRequest<{
-        results: Array<{ groupId: string }>;
-      }>(`${categoryId}/groups`);
+              const cardNumber = this.getCardNumber(card);
+              const documentId = this.getDocumentId(card);
 
-      await logInfo("Fetched groups", {
-        count: groupsResponse.results.length,
-      });
+              const imageResult = await storageService.processAndStoreImage(
+                card.imageUrl,
+                card.productId,
+                groupId,
+                cardNumber
+              );
 
-      // Process all groups
-      for (const group of groupsResponse.results) {
-        const productsResponse = await makeRequest<{ results: CardProduct[] }>(
-          `${categoryId}/${group.groupId}/products`
+              const cardDoc = {
+                ...card,
+                imageUrl: undefined,
+                highResUrl: imageResult.highResUrl,
+                lowResUrl: imageResult.lowResUrl,
+                imageMetadata: imageResult.metadata,
+                lastUpdated: new Date(),
+                groupId: parseInt(groupId),
+                isNonCard: this.isNonCardProduct(card),
+                cardNumber: cardNumber,
+              };
+
+              await db.collection(this.CARDS_COLLECTION).doc(documentId).set(cardDoc, { merge: true });
+              await this.updateStoredHash(card.productId, currentHash);
+
+              result.updated++;
+              logger.info(`Updated card ${card.productId}: ${card.name}`);
+            } catch (error) {
+              const errorMessage = error instanceof Error ? error.message : "Unknown error";
+              result.errors.push(`Error processing card ${card.productId}: ${errorMessage}`);
+              logger.error(`Error processing card ${card.productId}`, { error: errorMessage });
+            }
+          })
         );
-        allProducts = allProducts.concat(productsResponse.results);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        result.errors.push(`Error processing batch: ${errorMessage}`);
+        logger.error("Error processing batch", { error: errorMessage });
       }
-    } else {
-      // Fetch products for specific group
-      const productsResponse = await makeRequest<{ results: CardProduct[] }>(
-        `${categoryId}/${groupId}/products`
-      );
-      allProducts = productsResponse.results;
     }
 
-    await logInfo("Fetched products", {
-      groupId: groupId || "all",
-      count: allProducts.length,
+    return result;
+  }
+
+  async syncCards(options: { groupId?: string; forceUpdate?: boolean } = {}): Promise<SyncResult> {
+    const result: SyncResult = {
+      success: true,
+      itemsProcessed: 0,
+      itemsUpdated: 0,
+      errors: [],
+      timing: {
+        startTime: new Date(),
+      },
+    };
+
+    try {
+      logger.info("Starting card sync", { options });
+
+      const groups = options.groupId ? [{ groupId: options.groupId }] : await tcgcsvApi.getGroups();
+      logger.info(`Found ${groups.length} groups to process`);
+
+      for (const group of groups) {
+        result.timing.groupStartTime = new Date();
+        try {
+          const cards = await tcgcsvApi.getGroupProducts(group.groupId);
+          logger.info(`Retrieved ${cards.length} cards for group ${group.groupId}`);
+
+          const batchResult = await this.processCardBatch(cards, group.groupId, options);
+
+          result.itemsProcessed += batchResult.processed;
+          result.itemsUpdated += batchResult.updated;
+          result.errors.push(...batchResult.errors);
+
+          this.updateTiming(result.timing);
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : "Unknown error";
+          result.errors.push(`Error processing group ${group.groupId}: ${errorMessage}`);
+          logger.error(`Error processing group ${group.groupId}`, { error: errorMessage });
+        }
+      }
+    } catch (error) {
+      result.success = false;
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      result.errors.push(`Card sync failed: ${errorMessage}`);
+      logger.error("Card sync failed", { error: errorMessage });
+    }
+
+    result.timing.endTime = new Date();
+    result.timing.duration = (result.timing.endTime.getTime() - result.timing.startTime.getTime()) / 1000;
+
+    logger.logSyncStats({
+      startTime: result.timing.startTime,
+      endTime: result.timing.endTime,
+      totalItems: result.itemsProcessed,
+      successCount: result.itemsUpdated,
+      errorCount: result.errors.length,
+      duration: result.timing.duration,
     });
 
-    return allProducts;
-  } catch (error) {
-    if (isAxiosError(error) && error.response?.status === 403) {
-      await logError(
-        error,
-        `Access denied when fetching products for group ${groupId}`
-      );
-      throw new Error(
-        "Access denied to TCGCSV API. Please check API access and paths."
-      );
-    }
-    throw error;
+    return result;
   }
 }
 
-/**
- * Main function to sync cards.
- */
-export async function syncCards(
-  options: SyncOptions = {}
-): Promise<SyncMetadata> {
-  await logInfo("Starting card sync", {
-    options,
-    endpoint: options.groupId ? `24/${options.groupId}/products` : "24/groups",
-  });
-  console.log("syncCards received options:", {
-    dryRun: options.dryRun,
-    limit: options.limit,
-    groupId: options.groupId,
-    skipImages: options.skipImages,
-    imagesOnly: options.imagesOnly,
-    silent: options.silent,
-    force: options.force,
-  });
-  const metadata: SyncMetadata = {
-    lastSync: new Date(),
-    status: "in_progress",
-    cardCount: 0,
-    type: options.dryRun ? "manual" : "scheduled",
-    groupsProcessed: 0,
-    groupsUpdated: 0,
-    errors: [],
-    imagesProcessed: 0,
-    imagesUpdated: 0,
-  };
-
-  await logInfo("Starting card sync", {options});
-
-  try {
-    const products = await fetchProductsForGroup(options.groupId || "");
-    const writeBatch = db.batch();
-    let batchCount = 0;
-
-    for (const card of products) {
-      try {
-        // Add validation check
-        const validation = validateFFTCGProduct(card);
-        const isNonCard = isNonCardProduct(card.name);
-
-        // Allow both valid cards and non-card products to be processed
-        if (!validation.isValid && !isNonCard) {
-          await logInfo(`Skipping invalid product: ${card.name}`, {
-            productId: card.productId,
-            reason: validation.reason,
-          });
-          continue;
-        }
-
-        const documentId = card.extendedData.some(
-          (data) => data.name === "extNumber"
-        ) ?
-          getPromoDocumentId(card) :
-          getDocumentId(card);
-
-        await logInfo("Processing card", {
-          productId: card.productId,
-          documentId,
-          groupId: card.groupId,
-          isNonCard,
-        });
-
-        // Process card data
-        writeBatch.set(db.collection(COLLECTION.CARDS).doc(documentId), {
-          ...card,
-          lastUpdated: new Date(),
-          isNonCard,
-        });
-
-        batchCount++;
-        metadata.cardCount++;
-
-        // Commit batch if it reaches the limit
-        if (batchCount >= 500) {
-          await writeBatch.commit();
-          batchCount = 0;
-        }
-
-        // Process images if not skipped
-        if (!options.skipImages && card.imageUrl) {
-          metadata.imagesProcessed = (metadata.imagesProcessed || 0) + 1;
-          await processImages(card);
-          metadata.imagesUpdated = (metadata.imagesUpdated || 0) + 1;
-        }
-
-        // Break if limit reached
-        if (options.limit && metadata.cardCount >= options.limit) {
-          break;
-        }
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : "Unknown error";
-        metadata.errors.push(
-          `Error processing card ${card.productId}: ${errorMessage}`
-        );
-        await logError(error as GenericError, "syncCards");
-      }
-    }
-
-    // Commit any remaining batch operations
-    if (batchCount > 0) {
-      await writeBatch.commit();
-    }
-
-    metadata.status =
-      metadata.errors.length > 0 ? "completed_with_errors" : "success";
-    await logInfo("Card sync completed", {metadata});
-  } catch (error) {
-    metadata.status = "failed";
-    metadata.errors.push(
-      error instanceof Error ? error.message : "Unknown error"
-    );
-    await logError(error as GenericError | GenericObject, "syncCards");
-    throw error;
-  }
-
-  return metadata;
-}
+export const cardSync = new CardSyncService();

@@ -1,39 +1,13 @@
-// src/types/index.ts
-
-import type * as express from "express";
-
-export {express};
-
-export interface GenericError extends Error {
-  code?: string;
-  message: string;
-  stack?: string;
-}
-
-export interface MigrationResult {
-  success: boolean;
-  error?: string;
-  stats: {
-    processed: number;
-    skipped: number;
-    errors: string[];
-  };
-}
-
 export interface CardProduct {
   productId: number;
   name: string;
   cleanName: string;
-  imageUrl?: string; // TCGPlayer URL (from API)
-  highResUrl: string; // R2 Storage URL (_400w)
-  lowResUrl: string; // R2 Storage URL (_200w)
+  imageUrl?: string;
   categoryId: number;
   groupId: number;
   url: string;
   modifiedOn: string;
   imageCount: number;
-  imageMetadata?: ImageMetadata;
-  isPlaceholder?: boolean;
   extendedData: Array<{
     name: string;
     displayName: string;
@@ -43,230 +17,69 @@ export interface CardProduct {
 
 export interface CardPrice {
   productId: number;
-  lowPrice: number;
-  midPrice: number;
-  highPrice: number;
-  marketPrice: number | null;
-  directLowPrice: number | null;
-  subTypeName: "Normal" | "Foil";
-  cardNumber?: string;
-}
-
-export interface SyncOptions {
-  dryRun?: boolean;
-  limit?: number;
-  groupId?: string;
-  productId?: number;
-  showAll?: boolean;
-  skipImages?: boolean;
-  imagesOnly?: boolean;
-  silent?: boolean;
-  force?: boolean;
-  maxRetries?: number;
-  retryDelay?: number;
-}
-
-export interface SyncMetadata {
-  lastSync: Date;
-  status: "in_progress" | "success" | "failed" | "completed_with_errors";
-  cardCount: number;
-  type: "manual" | "scheduled";
-  groupsProcessed: number;
-  groupsUpdated: number;
-  errors: string[];
-  duration?: number;
-  imagesProcessed?: number;
-  imagesUpdated?: number;
-  placeholderImages?: number;
-  retryAttempts?: number;
-}
-
-export type CacheType = "card" | "price" | "image";
-
-export interface PriceData {
-  normal?: CardPrice;
-  foil?: CardPrice;
+  normal?: {
+    directLowPrice: number | null;
+    highPrice: number;
+    lowPrice: number;
+    marketPrice: number;
+    midPrice: number;
+    subTypeName: "Normal";
+  };
+  foil?: {
+    directLowPrice: number | null;
+    highPrice: number;
+    lowPrice: number;
+    marketPrice: number;
+    midPrice: number;
+    subTypeName: "Foil";
+  };
   lastUpdated: Date;
-  productId: number;
-  cardNumber?: string; // Made optional
-  retryCount?: number;
-}
-
-export interface ImageMetadata {
-  contentType: string;
-  size: number;
-  updated: Date;
-  hash: string;
-  groupId?: string;
-  productId?: number;
-  cardNumber?: string;
-  lastUpdated?: Date;
-  originalSize?: number;
-  highResSize?: number;
-  lowResSize?: number;
-  isPlaceholder?: boolean;
-}
-
-export interface PlaceholderImageRecord {
-  productId: number;
-  groupId: string;
-  name: string;
-  timestamp: Date;
-  originalUrl?: string;
-}
-
-export interface ImageProcessingResult {
-  highResUrl: string;
-  lowResUrl: string;
-  metadata: ImageMetadata;
-  updated: boolean;
-  isPlaceholder?: boolean;
-}
-
-export interface ImageSyncStats {
-  processed: number;
-  updated: number;
-  failed: number;
-  skipped: number;
-  placeholders: number;
-}
-
-export interface LogData {
-  imageMetadata?: ImageMetadata;
-  imageSyncStats?: ImageSyncStats;
-  [key: string]: any;
-}
-
-export interface CacheOptions {
-  max: number;
-  ttl: number;
-}
-
-export interface CacheEntry<T> {
-  data: T;
-  timestamp: number;
-  expires: number;
-}
-
-export interface ImageProcessingError extends GenericError {
-  productId: number;
-  groupId: string;
-  originalUrl: string;
-  type: "download" | "upload" | "metadata" | "unknown";
-}
-
-export type GenericObject = Record<string, any>;
-
-export interface BatchProcessingStats {
-  total: number;
-  processed: number;
-  successful: number;
-  failed: number;
-  skipped: number;
-  placeholders: number;
-}
-
-export interface BatchOptions {
-  batchSize?: number;
-  delayBetweenBatches?: number;
-  onBatchComplete?: (stats: BatchProcessingStats) => Promise<void>;
-  skipImages?: boolean;
-  retryFailedImages?: boolean;
-  maxRetries?: number;
-  retryDelay?: number;
-}
-
-export interface BatchProgress {
-  totalBatches: number;
-  currentBatch: number;
-  processedCount: number;
-  totalItems: number;
-}
-
-export interface ImageLogEntry {
-  timestamp: Date;
-  level: "INFO" | "WARNING" | "ERROR";
-  message: string;
-  context?: string;
-  metadata?: ImageMetadata;
-  error?: ImageProcessingError;
-  stats?: ImageSyncStats;
-}
-
-export interface StoragePaths {
-  original: string;
-  processed: string;
-}
-
-export interface StorageOptions {
-  contentType: string;
-  metadata?: Record<string, string>;
-  cacheControl?: string;
-}
-
-export interface ImageProcessingProgress {
-  total: number;
-  current: number;
-  updated: number;
-  failed: number;
-  startTime: number;
-  estimatedTimeRemaining?: number;
-}
-
-export interface ImageValidationError {
-  code: "FILE_TOO_LARGE" | "INVALID_FORMAT" | "VALIDATION_ERROR";
-  message: string;
-}
-
-export interface SyncMode {
-  type: "data" | "images" | "full";
-  isForced: boolean;
-  isDryRun: boolean;
-}
-
-export interface RefreshOptions {
-  isDryRun: boolean;
-  isVerbose: boolean;
-  isForce: boolean;
-  groupId?: string;
-  skipImages: boolean;
-  imagesOnly: boolean;
-}
-
-export interface RetryOptions {
-  maxRetries: number;
-  baseDelay: number;
-  maxDelay: number;
-  shouldRetry?: (error: Error) => boolean;
 }
 
 export interface HistoricalPrice {
   productId: number;
   date: Date;
-  prices: {
-    normal?: {
-      low: number;
-      mid: number;
-      high: number;
-      market: number | null;
-      directLow: number | null;
-    };
-    foil?: {
-      low: number;
-      mid: number;
-      high: number;
-      market: number | null;
-      directLow: number | null;
-    };
+  normal?: {
+    directLow: number | null;
+    high: number;
+    low: number;
+    market: number;
+    mid: number;
+  };
+  foil?: {
+    directLow: number | null;
+    high: number;
+    low: number;
+    market: number;
+    mid: number;
   };
   groupId: string;
-  cardNumber?: string;
 }
 
-export interface PriceArchive {
-  date: string;
-  url: string;
-  processed: boolean;
-  processedAt?: Date;
-  error?: string;
+export interface SyncTiming {
+  startTime: Date;
+  endTime?: Date;
+  duration?: number;
+  groupStartTime?: Date;
+  imageStartTime?: Date;
+  lastUpdateTime?: Date;
+}
+
+export interface SyncResult {
+  success: boolean;
+  itemsProcessed: number;
+  itemsUpdated: number;
+  errors: string[];
+  timing: SyncTiming;
+}
+
+export interface CardHashData {
+  name: string;
+  cleanName: string;
+  modifiedOn: string;
+  extendedData: Array<{
+    name: string;
+    displayName: string;
+    value: string;
+  }>;
 }

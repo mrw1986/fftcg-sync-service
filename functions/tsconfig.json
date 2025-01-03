@@ -1,31 +1,23 @@
 {
   "compilerOptions": {
     "module": "commonjs",
+    "moduleResolution": "node",
     "noImplicitReturns": true,
     "noUnusedLocals": true,
     "outDir": "lib",
     "sourceMap": true,
     "strict": true,
     "target": "es2017",
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "types": ["node", "express"],
-    "baseUrl": "./src",
-    "lib": ["es2017", "dom"],
-    "typeRoots": [
-      "./node_modules/@types",
-      "./src/types"
-    ]
+    "skipLibCheck": true, // Add this line
+    "esModuleInterop": true, // Make sure this is present
+    "resolveJsonModule": true, // Add this line
+    "baseUrl": "./src", // Add this line
+    "paths": {
+      // Add this section
+      "*": ["*"]
+    }
   },
   "compileOnSave": true,
-  "include": [
-    "src/**/*",
-    ".eslintrc.js",
-    ".eslintrc.fix.js",
-    ".eslintrc.base.cjs"
-  ],
-  "exclude": [
-    "node_modules",
-    "lib"
-  ]
+  "include": ["src"],
+  "exclude": ["node_modules", "lib"]
 }

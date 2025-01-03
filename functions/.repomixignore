@@ -1,12 +1,5 @@
-# Add patterns to ignore here, one per line
-# Example:
-# *.log
-# tmp/
+lib/**
+!*/
+!.gitignore
 service_account_key.json
-.gitignore
-.repomixignore
-repomix.config.json
-functions-backup/
-# Backups
-backups/
-.env
+!src/**

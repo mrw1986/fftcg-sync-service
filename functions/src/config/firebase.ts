@@ -11,7 +11,7 @@ db.settings({
   timestampsInSnapshots: true,
 });
 
-export {db};
+export { db };
 
 export const COLLECTION = {
   CARDS: "cards",

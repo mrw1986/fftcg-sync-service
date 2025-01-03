@@ -10,7 +10,7 @@
   },
   "include": [],
   "ignore": {
-    "useGitignore": true,
+    "useGitignore": false,
     "useDefaultPatterns": true,
     "customPatterns": []
   },

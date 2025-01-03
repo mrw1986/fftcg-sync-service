@@ -15,39 +15,25 @@ module.exports = {
   parser: "@typescript-eslint/parser",
   parserOptions: {
     project: ["tsconfig.json", "tsconfig.dev.json"],
-    tsconfigRootDir: __dirname,
     sourceType: "module",
-    createDefaultProgram: true,
   },
   ignorePatterns: [
     "/lib/**/*",
     "/generated/**/*",
-    "node_modules/",
-    "*.cjs",
+    "*.js", // Add this line to ignore JS files
   ],
-  plugins: [
-    "@typescript-eslint",
-    "import",
-  ],
+  plugins: ["@typescript-eslint", "import"],
   rules: {
-    "quotes": ["error", "double"],
+    quotes: ["error", "double"],
     "import/no-unresolved": 0,
-    "indent": ["error", 2],
-    "max-len": ["error", {"code": 120}],
-    "@typescript-eslint/no-explicit-any": "off",
-    "@typescript-eslint/no-unused-vars": ["error", {
-      "argsIgnorePattern": "^_",
-      "varsIgnorePattern": "^_",
-    }],
-    "valid-jsdoc": 0,
+    indent: ["error", 2],
+    "linebreak-style": 0, // Disable linebreak-style checks
+    "object-curly-spacing": ["error", "always"],
+    "max-len": ["error", { code: 120 }],
+    "@typescript-eslint/no-explicit-any": "warn",
     "require-jsdoc": 0,
+    "valid-jsdoc": 0,
+    "@typescript-eslint/no-var-requires": 0,
+    camelcase: 0,
   },
-  overrides: [
-    {
-      files: ["*.js", "*.cjs"],
-      rules: {
-        "@typescript-eslint/no-var-requires": "off",
-      },
-    },
-  ],
 };

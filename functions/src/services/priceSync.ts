@@ -1,183 +1,179 @@
-import {makeRequest, validateAndFixDocumentId} from "../utils/syncUtils";
-import {db, COLLECTION} from "../config/firebase";
-import {
-  CardPrice,
-  SyncOptions,
-  SyncMetadata,
-  GenericError,
-  GenericObject,
-  PriceData,
-} from "../types";
-import {logInfo, logError} from "../utils/logger";
-import {isAxiosError} from "axios";
-import {historicalPriceSync} from "./historicalPriceSync";
+import { db } from "../config/firebase";
+import { tcgcsvApi } from "../utils/api";
+import { CardPrice, SyncResult, SyncTiming } from "../types";
+import { logger } from "../utils/logger";
+import * as crypto from "crypto";
 
-/**
- * Fetch prices for a specific group.
- */
-export async function fetchPricesForGroup(
-  groupId: string
-): Promise<CardPrice[]> {
-  const categoryId = "24"; // FFTCG category ID
-  let allPrices: CardPrice[] = [];
+export class PriceSyncService {
+  private readonly PRICES_COLLECTION = "prices";
+  private readonly HISTORICAL_PRICES_COLLECTION = "historicalPrices";
+  private readonly HASH_COLLECTION = "priceHashes";
 
-  try {
-    if (!groupId) {
-      // First fetch all groups
-      const groupsResponse = await makeRequest<{
-        results: Array<{ groupId: string }>;
-      }>(`${categoryId}/groups`);
-
-      await logInfo("Fetched groups", {
-        count: groupsResponse.results.length,
-      });
-
-      // Process all groups
-      for (const group of groupsResponse.results) {
-        const pricesResponse = await makeRequest<{ results: CardPrice[] }>(
-          `${categoryId}/${group.groupId}/prices`
-        );
-        allPrices = allPrices.concat(pricesResponse.results);
-      }
-    } else {
-      // Fetch prices for specific group
-      const pricesResponse = await makeRequest<{ results: CardPrice[] }>(
-        `${categoryId}/${groupId}/prices`
-      );
-      allPrices = pricesResponse.results;
-    }
-
-    await logInfo("Fetched prices", {
-      groupId: groupId || "all",
-      count: allPrices.length,
-    });
-
-    return allPrices;
-  } catch (error) {
-    if (isAxiosError(error) && error.response?.status === 403) {
-      await logError(
-        error,
-        `Access denied when fetching prices for group ${groupId}`
-      );
-      throw new Error(
-        "Access denied to TCGCSV API. Please check API access and paths."
-      );
-    }
-    throw error;
+  private calculateHash(price: CardPrice): string {
+    const relevantData = {
+      normal: price.normal,
+      foil: price.foil,
+      lastUpdated: price.lastUpdated,
+    };
+    return crypto.createHash("md5").update(JSON.stringify(relevantData)).digest("hex");
   }
-}
 
-/**
- * Process and organize price data
- */
-function organizePriceData(prices: CardPrice[]): Map<number, PriceData> {
-  const priceMap = new Map<number, PriceData>();
+  private async getStoredHash(productId: number): Promise<string | null> {
+    const doc = await db.collection(this.HASH_COLLECTION).doc(productId.toString()).get();
+    return doc.exists ? doc.data()?.hash : null;
+  }
 
-  for (const price of prices) {
-    const existingData = priceMap.get(price.productId) || {
+  private async updateStoredHash(productId: number, hash: string): Promise<void> {
+    await db.collection(this.HASH_COLLECTION).doc(productId.toString()).set({
+      hash,
       lastUpdated: new Date(),
+    });
+  }
+
+  private updateTiming(timing: SyncTiming): void {
+    timing.lastUpdateTime = new Date();
+    if (timing.startTime) {
+      timing.duration = (timing.lastUpdateTime.getTime() - timing.startTime.getTime()) / 1000;
+    }
+    logger.info(`Price sync progress - Duration: ${timing.duration}s`, {
+      lastUpdate: timing.lastUpdateTime,
+      duration: timing.duration,
+    });
+  }
+
+  private async saveHistoricalPrice(price: CardPrice, groupId: string): Promise<void> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const docId = `${price.productId}_${today.toISOString().split("T")[0]}`;
+
+    // Check if we already have today's record
+    const docRef = db.collection(this.HISTORICAL_PRICES_COLLECTION).doc(docId);
+    const doc = await docRef.get();
+
+    if (doc.exists) {
+      logger.info(`Historical price for ${price.productId} already exists for today, skipping`);
+      return;
+    }
+
+    const historicalPrice = {
       productId: price.productId,
+      groupId,
+      date: today,
+      ...(price.normal && {
+        normal: {
+          directLow: price.normal.directLowPrice,
+          high: price.normal.highPrice,
+          low: price.normal.lowPrice,
+          market: price.normal.marketPrice,
+          mid: price.normal.midPrice,
+        },
+      }),
+      ...(price.foil && {
+        foil: {
+          directLow: price.foil.directLowPrice,
+          high: price.foil.highPrice,
+          low: price.foil.lowPrice,
+          market: price.foil.marketPrice,
+          mid: price.foil.midPrice,
+        },
+      }),
     };
 
-    if (price.subTypeName === "Normal") {
-      existingData.normal = price;
-    } else if (price.subTypeName === "Foil") {
-      existingData.foil = price;
-    }
-
-    priceMap.set(price.productId, existingData);
+    await docRef.set(historicalPrice);
+    logger.info(`Saved historical price for product ${price.productId} for date ${today.toISOString().split("T")[0]}`);
   }
 
-  return priceMap;
-}
+  async syncPrices(options: { groupId?: string; forceUpdate?: boolean } = {}): Promise<SyncResult> {
+    const result: SyncResult = {
+      success: true,
+      itemsProcessed: 0,
+      itemsUpdated: 0,
+      errors: [],
+      timing: {
+        startTime: new Date(),
+      },
+    };
 
-/**
- * Main function to sync prices.
- */
-export async function syncPrices(
-  options: SyncOptions = {}
-): Promise<SyncMetadata> {
-  await logInfo("Starting price sync", {
-    options,
-    endpoint: options.groupId ? `24/${options.groupId}/prices` : "24/groups",
-  });
-  const metadata: SyncMetadata = {
-    lastSync: new Date(),
-    status: "in_progress",
-    cardCount: 0,
-    type: options.dryRun ? "manual" : "scheduled",
-    groupsProcessed: 0,
-    groupsUpdated: 0,
-    errors: [],
-  };
+    try {
+      logger.info("Starting price sync", { options });
 
-  await logInfo("Starting price sync", {options});
+      // Use options.groupId if provided, otherwise get all groups
+      const groups = options.groupId ? [{ groupId: options.groupId }] : await tcgcsvApi.getGroups();
 
-  try {
-    const prices = await fetchPricesForGroup(options.groupId || "");
-    const priceMap = organizePriceData(prices);
-    const writeBatch = db.batch();
-    let batchCount = 0;
+      logger.info(`Found ${groups.length} groups to process`);
 
-    for (const [productId, priceData] of priceMap) {
-      try {
-        const documentId = validateAndFixDocumentId(
-          productId,
-          productId.toString()
-        );
+      for (const group of groups) {
+        result.timing.groupStartTime = new Date();
+        try {
+          logger.info(`Processing prices for group ${group.groupId}`);
+          const prices = await tcgcsvApi.getGroupPrices(group.groupId);
+          logger.info(`Retrieved ${prices.length} prices for group ${group.groupId}`);
 
-        await logInfo("Processing price", {
-          productId,
-          documentId,
-        });
+          for (const price of prices) {
+            try {
+              result.itemsProcessed++;
+              this.updateTiming(result.timing);
 
-        writeBatch.set(db.collection(COLLECTION.PRICES).doc(documentId), {
-          ...priceData,
-          lastUpdated: new Date(),
-        });
+              // Always save historical price data
+              await this.saveHistoricalPrice(price, group.groupId);
 
-        batchCount++;
-        metadata.cardCount++;
+              // Check if current price has changed
+              const currentHash = this.calculateHash(price);
+              const storedHash = await this.getStoredHash(price.productId);
 
-        // Commit batch if it reaches the limit
-        if (batchCount >= 500) {
-          await writeBatch.commit();
-          batchCount = 0;
+              // Skip updating current price if unchanged
+              if (currentHash === storedHash) {
+                logger.info(`Skipping price update for ${price.productId} - no changes`);
+                continue;
+              }
+
+              // Update current price
+              const priceDoc = {
+                ...price,
+                lastUpdated: new Date(),
+              };
+
+              await db
+                .collection(this.PRICES_COLLECTION)
+                .doc(price.productId.toString())
+                .set(priceDoc, { merge: true });
+
+              // Update hash
+              await this.updateStoredHash(price.productId, currentHash);
+
+              result.itemsUpdated++;
+              logger.info(`Updated current price for product ${price.productId}`);
+            } catch (error) {
+              const errorMessage = error instanceof Error ? error.message : "Unknown error";
+              result.errors.push(`Error processing price for product ${price.productId}: ${errorMessage}`);
+              logger.error(`Error processing price for product ${price.productId}`, { error: errorMessage });
+            }
+          }
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : "Unknown error";
+          result.errors.push(`Error processing prices for group ${group.groupId}: ${errorMessage}`);
+          logger.error(`Error processing prices for group ${group.groupId}`, { error: errorMessage });
         }
-
-        // Break if limit reached
-        if (options.limit && metadata.cardCount >= options.limit) {
-          break;
-        }
-
-        // Save historical data after processing current prices
-        await historicalPriceSync.saveDailyPrices(prices);
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : "Unknown error";
-        metadata.errors.push(
-          `Error processing price for product ${productId}: ${errorMessage}`
-        );
-        await logError(error as GenericError, "syncPrices");
       }
+    } catch (error) {
+      result.success = false;
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      result.errors.push(`Price sync failed: ${errorMessage}`);
+      logger.error("Price sync failed", { error: errorMessage });
     }
 
-    // Commit any remaining batch operations
-    if (batchCount > 0) {
-      await writeBatch.commit();
-    }
+    result.timing.endTime = new Date();
+    result.timing.duration = (result.timing.endTime.getTime() - result.timing.startTime.getTime()) / 1000;
 
-    metadata.status =
-      metadata.errors.length > 0 ? "completed_with_errors" : "success";
-    await logInfo("Price sync completed", {metadata});
-  } catch (error) {
-    metadata.status = "failed";
-    metadata.errors.push(
-      error instanceof Error ? error.message : "Unknown error"
-    );
-    await logError(error as GenericError | GenericObject, "syncPrices");
-    throw error;
+    logger.info(`Price sync completed in ${result.timing.duration}s`, {
+      processed: result.itemsProcessed,
+      updated: result.itemsUpdated,
+      errors: result.errors.length,
+      timing: result.timing,
+    });
+
+    return result;
   }
-
-  return metadata;
 }
+
+export const priceSync = new PriceSyncService();
