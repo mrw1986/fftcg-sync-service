@@ -11,18 +11,14 @@
         "indexConfig": {
           "indexes": []
         }
+      },
+      "lastUpdated": {
+        "indexConfig": false
       }
     },
-    "historicalPrices": {
-      "normal": {
-        "indexConfig": {
-          "indexes": []
-        }
-      },
-      "foil": {
-        "indexConfig": {
-          "indexes": []
-        }
+    "prices": {
+      "lastUpdated": {
+        "indexConfig": false
       }
     }
   }

@@ -108,7 +108,7 @@ export class StorageService {
           timeout: this.timeoutMs,
           headers: {
             "User-Agent": "FFTCG-Sync-Service/1.0",
-            Accept: "image/jpeg,image/png,image/*",
+            "Accept": "image/jpeg,image/png,image/*",
           },
           maxContentLength: 10 * 1024 * 1024, // 10MB max
           validateStatus: (status) => status === 200, // Only accept 200 status

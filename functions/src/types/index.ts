@@ -1,3 +1,5 @@
+import { FieldValue } from "firebase-admin/firestore";
+
 export interface CardProduct {
   productId: number;
   name: string;
@@ -91,4 +93,39 @@ export interface SyncOptions {
   imagesOnly?: boolean;
   silent?: boolean;
   dryRun?: boolean;
+}
+
+export interface CardChanges {
+  productId: number;
+  name: string;
+  cleanName: string;
+  highResUrl: string;
+  lowResUrl: string;
+  lastUpdated: FieldValue;
+  groupId: number;
+  isNonCard: boolean;
+  cardNumbers: string[];
+  primaryCardNumber: string;
+}
+
+export interface PriceChanges {
+  productId: number;
+  lastUpdated: FieldValue;
+  groupId: number;
+  normal?: {
+    directLowPrice: number | null;
+    highPrice: number;
+    lowPrice: number;
+    marketPrice: number;
+    midPrice: number;
+    subTypeName: "Normal";
+  };
+  foil?: {
+    directLowPrice: number | null;
+    highPrice: number;
+    lowPrice: number;
+    marketPrice: number;
+    midPrice: number;
+    subTypeName: "Foil";
+  };
 }
