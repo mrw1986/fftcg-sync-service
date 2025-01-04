@@ -83,3 +83,12 @@ export interface CardHashData {
     value: string;
   }>;
 }
+
+export interface SyncOptions {
+  groupId?: string;
+  forceUpdate?: boolean;
+  skipImages?: boolean;
+  imagesOnly?: boolean;
+  silent?: boolean;
+  dryRun?: boolean;
+}

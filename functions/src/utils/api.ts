@@ -36,58 +36,69 @@ export class TcgcsvApi {
   async getGroupProducts(groupId: string): Promise<CardProduct[]> {
     const response = await this.makeRequest<{ results: CardProduct[] }>(`${this.categoryId}/${groupId}/products`);
     logger.info(`Retrieved ${response.results.length} products for group ${groupId}`);
-    return response.results;
+
+    // Transform the results to use correct image URLs
+    const products = response.results.map((product) => ({
+      ...product,
+      // No modification needed, keep original TCGPlayer URL
+    }));
+
+    return products;
   }
 
   async getGroupPrices(groupId: string): Promise<CardPrice[]> {
+    interface RawPriceData {
+      productId: number;
+      lowPrice: number | null;
+      midPrice: number | null;
+      highPrice: number | null;
+      marketPrice: number | null;
+      directLowPrice: number | null;
+      subTypeName: string;
+    }
+
     interface PriceResponse {
-      results: {
-        productId: number;
-        timestamp: string;
-        normal?: {
-          directLowPrice: number | null;
-          highPrice: number;
-          lowPrice: number;
-          marketPrice: number;
-          midPrice: number;
-        };
-        foil?: {
-          directLowPrice: number | null;
-          highPrice: number;
-          lowPrice: number;
-          marketPrice: number;
-          midPrice: number;
-        };
-      }[];
+      success: boolean;
+      errors: string[];
+      results: RawPriceData[];
     }
 
     const response = await this.makeRequest<PriceResponse>(`${this.categoryId}/${groupId}/prices`);
     logger.info(`Retrieved ${response.results.length} prices for group ${groupId}`);
 
-    return response.results.map((price) => ({
-      productId: price.productId,
-      lastUpdated: new Date(price.timestamp),
-      ...(price.normal && {
-        normal: {
-          directLowPrice: price.normal.directLowPrice,
-          highPrice: price.normal.highPrice,
-          lowPrice: price.normal.lowPrice,
-          marketPrice: price.normal.marketPrice,
-          midPrice: price.normal.midPrice,
+    // Group prices by productId
+    const priceMap = new Map<number, CardPrice>();
+
+    response.results.forEach((price) => {
+      const existing = priceMap.get(price.productId) || {
+        productId: price.productId,
+        lastUpdated: new Date(),
+      };
+
+      if (price.subTypeName === "Normal") {
+        existing.normal = {
+          directLowPrice: price.directLowPrice,
+          highPrice: price.highPrice || 0,
+          lowPrice: price.lowPrice || 0,
+          marketPrice: price.marketPrice || 0,
+          midPrice: price.midPrice || 0,
           subTypeName: "Normal",
-        },
-      }),
-      ...(price.foil && {
-        foil: {
-          directLowPrice: price.foil.directLowPrice,
-          highPrice: price.foil.highPrice,
-          lowPrice: price.foil.lowPrice,
-          marketPrice: price.foil.marketPrice,
-          midPrice: price.foil.midPrice,
+        };
+      } else if (price.subTypeName === "Foil") {
+        existing.foil = {
+          directLowPrice: price.directLowPrice,
+          highPrice: price.highPrice || 0,
+          lowPrice: price.lowPrice || 0,
+          marketPrice: price.marketPrice || 0,
+          midPrice: price.midPrice || 0,
           subTypeName: "Foil",
-        },
-      }),
-    }));
+        };
+      }
+
+      priceMap.set(price.productId, existing);
+    });
+
+    return Array.from(priceMap.values());
   }
 }
 

@@ -2,7 +2,7 @@
 import { db } from "../config/firebase";
 import { tcgcsvApi } from "../utils/api";
 import { storageService } from "./storageService";
-import { CardProduct, SyncResult, CardHashData, SyncTiming } from "../types";
+import { CardProduct, SyncResult, CardHashData, SyncTiming, SyncOptions } from "../types";
 import { logger } from "../utils/logger";
 import * as crypto from "crypto";
 
@@ -27,14 +27,28 @@ export class CardSyncService {
     });
   }
 
-  private getCardNumber(card: CardProduct): string {
-    const numberField = card.extendedData.find((data) => data.name === "Number");
-    return numberField ? numberField.value : `P${card.productId}`;
+  private getCardNumbers(card: CardProduct): string[] {
+    const numbers: string[] = [];
+
+    // Get all number fields from extended data
+    card.extendedData
+      .filter((data) => data.name === "Number")
+      .forEach((numberField) => {
+        // Split on common separators and trim
+        const vals = numberField.value.split(/[,;/]/).map((n) => n.trim());
+        numbers.push(...vals);
+      });
+
+    // If no numbers found, use product ID
+    if (numbers.length === 0) {
+      numbers.push(`P${card.productId}`);
+    }
+
+    return [...new Set(numbers)]; // Remove duplicates
   }
 
-  private getDocumentId(card: CardProduct): string {
-    const cardNumber = this.getCardNumber(card);
-    return `${card.productId}_${cardNumber}`;
+  private getDocumentIds(card: CardProduct): string[] {
+    return this.getCardNumbers(card).map((num) => `${card.productId}_${num}`);
   }
 
   private isNonCardProduct(card: CardProduct): boolean {
@@ -90,14 +104,15 @@ export class CardSyncService {
                 return;
               }
 
-              const cardNumber = this.getCardNumber(card);
-              const documentId = this.getDocumentId(card);
+              const cardNumbers = this.getCardNumbers(card);
+              const documentIds = this.getDocumentIds(card);
+              const primaryCardNumber = cardNumbers[0];
 
               const imageResult = await storageService.processAndStoreImage(
                 card.imageUrl,
                 card.productId,
                 groupId,
-                cardNumber
+                primaryCardNumber
               );
 
               const cardDoc = {
@@ -109,14 +124,21 @@ export class CardSyncService {
                 lastUpdated: new Date(),
                 groupId: parseInt(groupId),
                 isNonCard: this.isNonCardProduct(card),
-                cardNumber: cardNumber,
+                cardNumbers: cardNumbers,
+                primaryCardNumber: primaryCardNumber,
               };
 
-              await db.collection(this.CARDS_COLLECTION).doc(documentId).set(cardDoc, { merge: true });
+              // Create a batch for multiple document writes
+              const batch = db.batch();
+              documentIds.forEach((docId) => {
+                batch.set(db.collection(this.CARDS_COLLECTION).doc(docId), cardDoc, { merge: true });
+              });
+              await batch.commit();
+
               await this.updateStoredHash(card.productId, currentHash);
 
               result.updated++;
-              logger.info(`Updated card ${card.productId}: ${card.name}`);
+              logger.info(`Updated card ${card.productId}: ${card.name} with numbers: ${cardNumbers.join(", ")}`);
             } catch (error) {
               const errorMessage = error instanceof Error ? error.message : "Unknown error";
               result.errors.push(`Error processing card ${card.productId}: ${errorMessage}`);
@@ -134,7 +156,7 @@ export class CardSyncService {
     return result;
   }
 
-  async syncCards(options: { groupId?: string; forceUpdate?: boolean } = {}): Promise<SyncResult> {
+  async syncCards(options: SyncOptions = {}): Promise<SyncResult> {
     const result: SyncResult = {
       success: true,
       itemsProcessed: 0,

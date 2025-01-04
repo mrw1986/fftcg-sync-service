@@ -9,13 +9,10 @@ if (process.env.NODE_ENV !== "production") {
 
 // Helper function to get config value
 function getConfigValue(key: string): string {
-  // In production, use Firebase config
   if (process.env.NODE_ENV === "production") {
     const config = functions.config();
     return config.r2?.[key.toLowerCase().replace("r2_", "")] || "";
   }
-
-  // In development, use .env file
   return process.env[key] || "";
 }
 
@@ -29,16 +26,14 @@ export const environment = {
     bucketName: getConfigValue("R2_BUCKET_NAME"),
     storagePath: getConfigValue("R2_STORAGE_PATH"),
     customDomain: getConfigValue("R2_CUSTOM_DOMAIN"),
-  },
+  } as { [key: string]: string },
 };
 
-// Skip validation in production since we're using Firebase config
-if (process.env.NODE_ENV !== "production") {
+// Validate required environment variables
+if (!environment.isLocal) {
   const required = ["R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET_NAME"];
-
-  const missing = required.filter((key) => !process.env[key]);
-
+  const missing = required.filter((key) => !(environment.r2[key.toLowerCase()] as string));
   if (missing.length) {
-    throw new Error(`Missing required env vars: ${missing.join(", ")}`);
+    throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
   }
 }

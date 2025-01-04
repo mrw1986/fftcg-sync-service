@@ -1,10 +1,8 @@
 // src/services/storageService.ts
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import axios from "axios";
 import { R2_CONFIG } from "../config/r2";
 import { logger } from "../utils/logger";
-import * as path from "path";
-import * as fs from "fs/promises";
 
 interface ImageResult {
   highResUrl: string;
@@ -15,6 +13,9 @@ interface ImageResult {
     groupId: string;
     lastUpdated: string;
     isPlaceholder?: boolean;
+    originalUrl?: string;
+    existingImage?: boolean;
+    errorMessage?: string;
   };
 }
 
@@ -23,7 +24,9 @@ export class StorageService {
   private readonly bucket: string;
   private readonly customDomain: string;
   private readonly storagePath: string;
-  private readonly placeholderPath: string;
+  private readonly maxRetries = 3;
+  private readonly timeoutMs = 30000; // 30 seconds
+  private readonly PLACEHOLDER_URL = "https://fftcgcompanion.com/card-images/image-coming-soon.jpeg";
 
   constructor() {
     this.client = new S3Client({
@@ -33,67 +36,146 @@ export class StorageService {
         accessKeyId: R2_CONFIG.ACCESS_KEY_ID,
         secretAccessKey: R2_CONFIG.SECRET_ACCESS_KEY,
       },
+      forcePathStyle: true,
     });
 
     this.bucket = R2_CONFIG.BUCKET_NAME;
     this.customDomain = R2_CONFIG.CUSTOM_DOMAIN;
     this.storagePath = R2_CONFIG.STORAGE_PATH;
-    this.placeholderPath = path.join(process.cwd(), "functions/public/assets/image-coming-soon.jpeg");
   }
 
-  private async getPlaceholderImage(): Promise<Buffer> {
+  private isValidImageUrl(url: string | undefined): boolean {
+    if (!url) return false;
+
+    // Check for TCGPlayer's standard image size patterns, regardless of format
+    const validPatterns = [
+      "_200w.", // Match _200w followed by any extension
+      "_400w.", // Match _400w followed by any extension
+      "_1000x1000.", // Match _1000x1000 followed by any extension
+    ];
+
+    // If URL contains any of our valid patterns, it's a valid TCGPlayer image URL
+    const isValidPattern = validPatterns.some((pattern) => url.includes(pattern));
+
+    // If URL is from TCGPlayer but doesn't match our patterns, or is any other URL, consider it invalid
+    if (!isValidPattern) {
+      logger.info(`Invalid image URL pattern: ${url}, using placeholder`);
+      return false;
+    }
+
+    return true;
+  }
+
+  private async checkImageExists(path: string): Promise<boolean> {
     try {
-      return await fs.readFile(this.placeholderPath);
+      await this.client.send(
+        new HeadObjectCommand({
+          Bucket: this.bucket,
+          Key: path,
+        })
+      );
+      return true;
     } catch (error) {
-      logger.error("Failed to load placeholder image", { error });
-      throw new Error("Failed to load placeholder image");
+      return false;
     }
   }
 
-  private shouldUsePlaceholder(imageUrl?: string): boolean {
-    if (!imageUrl) return true;
-    return imageUrl.includes("image-missing.svg") || !imageUrl.match(/_(200w|400w)\.jpg$/);
+  private async validateImage(buffer: Buffer): Promise<boolean> {
+    if (buffer.length < 4) return false;
+
+    const header = buffer.slice(0, 4);
+    // JPEG magic number: FF D8 FF
+    const isJPEG = header[0] === 0xff && header[1] === 0xd8 && header[2] === 0xff;
+    // PNG magic number: 89 50 4E 47
+    const isPNG = header[0] === 0x89 && header[1] === 0x50 && header[2] === 0x4e && header[3] === 0x47;
+
+    return isJPEG || isPNG;
   }
 
-  // Simplified retry logic for image downloads/uploads
-  private async downloadImage(url: string, retries = 2): Promise<Buffer> {
+  private async downloadImage(url: string, retries = this.maxRetries): Promise<Buffer> {
+    let lastError: Error | null = null;
+
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
         const response = await axios.get(url, {
           responseType: "arraybuffer",
-          timeout: 10000,
+          timeout: this.timeoutMs,
           headers: {
             "User-Agent": "FFTCG-Sync-Service/1.0",
             "Accept": "image/jpeg,image/png,image/*",
           },
+          maxContentLength: 10 * 1024 * 1024, // 10MB max
+          validateStatus: (status) => status === 200, // Only accept 200 status
         });
-        return Buffer.from(response.data);
+
+        const buffer = Buffer.from(response.data);
+
+        if (await this.validateImage(buffer)) {
+          return buffer;
+        } else {
+          throw new Error("Invalid image format");
+        }
       } catch (error) {
-        if (attempt === retries) throw error;
+        lastError = error instanceof Error ? error : new Error(String(error));
+        const axiosError = error as { response?: { status?: number } };
+
+        logger.error(`Failed to download image (attempt ${attempt + 1}/${retries + 1})`, {
+          url,
+          error: lastError.message,
+          status: axiosError?.response?.status,
+        });
+
+        if (attempt === retries) break;
+        await new Promise((resolve) => setTimeout(resolve, 2000 * Math.pow(2, attempt)));
+      }
+    }
+
+    throw lastError || new Error("Download failed after retries");
+  }
+
+  private async uploadToR2WithRetry(
+    buffer: Buffer,
+    path: string,
+    metadata: Record<string, string>,
+    retries = this.maxRetries
+  ): Promise<string> {
+    let lastError: Error | null = null;
+
+    const stringMetadata = Object.entries(metadata).reduce(
+      (acc, [key, value]) => ({
+        ...acc,
+        [key]: String(value),
+      }),
+      {}
+    );
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        await this.client.send(
+          new PutObjectCommand({
+            Bucket: this.bucket,
+            Key: path,
+            Body: buffer,
+            ContentType: "image/jpeg",
+            Metadata: stringMetadata,
+            ContentLength: buffer.length,
+            CacheControl: "public, max-age=31536000",
+            ACL: "public-read",
+          })
+        );
+        return `${this.customDomain}/${path}`;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        logger.error(`Upload attempt ${attempt + 1} failed`, {
+          path,
+          error: lastError.message,
+        });
+        if (attempt === retries) break;
         await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
       }
     }
-    throw new Error("Download failed after retries");
-  }
 
-  private async uploadToR2(buffer: Buffer, path: string, metadata: Record<string, string>): Promise<string> {
-    try {
-      await this.client.send(
-        new PutObjectCommand({
-          Bucket: this.bucket,
-          Key: path,
-          Body: buffer,
-          ContentType: "image/jpeg",
-          Metadata: metadata,
-          ContentLength: buffer.length,
-          CacheControl: "public, max-age=31536000",
-        })
-      );
-      return `${this.customDomain}/${path}`;
-    } catch (error) {
-      logger.error(`Failed to upload to R2: ${path}`, { error });
-      throw error;
-    }
+    throw lastError || new Error("Upload failed after retries");
   }
 
   private getImagePath(groupId: string, cardNumber: string, resolution: "200w" | "400w"): string {
@@ -106,77 +188,109 @@ export class StorageService {
     groupId: string,
     cardNumber: string
   ): Promise<ImageResult> {
-    const metadata = {
+    const baseMetadata = {
       productId: productId.toString(),
       groupId,
       lastUpdated: new Date().toISOString(),
+      contentType: "image/jpeg",
     };
 
-    // Handle placeholder case
-    if (this.shouldUsePlaceholder(imageUrl)) {
-      try {
-        const placeholderBuffer = await this.getPlaceholderImage();
-        const placeholderMetadata = {
-          ...metadata,
-          isPlaceholder: "true",
-        };
+    // Check for valid TCGPlayer URL first
+    if (!this.isValidImageUrl(imageUrl)) {
+      logger.info(`Invalid TCGPlayer image URL for product ${productId}, using placeholder`, {
+        imageUrl,
+        productId,
+      });
+      return {
+        highResUrl: this.PLACEHOLDER_URL,
+        lowResUrl: this.PLACEHOLDER_URL,
+        metadata: {
+          ...baseMetadata,
+          isPlaceholder: true,
+          originalUrl: imageUrl,
+          errorMessage: "Invalid TCGPlayer URL pattern",
+        },
+      };
+    }
 
-        // Store placeholder in both resolutions
-        const [highResUrl, lowResUrl] = await Promise.all([
-          this.uploadToR2(placeholderBuffer, this.getImagePath(groupId, cardNumber, "400w"), placeholderMetadata),
-          this.uploadToR2(placeholderBuffer, this.getImagePath(groupId, cardNumber, "200w"), placeholderMetadata),
+    try {
+      // Check if images already exist in R2
+      const highResPath = this.getImagePath(groupId, cardNumber, "400w");
+      const lowResPath = this.getImagePath(groupId, cardNumber, "200w");
+
+      const [highResExists, lowResExists] = await Promise.all([
+        this.checkImageExists(highResPath),
+        this.checkImageExists(lowResPath),
+      ]);
+
+      // If both images exist, return their URLs
+      if (highResExists && lowResExists) {
+        const existingHighResUrl = `${this.customDomain}/${highResPath}`;
+        const existingLowResUrl = `${this.customDomain}/${lowResPath}`;
+
+        logger.info(`Using existing images for product ${productId}`);
+        return {
+          highResUrl: existingHighResUrl,
+          lowResUrl: existingLowResUrl,
+          metadata: {
+            ...baseMetadata,
+            originalUrl: imageUrl,
+            existingImage: true,
+          },
+        };
+      }
+
+      try {
+        // Download from TCGPlayer with different resolutions
+        // Using optional chaining and providing fallback for undefined case
+        const baseUrl = imageUrl || "";
+        const highResTcgUrl = baseUrl.replace("/fit-in/", "/fit-in/437x437/");
+        const lowResTcgUrl = baseUrl.replace("/fit-in/", "/fit-in/223x223/");
+
+        const [highResBuffer, lowResBuffer] = await Promise.all([
+          this.downloadImage(highResTcgUrl),
+          this.downloadImage(lowResTcgUrl),
+        ]);
+
+        // Upload both versions to R2
+        const [storedHighResUrl, storedLowResUrl] = await Promise.all([
+          this.uploadToR2WithRetry(highResBuffer, highResPath, baseMetadata),
+          this.uploadToR2WithRetry(lowResBuffer, lowResPath, baseMetadata),
         ]);
 
         return {
-          highResUrl,
-          lowResUrl,
+          highResUrl: storedHighResUrl,
+          lowResUrl: storedLowResUrl,
           metadata: {
-            ...metadata,
-            contentType: "image/jpeg",
-            isPlaceholder: true,
+            ...baseMetadata,
+            originalUrl: imageUrl,
           },
         };
       } catch (error) {
-        logger.error("Failed to process placeholder image", { error, productId });
-        throw error;
+        logger.error(`Failed to process images for ${productId}`, { error });
+        return {
+          highResUrl: this.PLACEHOLDER_URL,
+          lowResUrl: this.PLACEHOLDER_URL,
+          metadata: {
+            ...baseMetadata,
+            isPlaceholder: true,
+            originalUrl: imageUrl,
+            errorMessage: error instanceof Error ? error.message : "Unknown error",
+          },
+        };
       }
-    }
-
-    // Handle normal image case
-    try {
-      if (!imageUrl) {
-        throw new Error("No image URL provided");
-      }
-
-      // Convert URLs
-      const lowResUrl = imageUrl;
-      const highResUrl = imageUrl.replace("_200w.jpg", "_400w.jpg");
-
-      // Download both versions
-      const [highResBuffer, lowResBuffer] = await Promise.all([
-        this.downloadImage(highResUrl),
-        this.downloadImage(lowResUrl),
-      ]);
-
-      // Upload both versions
-      const [storedHighResUrl, storedLowResUrl] = await Promise.all([
-        this.uploadToR2(highResBuffer, this.getImagePath(groupId, cardNumber, "400w"), metadata),
-        this.uploadToR2(lowResBuffer, this.getImagePath(groupId, cardNumber, "200w"), metadata),
-      ]);
-
-      return {
-        highResUrl: storedHighResUrl,
-        lowResUrl: storedLowResUrl,
-        metadata: {
-          ...metadata,
-          contentType: "image/jpeg",
-        },
-      };
     } catch (error) {
       logger.error(`Failed to process images for ${productId}`, { error });
-
-      // Fallback to placeholder on error
-      return this.processAndStoreImage(undefined, productId, groupId, cardNumber);
+      return {
+        highResUrl: this.PLACEHOLDER_URL,
+        lowResUrl: this.PLACEHOLDER_URL,
+        metadata: {
+          ...baseMetadata,
+          isPlaceholder: true,
+          originalUrl: imageUrl,
+          errorMessage: error instanceof Error ? error.message : "Unknown error",
+        },
+      };
     }
   }
 }

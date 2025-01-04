@@ -1,6 +1,7 @@
+// src/services/priceSync.ts
 import { db } from "../config/firebase";
 import { tcgcsvApi } from "../utils/api";
-import { CardPrice, SyncResult, SyncTiming } from "../types";
+import { CardPrice, SyncResult, SyncTiming, SyncOptions } from "../types";
 import { logger } from "../utils/logger";
 import * as crypto from "crypto";
 
@@ -28,6 +29,18 @@ export class PriceSyncService {
       hash,
       lastUpdated: new Date(),
     });
+  }
+
+  private validatePrice(price: CardPrice): boolean {
+    const validatePriceData = (data: typeof price.normal | typeof price.foil) => {
+      if (!data) return false;
+      return true; // Accept any price data as valid
+    };
+
+    const hasValidNormal = price.normal ? validatePriceData(price.normal) : false;
+    const hasValidFoil = price.foil ? validatePriceData(price.foil) : false;
+
+    return hasValidNormal || hasValidFoil;
   }
 
   private updateTiming(timing: SyncTiming): void {
@@ -83,7 +96,79 @@ export class PriceSyncService {
     logger.info(`Saved historical price for product ${price.productId} for date ${today.toISOString().split("T")[0]}`);
   }
 
-  async syncPrices(options: { groupId?: string; forceUpdate?: boolean } = {}): Promise<SyncResult> {
+  // src/services/priceSync.ts - Update processPriceBatch method
+  private async processPriceBatch(
+    prices: CardPrice[],
+    groupId: string,
+    options: { forceUpdate?: boolean } = {}
+  ): Promise<{
+  processed: number;
+  updated: number;
+  errors: string[];
+}> {
+    const result = {
+      processed: 0,
+      updated: 0,
+      errors: [] as string[],
+    };
+
+    const writeBatch = db.batch();
+    const updates: Array<() => Promise<void>> = [];
+
+    for (const price of prices) {
+      try {
+        result.processed++;
+
+        if (!this.validatePrice(price)) {
+          logger.info(`Skipping price for product ${price.productId} - no valid price data`);
+          continue;
+        }
+
+        const currentHash = this.calculateHash(price);
+        const storedHash = await this.getStoredHash(price.productId);
+
+        // Always save historical price
+        updates.push(() => this.saveHistoricalPrice(price, groupId));
+
+        if (currentHash === storedHash && !options.forceUpdate) {
+          logger.info(`Skipping price update for ${price.productId} - no changes`);
+          continue;
+        }
+
+        const priceDoc = {
+          ...price,
+          lastUpdated: new Date(),
+          groupId,
+        };
+
+        writeBatch.set(
+          db.collection(this.PRICES_COLLECTION).doc(price.productId.toString()),
+          priceDoc,
+          { merge: true }
+        );
+
+        updates.push(() => this.updateStoredHash(price.productId, currentHash));
+        result.updated++;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        result.errors.push(`Error processing price for product ${price.productId}: ${errorMessage}`);
+        logger.error(`Error processing price for product ${price.productId}`, { error: errorMessage });
+      }
+    }
+
+    try {
+      await writeBatch.commit();
+      await Promise.all(updates.map((update) => update()));
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      result.errors.push(`Error committing batch: ${errorMessage}`);
+      logger.error("Error committing batch", { error: errorMessage });
+    }
+
+    return result;
+  }
+
+  async syncPrices(options: SyncOptions = {}): Promise<SyncResult> {
     const result: SyncResult = {
       success: true,
       itemsProcessed: 0,
@@ -97,58 +182,22 @@ export class PriceSyncService {
     try {
       logger.info("Starting price sync", { options });
 
-      // Use options.groupId if provided, otherwise get all groups
       const groups = options.groupId ? [{ groupId: options.groupId }] : await tcgcsvApi.getGroups();
-
       logger.info(`Found ${groups.length} groups to process`);
 
       for (const group of groups) {
         result.timing.groupStartTime = new Date();
         try {
-          logger.info(`Processing prices for group ${group.groupId}`);
           const prices = await tcgcsvApi.getGroupPrices(group.groupId);
           logger.info(`Retrieved ${prices.length} prices for group ${group.groupId}`);
 
-          for (const price of prices) {
-            try {
-              result.itemsProcessed++;
-              this.updateTiming(result.timing);
+          const batchResult = await this.processPriceBatch(prices, group.groupId, options);
 
-              // Always save historical price data
-              await this.saveHistoricalPrice(price, group.groupId);
+          result.itemsProcessed += batchResult.processed;
+          result.itemsUpdated += batchResult.updated;
+          result.errors.push(...batchResult.errors);
 
-              // Check if current price has changed
-              const currentHash = this.calculateHash(price);
-              const storedHash = await this.getStoredHash(price.productId);
-
-              // Skip updating current price if unchanged
-              if (currentHash === storedHash) {
-                logger.info(`Skipping price update for ${price.productId} - no changes`);
-                continue;
-              }
-
-              // Update current price
-              const priceDoc = {
-                ...price,
-                lastUpdated: new Date(),
-              };
-
-              await db
-                .collection(this.PRICES_COLLECTION)
-                .doc(price.productId.toString())
-                .set(priceDoc, { merge: true });
-
-              // Update hash
-              await this.updateStoredHash(price.productId, currentHash);
-
-              result.itemsUpdated++;
-              logger.info(`Updated current price for product ${price.productId}`);
-            } catch (error) {
-              const errorMessage = error instanceof Error ? error.message : "Unknown error";
-              result.errors.push(`Error processing price for product ${price.productId}: ${errorMessage}`);
-              logger.error(`Error processing price for product ${price.productId}`, { error: errorMessage });
-            }
-          }
+          this.updateTiming(result.timing);
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : "Unknown error";
           result.errors.push(`Error processing prices for group ${group.groupId}: ${errorMessage}`);
