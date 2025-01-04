@@ -47,7 +47,13 @@ export class StorageService {
   private isValidImageUrl(url: string | undefined): boolean {
     if (!url) return false;
 
-    // Check for TCGPlayer's standard image size patterns, regardless of format
+    // Check if it's TCGPlayer's missing image SVG
+    if (url.includes("image-missing.svg")) {
+      logger.info(`TCGPlayer missing image URL detected: ${url}, using our placeholder`);
+      return false;
+    }
+
+    // Check for TCGPlayer's standard image size patterns
     const validPatterns = [
       "_200w.", // Match _200w followed by any extension
       "_400w.", // Match _400w followed by any extension
@@ -57,7 +63,7 @@ export class StorageService {
     // If URL contains any of our valid patterns, it's a valid TCGPlayer image URL
     const isValidPattern = validPatterns.some((pattern) => url.includes(pattern));
 
-    // If URL is from TCGPlayer but doesn't match our patterns, or is any other URL, consider it invalid
+    // If URL doesn't match our patterns, consider it invalid
     if (!isValidPattern) {
       logger.info(`Invalid image URL pattern: ${url}, using placeholder`);
       return false;
@@ -102,7 +108,7 @@ export class StorageService {
           timeout: this.timeoutMs,
           headers: {
             "User-Agent": "FFTCG-Sync-Service/1.0",
-            "Accept": "image/jpeg,image/png,image/*",
+            Accept: "image/jpeg,image/png,image/*",
           },
           maxContentLength: 10 * 1024 * 1024, // 10MB max
           validateStatus: (status) => status === 200, // Only accept 200 status
@@ -116,16 +122,33 @@ export class StorageService {
           throw new Error("Invalid image format");
         }
       } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
         const axiosError = error as { response?: { status?: number } };
 
-        logger.error(`Failed to download image (attempt ${attempt + 1}/${retries + 1})`, {
+        // If we get a 403, this means the image doesn't exist or access is denied
+        // Don't retry and don't log as error since this is an expected case
+        if (axiosError?.response?.status === 403) {
+          logger.info(`Image not available (403) for URL: ${url}`);
+          throw new Error("IMAGE_NOT_AVAILABLE");
+        }
+
+        // For other errors, continue with retry logic
+        lastError = error instanceof Error ? error : new Error(String(error));
+
+        if (attempt === retries) {
+          logger.error(`Failed to download image after ${retries + 1} attempts`, {
+            url,
+            error: lastError.message,
+            status: axiosError?.response?.status,
+          });
+          break;
+        }
+
+        // Only log retries for non-403 errors
+        logger.info(`Retrying image download (attempt ${attempt + 1}/${retries})`, {
           url,
-          error: lastError.message,
           status: axiosError?.response?.status,
         });
 
-        if (attempt === retries) break;
         await new Promise((resolve) => setTimeout(resolve, 2000 * Math.pow(2, attempt)));
       }
     }
@@ -197,10 +220,7 @@ export class StorageService {
 
     // Check for valid TCGPlayer URL first
     if (!this.isValidImageUrl(imageUrl)) {
-      logger.info(`Invalid TCGPlayer image URL for product ${productId}, using placeholder`, {
-        imageUrl,
-        productId,
-      });
+      logger.info(`Invalid or missing image URL for product ${productId}, using placeholder`);
       return {
         highResUrl: this.PLACEHOLDER_URL,
         lowResUrl: this.PLACEHOLDER_URL,
@@ -208,7 +228,7 @@ export class StorageService {
           ...baseMetadata,
           isPlaceholder: true,
           originalUrl: imageUrl,
-          errorMessage: "Invalid TCGPlayer URL pattern",
+          errorMessage: "Invalid or missing image URL",
         },
       };
     }
@@ -241,8 +261,6 @@ export class StorageService {
       }
 
       try {
-        // Download from TCGPlayer with different resolutions
-        // Using optional chaining and providing fallback for undefined case
         const baseUrl = imageUrl || "";
         const highResTcgUrl = baseUrl.replace("/fit-in/", "/fit-in/437x437/");
         const lowResTcgUrl = baseUrl.replace("/fit-in/", "/fit-in/223x223/");
@@ -266,8 +284,14 @@ export class StorageService {
             originalUrl: imageUrl,
           },
         };
-      } catch (error) {
-        logger.error(`Failed to process images for ${productId}`, { error });
+      } catch (unknownError: unknown) {
+        const error = unknownError instanceof Error ? unknownError : new Error(String(unknownError));
+
+        // Only log as error if it's not an expected case
+        if (error.message !== "IMAGE_NOT_AVAILABLE") {
+          logger.error(`Failed to process images for ${productId}`, { error });
+        }
+
         return {
           highResUrl: this.PLACEHOLDER_URL,
           lowResUrl: this.PLACEHOLDER_URL,
@@ -275,12 +299,19 @@ export class StorageService {
             ...baseMetadata,
             isPlaceholder: true,
             originalUrl: imageUrl,
-            errorMessage: error instanceof Error ? error.message : "Unknown error",
+            errorMessage:
+              error.message === "IMAGE_NOT_AVAILABLE" ? "Image not available from source" : "Image processing failed",
           },
         };
       }
-    } catch (error) {
-      logger.error(`Failed to process images for ${productId}`, { error });
+    } catch (unknownError: unknown) {
+      const error = unknownError instanceof Error ? unknownError : new Error(String(unknownError));
+
+      // Only log as error if it's not an expected case
+      if (error.message !== "IMAGE_NOT_AVAILABLE") {
+        logger.error(`Failed to process images for ${productId}`, { error });
+      }
+
       return {
         highResUrl: this.PLACEHOLDER_URL,
         lowResUrl: this.PLACEHOLDER_URL,
@@ -288,7 +319,8 @@ export class StorageService {
           ...baseMetadata,
           isPlaceholder: true,
           originalUrl: imageUrl,
-          errorMessage: error instanceof Error ? error.message : "Unknown error",
+          errorMessage:
+            error.message === "IMAGE_NOT_AVAILABLE" ? "Image not available from source" : "Image processing failed",
         },
       };
     }
