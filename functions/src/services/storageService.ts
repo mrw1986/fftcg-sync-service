@@ -79,7 +79,9 @@ export class StorageService {
         })
       );
       return true;
-    } catch (error) {
+    } catch (unknownError) {
+      const error = unknownError instanceof Error ? unknownError : new Error(String(unknownError));
+      logger.info(`Image check failed: ${error.message}`);
       return false;
     }
   }
@@ -106,7 +108,7 @@ export class StorageService {
           timeout: this.timeoutMs,
           headers: {
             "User-Agent": "FFTCG-Sync-Service/1.0",
-            "Accept": "image/jpeg,image/png,image/*",
+            Accept: "image/jpeg,image/png,image/*",
           },
           maxContentLength: 10 * 1024 * 1024, // 10MB max
           validateStatus: (status) => status === 200, // Only accept 200 status
@@ -119,8 +121,9 @@ export class StorageService {
         } else {
           throw new Error("Invalid image format");
         }
-      } catch (error) {
-        const axiosError = error as { response?: { status?: number } };
+      } catch (unknownError) {
+        const error = unknownError instanceof Error ? unknownError : new Error(String(unknownError));
+        const axiosError = unknownError as { response?: { status?: number } };
 
         // If we get a 403, this means the image doesn't exist or access is denied
         // Don't retry and don't log as error since this is an expected case
@@ -129,13 +132,13 @@ export class StorageService {
           throw new Error("IMAGE_NOT_AVAILABLE");
         }
 
-        // For other errors, continue with retry logic
-        lastError = error instanceof Error ? error : new Error(String(error));
+        lastError = error;
 
         if (attempt === retries) {
           logger.error(`Failed to download image after ${retries + 1} attempts`, {
             url,
-            error: lastError.message,
+            error: error.message,
+            stack: error.stack,
             status: axiosError?.response?.status,
           });
           break;
@@ -185,12 +188,16 @@ export class StorageService {
           })
         );
         return `${this.customDomain}/${path}`;
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
+      } catch (unknownError) {
+        const error = unknownError instanceof Error ? unknownError : new Error(String(unknownError));
+        lastError = error;
+
         logger.error(`Upload attempt ${attempt + 1} failed`, {
           path,
-          error: lastError.message,
+          error: error.message,
+          stack: error.stack,
         });
+
         if (attempt === retries) break;
         await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
       }
@@ -282,12 +289,14 @@ export class StorageService {
             originalUrl: imageUrl,
           },
         };
-      } catch (unknownError: unknown) {
+      } catch (unknownError) {
         const error = unknownError instanceof Error ? unknownError : new Error(String(unknownError));
 
-        // Only log as error if it's not an expected case
         if (error.message !== "IMAGE_NOT_AVAILABLE") {
-          logger.error(`Failed to process images for ${productId}`, { error });
+          logger.error(`Failed to process images for ${productId}`, {
+            error: error.message,
+            stack: error.stack,
+          });
         }
 
         return {
@@ -302,12 +311,14 @@ export class StorageService {
           },
         };
       }
-    } catch (unknownError: unknown) {
+    } catch (unknownError) {
       const error = unknownError instanceof Error ? unknownError : new Error(String(unknownError));
 
-      // Only log as error if it's not an expected case
       if (error.message !== "IMAGE_NOT_AVAILABLE") {
-        logger.error(`Failed to process images for ${productId}`, { error });
+        logger.error(`Failed to process images for ${productId}`, {
+          error: error.message,
+          stack: error.stack,
+        });
       }
 
       return {

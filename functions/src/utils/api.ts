@@ -1,29 +1,67 @@
+// src/utils/api.ts
 import axios, { AxiosError } from "axios";
 import { CardProduct, CardPrice } from "../types";
 import { logger } from "./logger";
+import { Cache } from "./cache";
+import { RateLimiter } from "./rateLimiter";
+import { RetryWithBackoff } from "./retry";
 
 export class TcgcsvApi {
   private readonly baseUrl = "https://tcgcsv.com/tcgplayer";
   private readonly categoryId = "24"; // Final Fantasy TCG
+  private readonly requestQueue = new Map<string, Promise<unknown>>();
+  private readonly resultCache = new Cache<unknown>(5); // 5-minute cache
+  private readonly rateLimiter = new RateLimiter();
+  private readonly retry = new RetryWithBackoff();
 
-  private async makeRequest<T>(endpoint: string): Promise<T> {
+  private async _makeRequest<T>(endpoint: string): Promise<T> {
     const url = `${this.baseUrl}/${endpoint}`;
     logger.info(`Making request to: ${url}`);
 
-    try {
-      const response = await axios.get<T>(url, {
-        timeout: 30000,
-        headers: {
-          "Accept": "application/json",
-          "User-Agent": "FFTCG-Sync-Service/1.0",
-        },
-      });
-      return response.data;
-    } catch (error) {
-      if (error instanceof AxiosError && error.response?.status === 403) {
-        throw new Error(`Access denied to TCGCSV API at path: ${endpoint}`);
+    return this.rateLimiter.add(async () => {
+      try {
+        const response = await this.retry.execute(() =>
+          axios.get<T>(url, {
+            timeout: 30000,
+            headers: {
+              Accept: "application/json",
+              "User-Agent": "FFTCG-Sync-Service/1.0",
+            },
+          })
+        );
+        return response.data;
+      } catch (error) {
+        if (error instanceof AxiosError && error.response?.status === 403) {
+          throw new Error(`Access denied to TCGCSV API at path: ${endpoint}`);
+        }
+        throw error;
       }
-      throw error;
+    });
+  }
+
+  private async makeRequest<T>(endpoint: string): Promise<T> {
+    const cacheKey = `api_${endpoint}`;
+    const cached = this.resultCache.get(cacheKey);
+    if (cached) {
+      logger.info(`Cache hit for ${endpoint}`);
+      return cached as T;
+    }
+
+    const existing = this.requestQueue.get(endpoint);
+    if (existing) {
+      logger.info(`Using existing request for ${endpoint}`);
+      return existing as Promise<T>;
+    }
+
+    const promise = this._makeRequest<T>(endpoint);
+    this.requestQueue.set(endpoint, promise);
+
+    try {
+      const result = await promise;
+      this.resultCache.set(cacheKey, result);
+      return result;
+    } finally {
+      this.requestQueue.delete(endpoint);
     }
   }
 
@@ -36,14 +74,7 @@ export class TcgcsvApi {
   async getGroupProducts(groupId: string): Promise<CardProduct[]> {
     const response = await this.makeRequest<{ results: CardProduct[] }>(`${this.categoryId}/${groupId}/products`);
     logger.info(`Retrieved ${response.results.length} products for group ${groupId}`);
-
-    // Transform the results to use correct image URLs
-    const products = response.results.map((product) => ({
-      ...product,
-      // No modification needed, keep original TCGPlayer URL
-    }));
-
-    return products;
+    return response.results;
   }
 
   async getGroupPrices(groupId: string): Promise<CardPrice[]> {
@@ -66,7 +97,6 @@ export class TcgcsvApi {
     const response = await this.makeRequest<PriceResponse>(`${this.categoryId}/${groupId}/prices`);
     logger.info(`Retrieved ${response.results.length} prices for group ${groupId}`);
 
-    // Group prices by productId
     const priceMap = new Map<number, CardPrice>();
 
     response.results.forEach((price) => {

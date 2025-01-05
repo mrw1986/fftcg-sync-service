@@ -51,8 +51,12 @@ export class Logger {
     }
   }
 
+  async warn(message: string, data?: LogData | { error: unknown }): Promise<void> {
+    await this.log("WARN", message, data);
+  }
+
   async log(
-    level: "INFO" | "ERROR",
+    level: "INFO" | "ERROR" | "WARN",
     message: string,
     metadata?: LogData | SyncResult | { error: unknown }
   ): Promise<void> {
@@ -65,7 +69,7 @@ export class Logger {
     };
 
     // Always log to console with appropriate level
-    const logFn = level === "ERROR" ? console.error : console.log;
+    const logFn = level === "ERROR" ? console.error : level === "WARN" ? console.warn : console.log;
     logFn(`[${level}] ${message}`, metadata || "");
 
     // Only log to Firestore if not in local development
