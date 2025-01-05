@@ -10,9 +10,9 @@ import * as crypto from "crypto";
 import { FieldValue, WriteResult } from "firebase-admin/firestore";
 
 export class PriceSyncService {
-  private readonly BATCH_SIZE = 1000;
-  private readonly MAX_PARALLEL_BATCHES = 5;
-  private readonly MAX_BATCH_OPERATIONS = 450;
+  private readonly BATCH_SIZE = 500; // Optimized batch size
+  private readonly MAX_PARALLEL_BATCHES = 3; // Reduced parallel operations
+  private readonly MAX_BATCH_OPERATIONS = 499; // Just under Firestore's limit
 
   private readonly rateLimiter = new RateLimiter();
   private readonly cache = new Cache<string>(15);
@@ -27,21 +27,51 @@ export class PriceSyncService {
     return crypto.createHash("md5").update(JSON.stringify(relevantData)).digest("hex");
   }
 
-  private async getStoredHash(productId: number): Promise<string | null> {
-    const cacheKey = `price_hash_${productId}`;
-    const cached = this.cache.get(cacheKey);
-    if (cached) return cached;
+  private async getStoredHashes(productIds: number[]): Promise<Map<number, string>> {
+    const hashMap = new Map<number, string>();
+    const uncachedIds: number[] = [];
 
-    const doc = await this.retry.execute(() =>
-      db.collection(COLLECTION.PRICE_HASHES)
-        .doc(productId.toString())
-        .get()
-    );
+    // Check cache first
+    productIds.forEach(id => {
+      const cacheKey = `price_hash_${id}`;
+      const cached = this.cache.get(cacheKey);
+      if (cached) {
+        hashMap.set(id, cached);
+      } else {
+        uncachedIds.push(id);
+      }
+    });
 
-    const hash = doc.exists ? doc.data()?.hash : null;
-    if (hash) this.cache.set(cacheKey, hash);
+    if (uncachedIds.length === 0) {
+      return hashMap;
+    }
 
-    return hash;
+    // Batch get uncached hashes
+    const chunks = [];
+    for (let i = 0; i < uncachedIds.length; i += 10) {
+      chunks.push(uncachedIds.slice(i, i + 10));
+    }
+
+    await Promise.all(chunks.map(async chunk => {
+      const refs = chunk.map(id => 
+        db.collection(COLLECTION.PRICE_HASHES).doc(id.toString())
+      );
+      
+      const snapshots = await this.retry.execute(() => 
+        db.getAll(...refs)
+      );
+
+      snapshots.forEach((snap, index) => {
+        const id = chunk[index];
+        const hash = snap.exists ? snap.data()?.hash : null;
+        if (hash) {
+          hashMap.set(id, hash);
+          this.cache.set(`price_hash_${id}`, hash);
+        }
+      });
+    }));
+
+    return hashMap;
   }
 
   private validatePrice(price: CardPrice): boolean {
@@ -75,127 +105,136 @@ export class PriceSyncService {
       errors: [] as string[],
     };
 
-    let batch = db.batch();
-    let batchCount = 0;
-    const batchPromises: Promise<WriteResult[]>[] = []; // Updated type here
+    try {
+      // Pre-fetch all hashes in one go
+      const productIds = prices.map(price => price.productId);
+      const hashMap = await this.getStoredHashes(productIds);
 
-    // Pre-fetch all hashes at once
-    const productIds = prices.map((price) => price.productId);
-    const hashPromises = productIds.map((id) => this.getStoredHash(id));
-    const storedHashes = await Promise.all(hashPromises);
-    const hashMap = new Map(productIds.map((id, index) => [id, storedHashes[index]]));
+      // Prepare batches
+      let mainBatch = db.batch();
+      let historicalBatch = db.batch();
+      let mainOps = 0;
+      let historicalOps = 0;
+      const batchPromises: Promise<WriteResult[]>[] = [];
 
-    // Prepare historical prices in bulk
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    let historicalBatch = db.batch();
-    let historicalCount = 0;
+      // Prepare date once
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
 
-    for (const price of prices) {
-      try {
-        result.processed++;
+      for (const price of prices) {
+        try {
+          result.processed++;
 
-        if (!this.validatePrice(price)) continue;
+          if (!this.validatePrice(price)) continue;
 
-        const currentHash = this.calculateHash(price);
-        const storedHash = hashMap.get(price.productId);
+          const currentHash = this.calculateHash(price);
+          const storedHash = hashMap.get(price.productId);
 
-        if (currentHash === storedHash && !options.forceUpdate) continue;
+          if (currentHash === storedHash && !options.forceUpdate) {
+            continue;
+          }
 
-        // Main price document
-        const priceDoc = {
-          productId: price.productId,
-          lastUpdated: FieldValue.serverTimestamp(),
-          groupId: parseInt(groupId),
-          ...(price.normal && { normal: price.normal }),
-          ...(price.foil && { foil: price.foil }),
-        };
+          // Prepare documents
+          const priceDoc = {
+            productId: price.productId,
+            lastUpdated: FieldValue.serverTimestamp(),
+            groupId: parseInt(groupId),
+            ...(price.normal && { normal: price.normal }),
+            ...(price.foil && { foil: price.foil }),
+          };
 
-        // Add to main batch
-        const priceRef = db.collection(COLLECTION.PRICES)
-          .doc(price.productId.toString());
-        batch.set(priceRef, priceDoc, { merge: true });
-        batchCount++;
+          const historicalDoc = {
+            productId: price.productId,
+            groupId,
+            date: today,
+            timestamp: FieldValue.serverTimestamp(),
+            ...(price.normal && {
+              normal: {
+                directLow: price.normal.directLowPrice,
+                high: price.normal.highPrice,
+                low: price.normal.lowPrice,
+                market: price.normal.marketPrice,
+                mid: price.normal.midPrice,
+              },
+            }),
+            ...(price.foil && {
+              foil: {
+                directLow: price.foil.directLowPrice,
+                high: price.foil.highPrice,
+                low: price.foil.lowPrice,
+                market: price.foil.marketPrice,
+                mid: price.foil.midPrice,
+              },
+            }),
+          };
 
-        // Add to historical batch
-        const docId = `${price.productId}_${today.toISOString().split("T")[0]}`;
-        const historicalRef = db.collection(COLLECTION.HISTORICAL_PRICES).doc(docId);
-        const historicalPrice = {
-          productId: price.productId,
-          groupId,
-          date: today,
-          timestamp: FieldValue.serverTimestamp(),
-          ...(price.normal && {
-            normal: {
-              directLow: price.normal.directLowPrice,
-              high: price.normal.highPrice,
-              low: price.normal.lowPrice,
-              market: price.normal.marketPrice,
-              mid: price.normal.midPrice,
-            },
-          }),
-          ...(price.foil && {
-            foil: {
-              directLow: price.foil.directLowPrice,
-              high: price.foil.highPrice,
-              low: price.foil.lowPrice,
-              market: price.foil.marketPrice,
-              mid: price.foil.midPrice,
-            },
-          }),
-        };
-        historicalBatch.set(historicalRef, historicalPrice, { merge: true });
-        historicalCount++;
+          // Add to main batch
+          const priceRef = db.collection(COLLECTION.PRICES).doc(price.productId.toString());
+          mainBatch.set(priceRef, priceDoc, { merge: true });
+          mainOps++;
 
-        // Update hash in same batch
-        const hashRef = db.collection(COLLECTION.PRICE_HASHES)
-          .doc(price.productId.toString());
-        batch.set(hashRef, {
-          hash: currentHash,
-          lastUpdated: FieldValue.serverTimestamp(),
-        }, { merge: true });
-        batchCount++;
+          // Add hash update to same batch
+          const hashRef = db.collection(COLLECTION.PRICE_HASHES).doc(price.productId.toString());
+          mainBatch.set(hashRef, {
+            hash: currentHash,
+            lastUpdated: FieldValue.serverTimestamp(),
+          }, { merge: true });
+          mainOps++;
 
-        // Commit batch if reaching limit
-        if (batchCount >= this.MAX_BATCH_OPERATIONS) {
-          batchPromises.push(
-            this.rateLimiter.add(async () => this.retry.execute(() => batch.commit())) // Added async
-          );
-          batch = db.batch();
-          batchCount = 0;
+          // Add to historical batch
+          const docId = `${price.productId}_${today.toISOString().split("T")[0]}`;
+          const historicalRef = db.collection(COLLECTION.HISTORICAL_PRICES).doc(docId);
+          historicalBatch.set(historicalRef, historicalDoc, { merge: true });
+          historicalOps++;
+
+          // Commit batches if reaching limits
+          if (mainOps >= this.MAX_BATCH_OPERATIONS) {
+            batchPromises.push(
+              this.rateLimiter.add(() => this.retry.execute(() => mainBatch.commit()))
+            );
+            mainBatch = db.batch();
+            mainOps = 0;
+          }
+
+          if (historicalOps >= this.MAX_BATCH_OPERATIONS) {
+            batchPromises.push(
+              this.rateLimiter.add(() => this.retry.execute(() => historicalBatch.commit()))
+            );
+            historicalBatch = db.batch();
+            historicalOps = 0;
+          }
+
+          result.updated++;
+          
+          // Update cache
+          this.cache.set(`price_hash_${price.productId}`, currentHash);
+
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : "Unknown error";
+          result.errors.push(`Error processing price for product ${price.productId}: ${errorMessage}`);
         }
-
-        // Commit historical batch if reaching limit
-        if (historicalCount >= this.MAX_BATCH_OPERATIONS) {
-          batchPromises.push(
-            this.rateLimiter.add(async () => this.retry.execute(() => historicalBatch.commit())) // Added async
-          );
-          historicalBatch = db.batch();
-          historicalCount = 0;
-        }
-
-        result.updated++;
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : "Unknown error";
-        result.errors.push(`Error processing price for product ${price.productId}: ${errorMessage}`);
       }
-    }
 
-    // Commit any remaining batches
-    if (batchCount > 0) {
-      batchPromises.push(
-        this.rateLimiter.add(async () => this.retry.execute(() => batch.commit())) // Added async
-      );
-    }
+      // Commit remaining batches
+      if (mainOps > 0) {
+        batchPromises.push(
+          this.rateLimiter.add(() => this.retry.execute(() => mainBatch.commit()))
+        );
+      }
 
-    if (historicalCount > 0) {
-      batchPromises.push(
-        this.rateLimiter.add(async () => this.retry.execute(() => historicalBatch.commit())) // Added async
-      );
-    }
+      if (historicalOps > 0) {
+        batchPromises.push(
+          this.rateLimiter.add(() => this.retry.execute(() => historicalBatch.commit()))
+        );
+      }
 
-    // Wait for all batch commits to complete
-    await Promise.all(batchPromises);
+      // Wait for all batches to complete
+      await Promise.all(batchPromises);
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      result.errors.push(`Batch processing error: ${errorMessage}`);
+    }
 
     return result;
   }
@@ -209,25 +248,30 @@ export class PriceSyncService {
     updated: number;
     errors: string[];
   }> {
-    const batches = [];
+    // Split into optimally sized batches
+    const batches: CardPrice[][] = [];
     for (let i = 0; i < prices.length; i += this.BATCH_SIZE) {
       batches.push(prices.slice(i, i + this.BATCH_SIZE));
     }
 
     const results = [];
+    // Process batches with controlled parallelism
     for (let i = 0; i < batches.length; i += this.MAX_PARALLEL_BATCHES) {
-      const batchPromises = batches
-        .slice(i, i + this.MAX_PARALLEL_BATCHES)
-        .map((batch) => this.processPriceBatch(batch, groupId, options));
+      const currentBatches = batches.slice(i, i + this.MAX_PARALLEL_BATCHES);
+      const batchPromises = currentBatches.map(batch => 
+        this.processPriceBatch(batch, groupId, options)
+      );
+
       const batchResults = await Promise.all(batchPromises);
       results.push(...batchResults);
 
-      // Add delay between large batch processing
+      // Add delay between batch groups to prevent rate limiting
       if (i + this.MAX_PARALLEL_BATCHES < batches.length) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
 
+    // Combine results
     return results.reduce(
       (acc, curr) => ({
         processed: acc.processed + curr.processed,
@@ -252,31 +296,38 @@ export class PriceSyncService {
     try {
       logger.info("Starting price sync", { options });
 
-      const groups = options.groupId ?
-        [{ groupId: options.groupId }] :
-        await tcgcsvApi.getGroups();
+      // Get groups to process
+      const groups = options.groupId
+        ? [{ groupId: options.groupId }]
+        : await tcgcsvApi.getGroups();
 
       logger.info(`Found ${groups.length} groups to process`);
 
+      // Process each group sequentially to prevent overload
       for (const group of groups) {
         result.timing.groupStartTime = new Date();
         try {
+          // Get prices for current group
           const prices = await tcgcsvApi.getGroupPrices(group.groupId);
+          logger.info(`Processing ${prices.length} prices for group ${group.groupId}`);
 
+          // Process prices in optimized batches
           const batchResults = await this.processPriceBatches(
             prices,
             group.groupId,
             options
           );
 
+          // Update results
           result.itemsProcessed += batchResults.processed;
           result.itemsUpdated += batchResults.updated;
           result.errors.push(...batchResults.errors);
 
           // Add delay between groups
           if (groups.length > 1) {
-            await new Promise((resolve) => setTimeout(resolve, 2000));
+            await new Promise(resolve => setTimeout(resolve, 2000));
           }
+
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : "Unknown error";
           result.errors.push(
@@ -294,10 +345,12 @@ export class PriceSyncService {
       logger.error("Price sync failed", { error: errorMessage });
     }
 
+    // Calculate final timing
     result.timing.endTime = new Date();
     result.timing.duration =
       (result.timing.endTime.getTime() - result.timing.startTime.getTime()) / 1000;
 
+    // Log final results
     logger.info(`Price sync completed in ${result.timing.duration}s`, {
       processed: result.itemsProcessed,
       updated: result.itemsUpdated,
