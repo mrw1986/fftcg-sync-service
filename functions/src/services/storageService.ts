@@ -27,6 +27,11 @@ export class StorageService {
   private readonly maxRetries = 3;
   private readonly timeoutMs = 30000; // 30 seconds
   private readonly PLACEHOLDER_URL = "https://fftcgcompanion.com/card-images/image-coming-soon.jpeg";
+  private readonly validImagePatterns = [
+    "_200w.", // Match _200w followed by any extension
+    "_400w.", // Match _400w followed by any extension
+    "_1000x1000.", // Match _1000x1000 followed by any extension
+  ];
 
   constructor() {
     this.client = new S3Client({
@@ -53,15 +58,8 @@ export class StorageService {
       return false;
     }
 
-    // Check for TCGPlayer's standard image size patterns
-    const validPatterns = [
-      "_200w.", // Match _200w followed by any extension
-      "_400w.", // Match _400w followed by any extension
-      "_1000x1000.", // Match _1000x1000 followed by any extension
-    ];
-
     // If URL contains any of our valid patterns, it's a valid TCGPlayer image URL
-    const isValidPattern = validPatterns.some((pattern) => url.includes(pattern));
+    const isValidPattern = this.validImagePatterns.some((pattern) => url.includes(pattern));
 
     // If URL doesn't match our patterns, consider it invalid
     if (!isValidPattern) {
@@ -182,7 +180,7 @@ export class StorageService {
             ContentType: "image/jpeg",
             Metadata: stringMetadata,
             ContentLength: buffer.length,
-            CacheControl: "public, max-age=31536000",
+            CacheControl: "public, max-age=31536000", // Cache for 1 year
             ACL: "public-read",
           })
         );

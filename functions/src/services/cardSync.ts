@@ -1,5 +1,5 @@
 // src/services/cardSync.ts
-import { db } from "../config/firebase";
+import { db, COLLECTION } from "../config/firebase";
 import { tcgcsvApi } from "../utils/api";
 import { storageService } from "./storageService";
 import { CardProduct, SyncResult, CardHashData, SyncOptions, CardChanges } from "../types";
@@ -14,16 +14,10 @@ export class CardSyncService {
   private readonly BATCH_SIZE = 1000;
   private readonly MAX_PARALLEL_BATCHES = 5;
   private readonly MAX_BATCH_OPERATIONS = 450; // Buffer below Firestore's 500 limit
-  private readonly SHARD_COUNT = 10;
 
   private readonly rateLimiter = new RateLimiter();
   private readonly cache = new Cache<string>(15); // 15 minute TTL
   private readonly retry = new RetryWithBackoff();
-
-  private getCollectionRef(collectionName: string, productId: number) {
-    const shardId = productId % this.SHARD_COUNT;
-    return db.collection(`${collectionName}_${shardId}`);
-  }
 
   private calculateHash(data: CardHashData): string {
     return crypto
@@ -38,7 +32,7 @@ export class CardSyncService {
     if (cached) return cached;
 
     const doc = await this.retry.execute(() =>
-      this.getCollectionRef("cardHashes", productId)
+      db.collection(COLLECTION.CARD_HASHES)
         .doc(productId.toString())
         .get()
     );
@@ -51,7 +45,7 @@ export class CardSyncService {
 
   private async updateStoredHash(productId: number, hash: string): Promise<void> {
     await this.retry.execute(() =>
-      this.getCollectionRef("cardHashes", productId)
+      db.collection(COLLECTION.CARD_HASHES)
         .doc(productId.toString())
         .set({
           hash,
@@ -84,7 +78,7 @@ export class CardSyncService {
 
   private async saveDeltaUpdate(card: CardProduct, changes: CardChanges): Promise<void> {
     await this.rateLimiter.add(async () => {
-      await this.getCollectionRef("cardDeltas", card.productId)
+      await db.collection(COLLECTION.CARD_DELTAS)
         .add({
           productId: card.productId,
           changes,
@@ -98,10 +92,10 @@ export class CardSyncService {
     groupId: string,
     options: { forceUpdate?: boolean } = {}
   ): Promise<{
-    processed: number;
-    updated: number;
-    errors: string[];
-  }> {
+  processed: number;
+  updated: number;
+  errors: string[];
+}> {
     const result = {
       processed: 0,
       updated: 0,
@@ -109,18 +103,25 @@ export class CardSyncService {
     };
 
     const writeQueue: Array<() => Promise<void>> = [];
-    const batch = db.batch();
+    let batch = db.batch(); // Changed from const to let
     let batchCount = 0;
 
     const commitBatch = async () => {
-      if (batchCount >= this.MAX_BATCH_OPERATIONS) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
       if (batchCount > 0) {
-        await this.rateLimiter.add(async () => {
-          await this.retry.execute(() => batch.commit());
-        });
-        batchCount = 0;
+        try {
+          await this.rateLimiter.add(async () => {
+            await this.retry.execute(() => batch.commit());
+          });
+          batch = db.batch(); // Create new batch after commit
+          batchCount = 0;
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : "Unknown error";
+          result.errors.push(`Error committing batch: ${errorMessage}`);
+          logger.error("Error committing batch", { error: errorMessage });
+          // Create a new batch even if commit fails
+          batch = db.batch();
+          batchCount = 0;
+        }
       }
     };
 
@@ -162,50 +163,56 @@ export class CardSyncService {
         );
 
         writeQueue.push(async () => {
-          const imageResult = await imagePromise;
-          const cardDoc = {
-            productId: card.productId,
-            name: card.name,
-            cleanName: card.cleanName,
-            highResUrl: imageResult.highResUrl,
-            lowResUrl: imageResult.lowResUrl,
-            lastUpdated: FieldValue.serverTimestamp(),
-            groupId: parseInt(groupId),
-            isNonCard: this.isNonCardProduct(card),
-            cardNumbers,
-            primaryCardNumber,
-          };
+          try {
+            const imageResult = await imagePromise;
+            const cardDoc = {
+              productId: card.productId,
+              name: card.name,
+              cleanName: card.cleanName,
+              highResUrl: imageResult.highResUrl,
+              lowResUrl: imageResult.lowResUrl,
+              lastUpdated: FieldValue.serverTimestamp(),
+              groupId: parseInt(groupId),
+              isNonCard: this.isNonCardProduct(card),
+              cardNumbers,
+              primaryCardNumber,
+            };
 
-          const cardRef = this.getCollectionRef("cards", card.productId)
-            .doc(card.productId.toString());
+            const cardRef = db.collection(COLLECTION.CARDS)
+              .doc(card.productId.toString());
 
-          batch.set(cardRef, cardDoc, { merge: true });
+            batch.set(cardRef, cardDoc, { merge: true });
 
-          // Store extended data in subcollection
-          const extendedDataRef = cardRef.collection("extendedData");
-          card.extendedData.forEach((data) => {
-            batch.set(extendedDataRef.doc(data.name), data);
-          });
+            // Store extended data in subcollection
+            const extendedDataRef = cardRef.collection("extendedData");
+            card.extendedData.forEach((data) => {
+              batch.set(extendedDataRef.doc(data.name), data);
+            });
 
-          // Store image metadata in subcollection
-          batch.set(
-            cardRef.collection("metadata").doc("image"),
-            imageResult.metadata
-          );
+            // Store image metadata in subcollection
+            batch.set(
+              cardRef.collection("metadata").doc("image"),
+              imageResult.metadata
+            );
 
-          batchCount++;
+            batchCount++;
 
-          if (batchCount >= this.MAX_BATCH_OPERATIONS) {
-            await commitBatch();
+            if (batchCount >= this.MAX_BATCH_OPERATIONS) {
+              await commitBatch();
+            }
+
+            await this.updateStoredHash(card.productId, currentHash);
+            await this.saveDeltaUpdate(card, cardDoc);
+
+            result.updated++;
+            logger.info(
+              `Updated card ${card.productId}: ${card.name} with numbers: ${cardNumbers.join(", ")}`
+            );
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : "Unknown error";
+            result.errors.push(`Error processing write operation for card ${card.productId}: ${errorMessage}`);
+            logger.error(`Error processing write operation for card ${card.productId}`, { error: errorMessage });
           }
-
-          await this.updateStoredHash(card.productId, currentHash);
-          await this.saveDeltaUpdate(card, cardDoc);
-
-          result.updated++;
-          logger.info(
-            `Updated card ${card.productId}: ${card.name} with numbers: ${cardNumbers.join(", ")}`
-          );
         });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
@@ -224,6 +231,9 @@ export class CardSyncService {
       await Promise.all(chunk.map((write) => write()));
       await commitBatch();
     }
+
+    // Final commit if there are any remaining operations
+    await commitBatch();
 
     return result;
   }
@@ -250,7 +260,7 @@ export class CardSyncService {
       const batchResults = await Promise.all(batchPromises);
       results.push(...batchResults);
 
-      // Add delay between large batch processing to prevent rate limiting
+      // Add delay between large batch processing
       if (i + this.MAX_PARALLEL_BATCHES < batches.length) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
@@ -302,7 +312,7 @@ export class CardSyncService {
           result.itemsUpdated += batchResults.updated;
           result.errors.push(...batchResults.errors);
 
-          // Add delay between groups to prevent rate limiting
+          // Add delay between groups
           if (groups.length > 1) {
             await new Promise((resolve) => setTimeout(resolve, 2000));
           }

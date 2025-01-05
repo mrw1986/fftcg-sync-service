@@ -1,28 +1,22 @@
 // src/services/priceSync.ts
-import { db } from "../config/firebase";
+import { db, COLLECTION } from "../config/firebase";
 import { tcgcsvApi } from "../utils/api";
-import { CardPrice, SyncResult, SyncOptions, PriceChanges } from "../types";
+import { CardPrice, SyncResult, SyncOptions } from "../types";
 import { logger } from "../utils/logger";
 import { RateLimiter } from "../utils/rateLimiter";
 import { Cache } from "../utils/cache";
 import { RetryWithBackoff } from "../utils/retry";
 import * as crypto from "crypto";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, WriteResult } from "firebase-admin/firestore";
 
 export class PriceSyncService {
   private readonly BATCH_SIZE = 1000;
   private readonly MAX_PARALLEL_BATCHES = 5;
   private readonly MAX_BATCH_OPERATIONS = 450;
-  private readonly SHARD_COUNT = 10;
 
   private readonly rateLimiter = new RateLimiter();
   private readonly cache = new Cache<string>(15);
   private readonly retry = new RetryWithBackoff();
-
-  private getCollectionRef(collectionName: string, productId: number) {
-    const shardId = productId % this.SHARD_COUNT;
-    return db.collection(`${collectionName}_${shardId}`);
-  }
 
   private calculateHash(price: CardPrice): string {
     const relevantData = {
@@ -39,7 +33,7 @@ export class PriceSyncService {
     if (cached) return cached;
 
     const doc = await this.retry.execute(() =>
-      this.getCollectionRef("priceHashes", productId)
+      db.collection(COLLECTION.PRICE_HASHES)
         .doc(productId.toString())
         .get()
     );
@@ -48,18 +42,6 @@ export class PriceSyncService {
     if (hash) this.cache.set(cacheKey, hash);
 
     return hash;
-  }
-
-  private async updateStoredHash(productId: number, hash: string): Promise<void> {
-    await this.retry.execute(() =>
-      this.getCollectionRef("priceHashes", productId)
-        .doc(productId.toString())
-        .set({
-          hash,
-          lastUpdated: FieldValue.serverTimestamp(),
-        }, { merge: true })
-    );
-    this.cache.set(`price_hash_${productId}`, hash);
   }
 
   private validatePrice(price: CardPrice): boolean {
@@ -78,69 +60,6 @@ export class PriceSyncService {
     return validatePriceData(price.normal) || validatePriceData(price.foil);
   }
 
-  private async saveDeltaUpdate(price: CardPrice, changes: PriceChanges): Promise<void> {
-    await this.rateLimiter.add(async () => {
-      await this.getCollectionRef("priceDeltas", price.productId)
-        .add({
-          productId: price.productId,
-          changes,
-          timestamp: FieldValue.serverTimestamp(),
-        });
-    });
-  }
-
-  private async saveHistoricalPrice(price: CardPrice, groupId: string): Promise<void> {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const docId = `${price.productId}_${today.toISOString().split("T")[0]}`;
-
-    // Check cache first
-    const cacheKey = `historical_${docId}`;
-    if (this.cache.get(cacheKey)) {
-      return;
-    }
-
-    const historicalRef = this.getCollectionRef("historicalPrices", price.productId)
-      .doc(docId);
-
-    const doc = await historicalRef.get();
-    if (doc.exists) {
-      this.cache.set(cacheKey, "exists");
-      return;
-    }
-
-    const historicalPrice = {
-      productId: price.productId,
-      groupId,
-      date: today,
-      timestamp: FieldValue.serverTimestamp(),
-      ...(price.normal && {
-        normal: {
-          directLow: price.normal.directLowPrice,
-          high: price.normal.highPrice,
-          low: price.normal.lowPrice,
-          market: price.normal.marketPrice,
-          mid: price.normal.midPrice,
-        },
-      }),
-      ...(price.foil && {
-        foil: {
-          directLow: price.foil.directLowPrice,
-          high: price.foil.highPrice,
-          low: price.foil.lowPrice,
-          market: price.foil.marketPrice,
-          mid: price.foil.midPrice,
-        },
-      }),
-    };
-
-    await this.rateLimiter.add(async () => {
-      await this.retry.execute(() => historicalRef.set(historicalPrice));
-    });
-
-    this.cache.set(cacheKey, "exists");
-  }
-
   private async processPriceBatch(
     prices: CardPrice[],
     groupId: string,
@@ -156,89 +75,127 @@ export class PriceSyncService {
       errors: [] as string[],
     };
 
-    const writeQueue: Array<() => Promise<void>> = [];
-    const batch = db.batch();
+    let batch = db.batch();
     let batchCount = 0;
+    const batchPromises: Promise<WriteResult[]>[] = []; // Updated type here
 
-    const commitBatch = async () => {
-      if (batchCount >= this.MAX_BATCH_OPERATIONS) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
-      if (batchCount > 0) {
-        await this.rateLimiter.add(async () => {
-          await this.retry.execute(() => batch.commit());
-        });
-        batchCount = 0;
-      }
-    };
-
-    // Pre-fetch hashes in bulk
+    // Pre-fetch all hashes at once
     const productIds = prices.map((price) => price.productId);
     const hashPromises = productIds.map((id) => this.getStoredHash(id));
     const storedHashes = await Promise.all(hashPromises);
     const hashMap = new Map(productIds.map((id, index) => [id, storedHashes[index]]));
 
+    // Prepare historical prices in bulk
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    let historicalBatch = db.batch();
+    let historicalCount = 0;
+
     for (const price of prices) {
       try {
         result.processed++;
 
-        if (!this.validatePrice(price)) {
-          logger.info(`Skipping price for product ${price.productId} - invalid data`);
-          continue;
-        }
+        if (!this.validatePrice(price)) continue;
 
         const currentHash = this.calculateHash(price);
         const storedHash = hashMap.get(price.productId);
 
-        if (currentHash === storedHash && !options.forceUpdate) {
-          logger.info(`Skipping price update for ${price.productId} - no changes`);
-          continue;
+        if (currentHash === storedHash && !options.forceUpdate) continue;
+
+        // Main price document
+        const priceDoc = {
+          productId: price.productId,
+          lastUpdated: FieldValue.serverTimestamp(),
+          groupId: parseInt(groupId),
+          ...(price.normal && { normal: price.normal }),
+          ...(price.foil && { foil: price.foil }),
+        };
+
+        // Add to main batch
+        const priceRef = db.collection(COLLECTION.PRICES)
+          .doc(price.productId.toString());
+        batch.set(priceRef, priceDoc, { merge: true });
+        batchCount++;
+
+        // Add to historical batch
+        const docId = `${price.productId}_${today.toISOString().split("T")[0]}`;
+        const historicalRef = db.collection(COLLECTION.HISTORICAL_PRICES).doc(docId);
+        const historicalPrice = {
+          productId: price.productId,
+          groupId,
+          date: today,
+          timestamp: FieldValue.serverTimestamp(),
+          ...(price.normal && {
+            normal: {
+              directLow: price.normal.directLowPrice,
+              high: price.normal.highPrice,
+              low: price.normal.lowPrice,
+              market: price.normal.marketPrice,
+              mid: price.normal.midPrice,
+            },
+          }),
+          ...(price.foil && {
+            foil: {
+              directLow: price.foil.directLowPrice,
+              high: price.foil.highPrice,
+              low: price.foil.lowPrice,
+              market: price.foil.marketPrice,
+              mid: price.foil.midPrice,
+            },
+          }),
+        };
+        historicalBatch.set(historicalRef, historicalPrice, { merge: true });
+        historicalCount++;
+
+        // Update hash in same batch
+        const hashRef = db.collection(COLLECTION.PRICE_HASHES)
+          .doc(price.productId.toString());
+        batch.set(hashRef, {
+          hash: currentHash,
+          lastUpdated: FieldValue.serverTimestamp(),
+        }, { merge: true });
+        batchCount++;
+
+        // Commit batch if reaching limit
+        if (batchCount >= this.MAX_BATCH_OPERATIONS) {
+          batchPromises.push(
+            this.rateLimiter.add(async () => this.retry.execute(() => batch.commit())) // Added async
+          );
+          batch = db.batch();
+          batchCount = 0;
         }
 
-        writeQueue.push(async () => {
-          const priceDoc = {
-            productId: price.productId,
-            lastUpdated: FieldValue.serverTimestamp(),
-            groupId: parseInt(groupId),
-            ...(price.normal && { normal: price.normal }),
-            ...(price.foil && { foil: price.foil }),
-          };
+        // Commit historical batch if reaching limit
+        if (historicalCount >= this.MAX_BATCH_OPERATIONS) {
+          batchPromises.push(
+            this.rateLimiter.add(async () => this.retry.execute(() => historicalBatch.commit())) // Added async
+          );
+          historicalBatch = db.batch();
+          historicalCount = 0;
+        }
 
-          const priceRef = this.getCollectionRef("prices", price.productId)
-            .doc(price.productId.toString());
-
-          batch.set(priceRef, priceDoc, { merge: true });
-          batchCount++;
-
-          if (batchCount >= this.MAX_BATCH_OPERATIONS) {
-            await commitBatch();
-          }
-
-          await Promise.all([
-            this.updateStoredHash(price.productId, currentHash),
-            this.saveHistoricalPrice(price, groupId),
-            this.saveDeltaUpdate(price, priceDoc),
-          ]);
-
-          result.updated++;
-        });
+        result.updated++;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
         result.errors.push(`Error processing price for product ${price.productId}: ${errorMessage}`);
-        logger.error(`Error processing price for product ${price.productId}`, { error: errorMessage });
       }
     }
 
-    // Process queued writes with controlled concurrency
-    const chunks = [];
-    for (let i = 0; i < writeQueue.length; i += this.MAX_PARALLEL_BATCHES) {
-      chunks.push(writeQueue.slice(i, i + this.MAX_PARALLEL_BATCHES));
+    // Commit any remaining batches
+    if (batchCount > 0) {
+      batchPromises.push(
+        this.rateLimiter.add(async () => this.retry.execute(() => batch.commit())) // Added async
+      );
     }
 
-    for (const chunk of chunks) {
-      await Promise.all(chunk.map((write) => write()));
-      await commitBatch();
+    if (historicalCount > 0) {
+      batchPromises.push(
+        this.rateLimiter.add(async () => this.retry.execute(() => historicalBatch.commit())) // Added async
+      );
     }
+
+    // Wait for all batch commits to complete
+    await Promise.all(batchPromises);
 
     return result;
   }
@@ -316,7 +273,7 @@ export class PriceSyncService {
           result.itemsUpdated += batchResults.updated;
           result.errors.push(...batchResults.errors);
 
-          // Add delay between groups to prevent rate limiting
+          // Add delay between groups
           if (groups.length > 1) {
             await new Promise((resolve) => setTimeout(resolve, 2000));
           }

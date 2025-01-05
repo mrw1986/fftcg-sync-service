@@ -2,21 +2,23 @@
 import { logger } from "./logger";
 
 export class RateLimiter {
-  private queue: Array<() => Promise<void>> = [];
+  private queue: Array<() => Promise<unknown>> = [];
   private processing = false;
-  private readonly maxRate = 500; // Firestore's maximum sustained write rate
-  private readonly interval = 1000; // 1 second interval
-  private readonly maxConcurrent = 3;
+  private readonly maxRate = 500;
+  private readonly interval = 1000;
+  private readonly maxConcurrent = 5;
   private currentConcurrent = 0;
 
-  async add(operation: () => Promise<void>): Promise<void> {
-    return new Promise((resolve, reject) => {
+  async add<T>(operation: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
       this.queue.push(async () => {
         try {
-          await operation();
-          resolve();
+          const result = await operation();
+          resolve(result);
+          return result;
         } catch (error) {
           reject(error);
+          throw error;
         }
       });
 

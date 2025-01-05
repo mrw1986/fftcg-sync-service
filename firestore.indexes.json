@@ -1,29 +1,30 @@
 {
   "indexes": [],
-  "fieldOverrides": {
-    "cards": {
-      "imageMetadata": {
-        "indexConfig": {
-          "indexes": []
-        }
-      },
-      "extendedData": {
-        "indexConfig": {
-          "indexes": []
-        }
-      }
+  "fieldOverrides": [
+    {
+      "collectionGroup": "cards",
+      "fieldPath": "imageMetadata",
+      "indexes": []
     },
-    "historicalPrices": {
-      "normal": {
-        "indexConfig": {
-          "indexes": []
-        }
-      },
-      "foil": {
-        "indexConfig": {
-          "indexes": []
-        }
-      }
+    {
+      "collectionGroup": "cards",
+      "fieldPath": "extendedData",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "cards",
+      "fieldPath": "lastUpdated",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "prices",
+      "fieldPath": "lastUpdated",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "historicalPrices",
+      "fieldPath": "lastUpdated",
+      "indexes": []
     }
-  }
+  ]
 }

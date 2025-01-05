@@ -1,5 +1,4 @@
-// functions/src/config/firebase.ts
-
+// src/config/firebase.ts
 import * as admin from "firebase-admin";
 
 const app = !admin.apps.length ? admin.initializeApp() : admin.app();
@@ -22,8 +21,9 @@ export const COLLECTION = {
   PRICE_HASHES: "priceHashes",
   IMAGE_METADATA: "imageMetadata",
   HISTORICAL_PRICES: "historicalPrices",
-  PRICE_ARCHIVES: "priceArchives",
-};
+  CARD_DELTAS: "cardDeltas",
+  PRICE_DELTAS: "priceDeltas",
+} as const;
 
 export const BASE_URL = "https://tcgcsv.com/tcgplayer";
 export const FFTCG_CATEGORY_ID = "24";
