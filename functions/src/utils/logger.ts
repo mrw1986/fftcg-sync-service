@@ -1,7 +1,7 @@
 // src/utils/logger.ts
 import { db } from "../config/firebase";
-import { environment } from "../config/environment";
 import { SyncResult } from "../types";
+import { environment } from "../config/environment";
 
 export type LogData = Record<string, unknown>;
 

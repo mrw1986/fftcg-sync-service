@@ -1,7 +1,7 @@
 // src/services/storageService.ts
 import { S3Client, PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import axios from "axios";
-import { R2_CONFIG } from "../config/r2";
+import { R2_CONFIG } from "../config/r2Config";
 import { logger } from "../utils/logger";
 
 interface ImageResult {
@@ -35,20 +35,42 @@ export class StorageService {
   ];
 
   constructor() {
+    // Debug logging
+    console.log('StorageService Configuration:', {
+        accountId: R2_CONFIG.ACCOUNT_ID,
+        accessKeyId: R2_CONFIG.ACCESS_KEY_ID ? '***' : 'not set',
+        secretAccessKey: R2_CONFIG.SECRET_ACCESS_KEY ? '***' : 'not set',
+        bucket: R2_CONFIG.BUCKET_NAME,
+        customDomain: R2_CONFIG.CUSTOM_DOMAIN,
+        storagePath: R2_CONFIG.STORAGE_PATH
+    });
+
+    if (!R2_CONFIG.BUCKET_NAME) {
+        throw new Error('R2 bucket name is not configured');
+    }
+
     this.client = new S3Client({
-      region: "auto",
-      endpoint: `https://${R2_CONFIG.ACCOUNT_ID}.r2.cloudflarestorage.com`,
-      credentials: {
-        accessKeyId: R2_CONFIG.ACCESS_KEY_ID,
-        secretAccessKey: R2_CONFIG.SECRET_ACCESS_KEY,
-      },
-      forcePathStyle: true,
+        region: "auto",
+        endpoint: `https://${R2_CONFIG.ACCOUNT_ID}.r2.cloudflarestorage.com`,
+        credentials: {
+            accessKeyId: R2_CONFIG.ACCESS_KEY_ID,
+            secretAccessKey: R2_CONFIG.SECRET_ACCESS_KEY,
+        },
+        forcePathStyle: true,
     });
 
     this.bucket = R2_CONFIG.BUCKET_NAME;
     this.customDomain = R2_CONFIG.CUSTOM_DOMAIN;
     this.storagePath = R2_CONFIG.STORAGE_PATH;
-  }
+
+    // Verify client configuration
+    console.log('S3Client Configuration:', {
+        endpoint: `https://${R2_CONFIG.ACCOUNT_ID}.r2.cloudflarestorage.com`,
+        bucket: this.bucket,
+        customDomain: this.customDomain,
+        storagePath: this.storagePath
+    });
+}
 
   private isValidImageUrl(url: string | undefined): boolean {
     if (!url) return false;
