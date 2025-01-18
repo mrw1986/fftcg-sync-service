@@ -84,7 +84,8 @@ export class RetryWithBackoff {
 
   private isRetryableError(error: Error): boolean {
     // Check if it's an HTTP error with status code
-    const statusCode = (error as any).response?.status;
+    const httpError = error as { response?: { status?: number } };
+    const statusCode = httpError.response?.status;
     if (statusCode && this.retryableStatusCodes.has(statusCode)) {
       return true;
     }

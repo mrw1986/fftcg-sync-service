@@ -25,3 +25,5 @@ firebase-debug.*.log
 
 # Logs
 *.log
+
+codebase.xml

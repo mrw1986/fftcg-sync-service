@@ -20,6 +20,8 @@ export class CardSyncService {
   private readonly cache = new Cache<string>(15);
   private readonly retry = new RetryWithBackoff();
 
+  
+
   private calculateHash(data: CardHashData): string {
     return crypto
       .createHash("md5")
@@ -32,7 +34,7 @@ export class CardSyncService {
     const uncachedIds: number[] = [];
 
     // Check cache first
-    productIds.forEach(id => {
+    productIds.forEach((id) => {
       const cacheKey = `hash_${id}`;
       const cached = this.cache.get(cacheKey);
       if (cached) {
@@ -52,12 +54,12 @@ export class CardSyncService {
       chunks.push(uncachedIds.slice(i, i + 10));
     }
 
-    await Promise.all(chunks.map(async chunk => {
-      const refs = chunk.map(id => 
+    await Promise.all(chunks.map(async (chunk) => {
+      const refs = chunk.map((id) =>
         db.collection(COLLECTION.CARD_HASHES).doc(id.toString())
       );
-      
-      const snapshots = await this.retry.execute(() => 
+
+      const snapshots = await this.retry.execute(() =>
         db.getAll(...refs)
       );
 
@@ -74,26 +76,61 @@ export class CardSyncService {
     return hashMap;
   }
 
-  private async updateStoredHash(productId: number, hash: string): Promise<void> {
-    this.cache.set(`hash_${productId}`, hash);
-    // Actual DB update will be handled in batch operations
+  private normalizeName(name: string): string {
+  return name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+}
+
+private normalizeCardNumber(number: string): string {
+  // Remove any existing hyphens and spaces
+  const clean = number.replace(/[-\s]/g, "");
+  
+  // Handle PR cards
+  if (clean.startsWith("PR")) {
+    const num = clean.slice(2);
+    return `PR-${num}`;
+  }
+  
+  // Handle regular card numbers
+  const match = clean.match(/^(\d{1,2})(\d{3}[A-Za-z]?)$/);
+  if (match) {
+    const [, prefix, rest] = match;
+    return `${prefix}-${rest}`;
+  }
+  
+  // Return original if no pattern matches
+  return clean;
+}
+
+private normalizeElements(elements: string): string[] {
+  if (!elements) return [];
+  
+  return elements
+    .split(/[;,]/)
+    .map(element => element.trim())
+    .filter(element => element.length > 0)
+    .map(element => element.charAt(0).toUpperCase() + element.slice(1).toLowerCase());
+}
+
+private getElementsFromExtendedData(extendedData: Array<{ name: string; value: string }>): string[] {
+  const elementField = extendedData.find(data => data.name === "Element");
+  return elementField ? this.normalizeElements(elementField.value) : [];
+}
+
+private getCardNumbers(card: CardProduct): string[] {
+  const numbers: string[] = [];
+  card.extendedData
+    .filter((data) => data.name === "Number")
+    .forEach((numberField) => {
+      const vals = numberField.value.split(/[,;/]/).map((n) => n.trim());
+      numbers.push(...vals.map(num => this.normalizeCardNumber(num)));
+    });
+
+  if (numbers.length === 0) {
+    numbers.push(this.normalizeCardNumber(`P${card.productId}`));
   }
 
-  private getCardNumbers(card: CardProduct): string[] {
-    const numbers: string[] = [];
-    card.extendedData
-      .filter((data) => data.name === "Number")
-      .forEach((numberField) => {
-        const vals = numberField.value.split(/[,;/]/).map((n) => n.trim());
-        numbers.push(...vals);
-      });
-
-    if (numbers.length === 0) {
-      numbers.push(`P${card.productId}`);
-    }
-
-    return [...new Set(numbers)];
-  }
+  return [...new Set(numbers)];
+}
 
   private isNonCardProduct(card: CardProduct): boolean {
     const cardType = card.extendedData.find((data) => data.name === "CardType")?.value;
@@ -102,10 +139,14 @@ export class CardSyncService {
 
   private async saveDeltaUpdate(
     batch: FirebaseFirestore.WriteBatch,
-    card: CardProduct, 
+    card: CardProduct,
     changes: CardChanges
   ): Promise<void> {
+  // Here we want to use an auto-generated ID since deltas are meant
+  // to be new documents recording historical changes
     const deltaRef = db.collection(COLLECTION.CARD_DELTAS).doc();
+
+    // No merge needed since this is a new delta document
     batch.set(deltaRef, {
       productId: card.productId,
       changes,
@@ -118,10 +159,10 @@ export class CardSyncService {
     groupId: string,
     options: { forceUpdate?: boolean } = {}
   ): Promise<{
-    processed: number;
-    updated: number;
-    errors: string[];
-  }> {
+  processed: number;
+  updated: number;
+  errors: string[];
+}> {
     const result = {
       processed: 0,
       updated: 0,
@@ -129,29 +170,24 @@ export class CardSyncService {
     };
 
     try {
-      // Pre-fetch all hashes in one go
-      const productIds = cards.map(card => card.productId);
+    // Pre-fetch all hashes in one go
+      const productIds = cards.map((card) => card.productId);
       const hashMap = await this.getStoredHashes(productIds);
-
-      // Prepare batches
-      let mainBatch = db.batch();
-      let batchCount = 0;
-      const batchPromises: Promise<void>[] = [];
 
       // Process images in controlled parallel chunks
       const imageProcessingChunks: Array<Promise<{
-        card: CardProduct;
-        imageResult: Awaited<ReturnType<typeof storageService.processAndStoreImage>>;
-      }>> = [];
+      card: CardProduct;
+      imageResult: Awaited<ReturnType<typeof storageService.processAndStoreImage>>;
+    }>> = [];
 
       // Process images with controlled concurrency
       for (let i = 0; i < cards.length; i += this.IMAGE_CONCURRENCY) {
         const chunk = cards.slice(i, i + this.IMAGE_CONCURRENCY);
-        const chunkPromises = chunk.map(async card => {
+        const chunkPromises = chunk.map(async (card) => {
           try {
             const cardNumbers = this.getCardNumbers(card);
             const primaryCardNumber = cardNumbers[0];
-            
+
             const imageResult = await this.retry.execute(() =>
               storageService.processAndStoreImage(
                 card.imageUrl,
@@ -171,126 +207,138 @@ export class CardSyncService {
 
         imageProcessingChunks.push(...chunkPromises);
 
-        // Add delay between image processing chunks
         if (i + this.IMAGE_CONCURRENCY < cards.length) {
-          await new Promise(resolve => setTimeout(resolve, 500));
+          await new Promise((resolve) => setTimeout(resolve, 500));
         }
       }
 
       // Wait for current chunk of image processing to complete
       const processedImages = await Promise.allSettled(imageProcessingChunks);
 
-      // Process successful image results and create Firestore operations
-      for (const imagePromiseResult of processedImages) {
-        if (imagePromiseResult.status === "rejected") {
-          continue;
-        }
+      // Create smaller sub-batches to prevent exceeding Firestore limits
+      const SUB_BATCH_SIZE = 20; // Reduced batch size for better control
+      const subBatches: Array<{
+      card: CardProduct;
+      imageResult: Awaited<ReturnType<typeof storageService.processAndStoreImage>>;
+    }[]> = [];
 
-        const { card, imageResult } = imagePromiseResult.value;
-        result.processed++;
+      const successfulImages = processedImages
+        .filter((result): result is PromiseFulfilledResult<{
+        card: CardProduct;
+        imageResult: Awaited<ReturnType<typeof storageService.processAndStoreImage>>;
+      }> => result.status === "fulfilled")
+        .map((result) => result.value);
 
-        try {
-          const relevantData: CardHashData = {
-            name: card.name,
-            cleanName: card.cleanName,
-            modifiedOn: card.modifiedOn,
-            extendedData: card.extendedData,
-          };
+      // Split into sub-batches
+      for (let i = 0; i < successfulImages.length; i += SUB_BATCH_SIZE) {
+        subBatches.push(successfulImages.slice(i, i + SUB_BATCH_SIZE));
+      }
 
-          const currentHash = this.calculateHash(relevantData);
-          const storedHash = hashMap.get(card.productId);
+      // Process each sub-batch
+      for (const subBatch of subBatches) {
+        let mainBatch = db.batch();
+        let batchCount = 0;
 
-          if (currentHash === storedHash && !options.forceUpdate) {
-            logger.info(`Skipping card ${card.productId} - no changes`);
-            continue;
-          }
+        for (const { card, imageResult } of subBatch) {
+          result.processed++;
 
-          const cardNumbers = this.getCardNumbers(card);
-          const primaryCardNumber = cardNumbers[0];
+          try {
+            const relevantData: CardHashData = {
+              name: card.name,
+              cleanName: card.cleanName,
+              modifiedOn: card.modifiedOn,
+              extendedData: card.extendedData,
+            };
 
-          const cardDoc = {
-            productId: card.productId,
-            name: card.name,
-            cleanName: card.cleanName,
-            highResUrl: imageResult.highResUrl,
-            lowResUrl: imageResult.lowResUrl,
-            lastUpdated: FieldValue.serverTimestamp(),
-            groupId: parseInt(groupId),
-            isNonCard: this.isNonCardProduct(card),
-            cardNumbers,
-            primaryCardNumber,
-          };
+            const currentHash = this.calculateHash(relevantData);
+            const storedHash = hashMap.get(card.productId);
 
-          // Main card document
-          const cardRef = db.collection(COLLECTION.CARDS)
-            .doc(card.productId.toString());
-          mainBatch.set(cardRef, cardDoc, { merge: true });
-          batchCount++;
+            if (currentHash === storedHash && !options.forceUpdate) {
+              logger.info(`Skipping card ${card.productId} - no changes`);
+              continue;
+            }
 
-          // Extended data subcollection
-          const extendedDataRef = cardRef.collection("extendedData");
-          card.extendedData.forEach((data) => {
-            mainBatch.set(extendedDataRef.doc(data.name), data);
+            const cardNumbers = this.getCardNumbers(card);
+            const primaryCardNumber = cardNumbers[0];
+
+            const cardDoc = {
+              productId: card.productId,
+              name: this.normalizeName(card.name),
+              cleanName: this.normalizeName(card.cleanName),
+              fullResUrl: imageResult.fullResUrl,
+              highResUrl: imageResult.highResUrl,
+              lowResUrl: imageResult.lowResUrl,
+              lastUpdated: FieldValue.serverTimestamp(),
+              groupId: parseInt(groupId),
+              isNonCard: this.isNonCardProduct(card),
+              cardNumbers,
+              primaryCardNumber,
+              elements: this.getElementsFromExtendedData(card.extendedData),
+            };
+
+            // Main card document
+            const cardRef = db.collection(COLLECTION.CARDS)
+              .doc(card.productId.toString());
+            mainBatch.set(cardRef, cardDoc, { merge: true });
             batchCount++;
-          });
 
-          // Image metadata
-          mainBatch.set(
-            cardRef.collection("metadata").doc("image"),
-            imageResult.metadata
-          );
-          batchCount++;
+            // Extended data subcollection
+            const extendedDataRef = cardRef.collection("extendedData");
+            card.extendedData.forEach((data) => {
+              mainBatch.set(extendedDataRef.doc(data.name), data, { merge: true }); // Add merge: true
+            });
 
-          // Update hash
-          const hashRef = db.collection(COLLECTION.CARD_HASHES)
-            .doc(card.productId.toString());
-          mainBatch.set(hashRef, {
-            hash: currentHash,
-            lastUpdated: FieldValue.serverTimestamp(),
-          }, { merge: true });
-          batchCount++;
-
-          // Save delta update in same batch
-          await this.saveDeltaUpdate(mainBatch, card, cardDoc);
-          batchCount++;
-
-          // Update cache
-          await this.updateStoredHash(card.productId, currentHash);
-
-          // Commit batch if reaching limit
-          if (batchCount >= this.MAX_BATCH_OPERATIONS) {
-            batchPromises.push(
-              this.rateLimiter.add(() => 
-                this.retry.execute(() => mainBatch.commit())
-              ).then(() => void 0)
+            // Image metadata
+            mainBatch.set(
+              cardRef.collection("metadata").doc("image"),
+              imageResult.metadata,
+              { merge: true } // Add merge: true
             );
-            mainBatch = db.batch();
-            batchCount = 0;
-          }
+            batchCount++;
 
-          result.updated++;
-          logger.info(
-            `Updated card ${card.productId}: ${card.name} with numbers: ${cardNumbers.join(", ")}`
+            // Update hash
+            const hashRef = db.collection(COLLECTION.CARD_HASHES)
+              .doc(card.productId.toString());
+            mainBatch.set(hashRef, {
+              hash: currentHash,
+              lastUpdated: FieldValue.serverTimestamp(),
+            }, { merge: true }); // Ensure merge: true is here
+            batchCount++;
+
+            // Save delta update
+            await this.saveDeltaUpdate(mainBatch, card, cardDoc);
+            batchCount++;
+
+            // Update cache
+            this.cache.set(`hash_${card.productId}`, currentHash);
+
+            // If batch is getting full, commit it and start a new one
+            if (batchCount >= this.MAX_BATCH_OPERATIONS) {
+              await this.rateLimiter.add(() =>
+                this.retry.execute(() => mainBatch.commit())
+              );
+              mainBatch = db.batch();
+              batchCount = 0;
+            }
+
+            result.updated++;
+            logger.info(
+              `Updated card ${card.productId}: ${card.name} with numbers: ${cardNumbers.join(", ")}`
+            );
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : "Unknown error";
+            result.errors.push(`Error processing card ${card.productId}: ${errorMessage}`);
+            logger.error(`Error processing card ${card.productId}`, { error: errorMessage });
+          }
+        }
+
+        // Commit any remaining operations in the final batch
+        if (batchCount > 0) {
+          await this.rateLimiter.add(() =>
+            this.retry.execute(() => mainBatch.commit())
           );
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : "Unknown error";
-          result.errors.push(`Error processing card ${card.productId}: ${errorMessage}`);
-          logger.error(`Error processing card ${card.productId}`, { error: errorMessage });
         }
       }
-
-      // Commit any remaining batch operations
-      if (batchCount > 0) {
-        batchPromises.push(
-          this.rateLimiter.add(() => 
-            this.retry.execute(() => mainBatch.commit())
-          ).then(() => void 0)
-        );
-      }
-
-      // Wait for all batch commits to complete
-      await Promise.all(batchPromises);
-
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
       result.errors.push(`Batch processing error: ${errorMessage}`);
@@ -319,7 +367,7 @@ export class CardSyncService {
     // Process batches with controlled parallelism
     for (let i = 0; i < batches.length; i += this.MAX_PARALLEL_BATCHES) {
       const currentBatches = batches.slice(i, i + this.MAX_PARALLEL_BATCHES);
-      const batchPromises = currentBatches.map(batch =>
+      const batchPromises = currentBatches.map((batch) =>
         this.processCardBatch(batch, groupId, options)
       );
 
@@ -328,7 +376,7 @@ export class CardSyncService {
 
       // Add delay between batch groups to prevent rate limiting
       if (i + this.MAX_PARALLEL_BATCHES < batches.length) {
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise((resolve) => setTimeout(resolve, 2000));
       }
     }
 
@@ -358,9 +406,9 @@ export class CardSyncService {
       logger.info("Starting card sync", { options });
 
       // Get groups to process
-      const groups = options.groupId
-        ? [{ groupId: options.groupId }]
-        : await tcgcsvApi.getGroups();
+      const groups = options.groupId ?
+        [{ groupId: options.groupId }] :
+        await tcgcsvApi.getGroups();
 
       logger.info(`Found ${groups.length} groups to process`);
 
@@ -389,8 +437,8 @@ export class CardSyncService {
 
           // Calculate and log group timing
           const groupEndTime = new Date();
-          const groupDuration = 
-            (groupEndTime.getTime() - result.timing.groupStartTime!.getTime()) / 1000;
+          const groupStartTime = result.timing.groupStartTime || new Date();
+          const groupDuration = (groupEndTime.getTime() - groupStartTime.getTime()) / 1000;
 
           logger.info(`Completed group ${group.groupId} in ${groupDuration}s`, {
             processed: batchResults.processed,
@@ -400,9 +448,8 @@ export class CardSyncService {
 
           // Add delay between groups
           if (groups.length > 1) {
-            await new Promise(resolve => setTimeout(resolve, 3000));
+            await new Promise((resolve) => setTimeout(resolve, 3000));
           }
-
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : "Unknown error";
           result.errors.push(
@@ -413,7 +460,6 @@ export class CardSyncService {
           });
         }
       }
-
     } catch (error) {
       result.success = false;
       const errorMessage = error instanceof Error ? error.message : "Unknown error";

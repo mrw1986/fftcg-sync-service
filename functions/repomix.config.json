@@ -1,6 +1,6 @@
 {
   "output": {
-    "filePath": "C:\\VSCode\\fftcg-sync-service\\codebase.xml",
+    "filePath": "firestore_codebase.xml",
     "style": "xml",
     "removeComments": false,
     "removeEmptyLines": false,

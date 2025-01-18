@@ -32,7 +32,7 @@ export class PriceSyncService {
     const uncachedIds: number[] = [];
 
     // Check cache first
-    productIds.forEach(id => {
+    productIds.forEach((id) => {
       const cacheKey = `price_hash_${id}`;
       const cached = this.cache.get(cacheKey);
       if (cached) {
@@ -52,12 +52,12 @@ export class PriceSyncService {
       chunks.push(uncachedIds.slice(i, i + 10));
     }
 
-    await Promise.all(chunks.map(async chunk => {
-      const refs = chunk.map(id => 
+    await Promise.all(chunks.map(async (chunk) => {
+      const refs = chunk.map((id) =>
         db.collection(COLLECTION.PRICE_HASHES).doc(id.toString())
       );
-      
-      const snapshots = await this.retry.execute(() => 
+
+      const snapshots = await this.retry.execute(() =>
         db.getAll(...refs)
       );
 
@@ -107,7 +107,7 @@ export class PriceSyncService {
 
     try {
       // Pre-fetch all hashes in one go
-      const productIds = prices.map(price => price.productId);
+      const productIds = prices.map((price) => price.productId);
       const hashMap = await this.getStoredHashes(productIds);
 
       // Prepare batches
@@ -205,10 +205,9 @@ export class PriceSyncService {
           }
 
           result.updated++;
-          
+
           // Update cache
           this.cache.set(`price_hash_${price.productId}`, currentHash);
-
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : "Unknown error";
           result.errors.push(`Error processing price for product ${price.productId}: ${errorMessage}`);
@@ -230,7 +229,6 @@ export class PriceSyncService {
 
       // Wait for all batches to complete
       await Promise.all(batchPromises);
-
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
       result.errors.push(`Batch processing error: ${errorMessage}`);
@@ -258,7 +256,7 @@ export class PriceSyncService {
     // Process batches with controlled parallelism
     for (let i = 0; i < batches.length; i += this.MAX_PARALLEL_BATCHES) {
       const currentBatches = batches.slice(i, i + this.MAX_PARALLEL_BATCHES);
-      const batchPromises = currentBatches.map(batch => 
+      const batchPromises = currentBatches.map((batch) =>
         this.processPriceBatch(batch, groupId, options)
       );
 
@@ -267,7 +265,7 @@ export class PriceSyncService {
 
       // Add delay between batch groups to prevent rate limiting
       if (i + this.MAX_PARALLEL_BATCHES < batches.length) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       }
     }
 
@@ -297,9 +295,9 @@ export class PriceSyncService {
       logger.info("Starting price sync", { options });
 
       // Get groups to process
-      const groups = options.groupId
-        ? [{ groupId: options.groupId }]
-        : await tcgcsvApi.getGroups();
+      const groups = options.groupId ?
+        [{ groupId: options.groupId }] :
+        await tcgcsvApi.getGroups();
 
       logger.info(`Found ${groups.length} groups to process`);
 
@@ -325,9 +323,8 @@ export class PriceSyncService {
 
           // Add delay between groups
           if (groups.length > 1) {
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            await new Promise((resolve) => setTimeout(resolve, 2000));
           }
-
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : "Unknown error";
           result.errors.push(

@@ -24,7 +24,7 @@ export class TcgcsvApi {
           axios.get<T>(url, {
             timeout: 30000,
             headers: {
-              Accept: "application/json",
+              "Accept": "application/json",
               "User-Agent": "FFTCG-Sync-Service/1.0",
             },
           })
