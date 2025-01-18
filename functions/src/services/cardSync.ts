@@ -20,7 +20,54 @@ export class CardSyncService {
   private readonly cache = new Cache<string>(15);
   private readonly retry = new RetryWithBackoff();
 
+  private getElements(card: CardProduct): string[] {
+  const elementField = card.extendedData.find(data => data.name === "Element");
+  if (!elementField?.value) return [];
   
+  // Convert to string before splitting
+  const valueStr = String(elementField.value);
+  return valueStr
+    .split(/[;,]/)
+    .map((element: string) => element.trim())
+    .filter((element: string) => element.length > 0)
+    .map((element: string) => element.charAt(0).toUpperCase() + element.slice(1).toLowerCase());
+  }
+
+  private normalizeNumericValue(value: string | number | undefined, fieldName: string): number | null {
+  if (value === undefined || value === '') return null;
+  const num = typeof value === 'number' ? value : parseInt(String(value), 10);
+  return isNaN(num) ? null : num;
+  }
+
+  private processExtendedData(card: CardProduct): Array<{ name: string; displayName: string; value: string | number | null | string[] }> {
+  return card.extendedData.map(data => {
+    if (data.name === "Cost") {
+      const costValue = this.normalizeNumericValue(data.value, "Cost");
+      return {
+        ...data,
+        value: costValue // Allow null for Cost
+      };
+    }
+    if (data.name === "Power") {
+      const powerValue = this.normalizeNumericValue(data.value, "Power");
+      return {
+        ...data,
+        value: powerValue // Allow null for Power
+      };
+    }
+    if (data.name === "Element") {
+      return {
+        name: "Elements",
+        displayName: "Elements",
+        value: this.getElements(card)
+      };
+    }
+    return {
+      ...data,
+      value: String(data.value) // All other values as strings
+    };
+  });
+}
 
   private calculateHash(data: CardHashData): string {
     return crypto
@@ -76,8 +123,9 @@ export class CardSyncService {
     return hashMap;
   }
 
-  private normalizeName(name: string): string {
-  return name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+  private normalizeName(name: string | number): string {
+  const nameStr = String(name);
+  return nameStr.charAt(0).toUpperCase() + nameStr.slice(1).toLowerCase();
 }
 
 private normalizeCardNumber(number: string): string {
@@ -101,28 +149,15 @@ private normalizeCardNumber(number: string): string {
   return clean;
 }
 
-private normalizeElements(elements: string): string[] {
-  if (!elements) return [];
-  
-  return elements
-    .split(/[;,]/)
-    .map(element => element.trim())
-    .filter(element => element.length > 0)
-    .map(element => element.charAt(0).toUpperCase() + element.slice(1).toLowerCase());
-}
-
-private getElementsFromExtendedData(extendedData: Array<{ name: string; value: string }>): string[] {
-  const elementField = extendedData.find(data => data.name === "Element");
-  return elementField ? this.normalizeElements(elementField.value) : [];
-}
-
 private getCardNumbers(card: CardProduct): string[] {
   const numbers: string[] = [];
   card.extendedData
     .filter((data) => data.name === "Number")
     .forEach((numberField) => {
-      const vals = numberField.value.split(/[,;/]/).map((n) => n.trim());
-      numbers.push(...vals.map(num => this.normalizeCardNumber(num)));
+      // Convert to string before splitting
+      const valueStr = String(numberField.value);
+      const vals = valueStr.split(/[,;/]/).map((n: string) => n.trim());
+      numbers.push(...vals.map((num: string) => this.normalizeCardNumber(num)));
     });
 
   if (numbers.length === 0) {
@@ -133,9 +168,9 @@ private getCardNumbers(card: CardProduct): string[] {
 }
 
   private isNonCardProduct(card: CardProduct): boolean {
-    const cardType = card.extendedData.find((data) => data.name === "CardType")?.value;
-    return !cardType || cardType.toLowerCase() === "sealed product";
-  }
+  const cardType = card.extendedData.find((data) => data.name === "CardType")?.value;
+  return !cardType || String(cardType).toLowerCase() === "sealed product";
+}
 
   private async saveDeltaUpdate(
     batch: FirebaseFirestore.WriteBatch,
@@ -259,22 +294,21 @@ private getCardNumbers(card: CardProduct): string[] {
             }
 
             const cardNumbers = this.getCardNumbers(card);
-            const primaryCardNumber = cardNumbers[0];
+const primaryCardNumber = cardNumbers[0];
 
-            const cardDoc = {
-              productId: card.productId,
-              name: this.normalizeName(card.name),
-              cleanName: this.normalizeName(card.cleanName),
-              fullResUrl: imageResult.fullResUrl,
-              highResUrl: imageResult.highResUrl,
-              lowResUrl: imageResult.lowResUrl,
-              lastUpdated: FieldValue.serverTimestamp(),
-              groupId: parseInt(groupId),
-              isNonCard: this.isNonCardProduct(card),
-              cardNumbers,
-              primaryCardNumber,
-              elements: this.getElementsFromExtendedData(card.extendedData),
-            };
+const cardDoc = {
+  productId: card.productId,
+  name: this.normalizeName(card.name),
+  cleanName: this.normalizeName(card.cleanName),
+  fullResUrl: imageResult.fullResUrl,
+  highResUrl: imageResult.highResUrl,
+  lowResUrl: imageResult.lowResUrl,
+  lastUpdated: FieldValue.serverTimestamp(),
+  groupId: parseInt(groupId),
+  isNonCard: this.isNonCardProduct(card),
+  cardNumbers,
+  primaryCardNumber,
+};
 
             // Main card document
             const cardRef = db.collection(COLLECTION.CARDS)
@@ -284,8 +318,9 @@ private getCardNumbers(card: CardProduct): string[] {
 
             // Extended data subcollection
             const extendedDataRef = cardRef.collection("extendedData");
-            card.extendedData.forEach((data) => {
-              mainBatch.set(extendedDataRef.doc(data.name), data, { merge: true }); // Add merge: true
+            const processedExtendedData = this.processExtendedData(card);
+            processedExtendedData.forEach((data) => {
+            mainBatch.set(extendedDataRef.doc(data.name), data, { merge: true });
             });
 
             // Image metadata

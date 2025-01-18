@@ -13,7 +13,7 @@ export interface CardProduct {
   extendedData: Array<{
     name: string;
     displayName: string;
-    value: string;
+    value: string | number;
   }>;
 }
 
@@ -82,7 +82,7 @@ export interface CardHashData {
   extendedData: Array<{
     name: string;
     displayName: string;
-    value: string;
+    value: string | number | number | null | string[];
   }>;
 }
 
@@ -107,7 +107,6 @@ export interface CardChanges {
   isNonCard: boolean;
   cardNumbers: string[];
   primaryCardNumber: string;
-  elements: string[]; // Add this line
 }
 
 export interface PriceChanges {
