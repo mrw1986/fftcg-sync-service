@@ -125,7 +125,8 @@ export class CardSyncService {
 
   private normalizeName(name: string | number): string {
   const nameStr = String(name);
-  return nameStr.charAt(0).toUpperCase() + nameStr.slice(1).toLowerCase();
+  // Only capitalize the first letter, leave the rest unchanged
+  return nameStr.charAt(0).toUpperCase() + nameStr.slice(1);
 }
 
 private normalizeCardNumber(number: string): string {
