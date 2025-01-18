@@ -99,6 +99,7 @@ export interface CardChanges {
   productId: number;
   name: string;
   cleanName: string;
+  fullResUrl: string;
   highResUrl: string;
   lowResUrl: string;
   lastUpdated: FieldValue;
@@ -106,6 +107,7 @@ export interface CardChanges {
   isNonCard: boolean;
   cardNumbers: string[];
   primaryCardNumber: string;
+  elements: string[]; // Add this line
 }
 
 export interface PriceChanges {
