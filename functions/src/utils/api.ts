@@ -10,16 +10,17 @@ export class TcgcsvApi {
   private readonly baseUrl = "https://tcgcsv.com/tcgplayer";
   private readonly categoryId = "24"; // Final Fantasy TCG
   private readonly requestQueue = new Map<string, Promise<unknown>>();
-  private readonly resultCache = new Cache<unknown>(5); // 5-minute cache
+  private readonly resultCache = new Cache<unknown>(5);
   private readonly rateLimiter = new RateLimiter();
   private readonly retry = new RetryWithBackoff();
 
   private async _makeRequest<T>(endpoint: string): Promise<T> {
     const url = `${this.baseUrl}/${endpoint}`;
-    logger.info(`Making request to: ${url}`);
+    console.log(`Making API request to: ${url}`); // Added console.log
 
     return this.rateLimiter.add(async () => {
       try {
+        console.log(`Sending request to ${url}`); // Added detailed logging
         const response = await this.retry.execute(() =>
           axios.get<T>(url, {
             timeout: 30000,
@@ -29,10 +30,29 @@ export class TcgcsvApi {
             },
           })
         );
+        console.log(`Response received from ${url}:`, {
+          status: response.status,
+          dataType: typeof response.data,
+          isArray: Array.isArray(response.data),
+          dataLength: Array.isArray(response.data) ? response.data.length : null,
+        });
         return response.data;
       } catch (error) {
-        if (error instanceof AxiosError && error.response?.status === 403) {
-          throw new Error(`Access denied to TCGCSV API at path: ${endpoint}`);
+        // Enhanced error logging
+        if (error instanceof AxiosError) {
+          console.error("API Request Failed:", {
+            url,
+            status: error.response?.status,
+            statusText: error.response?.statusText,
+            data: error.response?.data,
+            message: error.message,
+          });
+
+          if (error.response?.status === 403) {
+            throw new Error(`Access denied to TCGCSV API at path: ${endpoint}`);
+          }
+        } else {
+          console.error("Non-Axios error occurred:", error);
         }
         throw error;
       }
@@ -43,21 +63,27 @@ export class TcgcsvApi {
     const cacheKey = `api_${endpoint}`;
     const cached = this.resultCache.get(cacheKey);
     if (cached) {
-      logger.info(`Cache hit for ${endpoint}`);
+      console.log(`Cache hit for ${endpoint}`);
       return cached as T;
     }
 
     const existing = this.requestQueue.get(endpoint);
     if (existing) {
-      logger.info(`Using existing request for ${endpoint}`);
+      console.log(`Using existing request for ${endpoint}`);
       return existing as Promise<T>;
     }
 
+    console.log(`Making new request for ${endpoint}`);
     const promise = this._makeRequest<T>(endpoint);
     this.requestQueue.set(endpoint, promise);
 
     try {
       const result = await promise;
+      console.log(`Request successful for ${endpoint}`, {
+        resultType: typeof result,
+        isArray: Array.isArray(result),
+        resultLength: Array.isArray(result) ? result.length : null,
+      });
       this.resultCache.set(cacheKey, result);
       return result;
     } finally {
@@ -66,15 +92,31 @@ export class TcgcsvApi {
   }
 
   async getGroups(): Promise<Array<{ groupId: string }>> {
-    const response = await this.makeRequest<{ results: Array<{ groupId: string }> }>(`${this.categoryId}/groups`);
-    logger.info(`Retrieved ${response.results.length} groups`);
-    return response.results;
+    console.log("Getting groups...");
+    try {
+      const response = await this.makeRequest<{ results: Array<{ groupId: string }> }>(
+        `${this.categoryId}/groups`
+      );
+      console.log(`Retrieved ${response.results.length} groups`);
+      return response.results;
+    } catch (error) {
+      console.error("Error getting groups:", error);
+      throw error;
+    }
   }
 
   async getGroupProducts(groupId: string): Promise<CardProduct[]> {
-    const response = await this.makeRequest<{ results: CardProduct[] }>(`${this.categoryId}/${groupId}/products`);
-    logger.info(`Retrieved ${response.results.length} products for group ${groupId}`);
-    return response.results;
+    console.log(`Getting products for group ${groupId}...`);
+    try {
+      const response = await this.makeRequest<{ results: CardProduct[] }>(
+        `${this.categoryId}/${groupId}/products`
+      );
+      console.log(`Retrieved ${response.results.length} products for group ${groupId}`);
+      return response.results;
+    } catch (error) {
+      console.error(`Error getting products for group ${groupId}:`, error);
+      throw error;
+    }
   }
 
   async getGroupPrices(groupId: string): Promise<CardPrice[]> {

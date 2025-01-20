@@ -7,7 +7,10 @@ import { priceSync } from "./services/priceSync";
 import { retention } from "./utils/retention";
 import { runtimeOpts } from "./config/firebase";
 import { logger } from "./utils/logger";
+import { tcgcsvApi } from "./utils/api";
+import { CardProduct } from "types";
 
+// Keep your existing scheduledCardSync function
 export const scheduledCardSync = onSchedule({
   schedule: "0 21 * * *", // Daily at 21:00 UTC
   timeZone: "UTC",
@@ -16,14 +19,142 @@ export const scheduledCardSync = onSchedule({
   timeoutSeconds: 540,
   retryCount: 3,
   maxInstances: 1,
-}, async (): Promise<void> => { // Removed _event parameter
+}, async (): Promise<void> => {
   try {
+    console.log("Function triggered"); // Added console.log
     logger.info("Starting scheduled card sync");
     const result = await cardSync.syncCards();
     logger.info("Scheduled card sync completed", result);
   } catch (error) {
+    console.error("Function error:", error); // Added console.error
     logger.error("Scheduled card sync failed", { error });
     throw error;
+  }
+});
+
+export const testApi = onRequest({
+  timeoutSeconds: 30,
+  memory: "128MiB",
+  region: "us-central1",
+}, async (_req: Request, res: Response) => {
+  try {
+    console.log("Testing API connectivity...");
+
+    // Test groups endpoint
+    console.log("Testing groups endpoint...");
+    const groups = await tcgcsvApi.getGroups();
+
+    // Test products endpoint with first group
+    console.log("Testing products endpoint...");
+    let products: CardProduct[] = [];
+    if (groups.length > 0) {
+      products = await tcgcsvApi.getGroupProducts(groups[0].groupId);
+    }
+
+    res.json({
+      success: true,
+      timestamp: new Date().toISOString(),
+      results: {
+        groups: {
+          count: groups.length,
+          firstGroup: groups[0],
+        },
+        products: {
+          count: products.length,
+          firstProduct: products[0],
+        },
+      },
+    });
+  } catch (error) {
+    console.error("API test failed:", error);
+    res.status(500).json({
+      success: false,
+      timestamp: new Date().toISOString(),
+      error: error instanceof Error ? {
+        message: error.message,
+        stack: error.stack,
+        name: error.name,
+      } : String(error),
+    });
+  }
+});
+
+// Add the new HTTP endpoint for testing
+export const testScheduledCardSync = onRequest({
+  timeoutSeconds: 540,
+  memory: "2GiB",
+  region: "us-central1",
+}, async (req: Request, res: Response) => {
+  try {
+    console.log("Test endpoint triggered", { query: req.query });
+
+    // Parse optional parameters from query string
+    const options = {
+      dryRun: req.query.dryRun === "true",
+      groupId: req.query.groupId as string,
+      forceUpdate: req.query.forceUpdate === "true",
+    };
+
+    logger.info("Starting manual card sync test", { options });
+
+    // Test API connectivity first
+    try {
+      const groups = await tcgcsvApi.getGroups();
+      console.log("API Groups response:", {
+        groupCount: groups.length,
+        firstGroup: groups[0],
+      });
+
+      if (groups.length > 0 && !options.groupId) {
+        // Test getting products for the first group
+        const firstGroupProducts = await tcgcsvApi.getGroupProducts(groups[0].groupId);
+        console.log("First group products:", {
+          groupId: groups[0].groupId,
+          productCount: firstGroupProducts.length,
+          firstProduct: firstGroupProducts[0],
+        });
+      }
+    } catch (apiError) {
+      console.error("API Test Failed:", apiError);
+      throw new Error(`API Connectivity Test Failed: ${apiError instanceof Error ?
+        apiError.message : String(apiError)}`);
+    }
+
+    // Proceed with sync
+    const result = await cardSync.syncCards(options);
+    logger.info("Manual card sync completed", result);
+
+    // Send detailed response
+    res.json({
+      success: true,
+      timestamp: new Date().toISOString(),
+      options,
+      result,
+      debug: {
+        environment: process.env.NODE_ENV,
+        functionRegion: "us-central1",
+        memoryLimit: "2GiB",
+        timeoutSeconds: 540,
+      },
+    });
+  } catch (error) {
+    console.error("Test endpoint error:", error);
+    logger.error("Manual card sync failed", { error });
+
+    res.status(500).json({
+      success: false,
+      timestamp: new Date().toISOString(),
+      error: error instanceof Error ? {
+        message: error.message,
+        stack: error.stack,
+        name: error.name,
+      } : String(error),
+      options: req.query,
+      debug: {
+        environment: process.env.NODE_ENV,
+        functionRegion: "us-central1",
+      },
+    });
   }
 });
 
