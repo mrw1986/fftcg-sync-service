@@ -10,7 +10,8 @@
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log",
-    "cleanup:elements": "ts-node src/scripts/cleanupElements.ts"
+    "cleanup:elements": "ts-node src/scripts/cleanupElements.ts",
+    "sync:groups": "ts-node src/scripts/syncGroups.ts"
   },
   "engines": {
     "node": "18"

@@ -23,6 +23,8 @@ export const COLLECTION = {
   HISTORICAL_PRICES: "historicalPrices",
   CARD_DELTAS: "cardDeltas",
   PRICE_DELTAS: "priceDeltas",
+  GROUPS: "groups",
+  GROUP_HASHES: "groupHashes",
 } as const;
 
 export const BASE_URL = "https://tcgcsv.com/tcgplayer";
