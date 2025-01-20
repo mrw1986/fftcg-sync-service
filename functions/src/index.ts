@@ -13,6 +13,8 @@ export const scheduledCardSync = onSchedule({
   timeZone: "UTC",
   region: "us-central1",
   memory: runtimeOpts.memory,
+  minInstances: 0,
+  maxInstances: 10,
   timeoutSeconds: runtimeOpts.timeoutSeconds,
   retryCount: 3,
 }, async () => { // Removed _context parameter since it's unused
