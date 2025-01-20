@@ -4,14 +4,13 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import { Request, Response } from "express";
 import { cardSync } from "./services/cardSync";
 import { priceSync } from "./services/priceSync";
-import { retention } from "./utils/retention";
 import { runtimeOpts } from "./config/firebase";
+import { retention } from "./utils/retention";
 
 // Scheduled card sync
 export const scheduledCardSync = onSchedule({
   schedule: "0 21 * * *", // Daily at 21:00 UTC
   timeZone: "UTC",
-  region: "us-central1",
   memory: runtimeOpts.memory,
   timeoutSeconds: runtimeOpts.timeoutSeconds,
   retryCount: 3,
@@ -48,7 +47,6 @@ export const manualCardSync = onRequest({
 export const scheduledPriceSync = onSchedule({
   schedule: "30 21 * * *", // Daily at 21:30 UTC
   timeZone: "UTC",
-  region: "us-central1",
   memory: runtimeOpts.memory,
   timeoutSeconds: runtimeOpts.timeoutSeconds,
   retryCount: 3,
@@ -88,7 +86,6 @@ export const manualPriceSync = onRequest({
 export const healthCheck = onRequest({
   timeoutSeconds: 10,
   memory: "128MiB",
-  region: "us-central1",
 }, async (_req: Request, res: Response) => {
   res.status(200).json({
     status: "healthy",
@@ -101,7 +98,6 @@ export const healthCheck = onRequest({
 export const scheduledCleanup = onSchedule({
   schedule: "0 22 * * *", // Daily at 22:00 UTC
   timeZone: "UTC",
-  region: "us-central1",
   memory: runtimeOpts.memory,
   timeoutSeconds: runtimeOpts.timeoutSeconds,
   retryCount: 3,

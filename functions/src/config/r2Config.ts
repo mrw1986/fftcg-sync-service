@@ -1,5 +1,4 @@
 // src/config/r2Config.ts
-import * as functions from "firebase-functions/v2";
 import * as dotenv from "dotenv";
 
 // Load .env file
@@ -18,14 +17,13 @@ type R2ConfigKey = keyof R2Config;
 
 const getConfig = (): R2Config => {
   try {
-    const config = functions.config().r2 || {};
     const configuration: R2Config = {
-      ACCOUNT_ID: config.account_id || process.env.R2_ACCOUNT_ID || "",
-      ACCESS_KEY_ID: config.access_key_id || process.env.R2_ACCESS_KEY_ID || "",
-      SECRET_ACCESS_KEY: config.secret_access_key || process.env.R2_SECRET_ACCESS_KEY || "",
-      BUCKET_NAME: config.bucket_name || process.env.R2_BUCKET_NAME || "",
-      STORAGE_PATH: config.storage_path || process.env.R2_STORAGE_PATH || "card-images",
-      CUSTOM_DOMAIN: config.custom_domain || process.env.R2_CUSTOM_DOMAIN || "",
+      ACCOUNT_ID: process.env.R2_ACCOUNT_ID || "",
+      ACCESS_KEY_ID: process.env.R2_ACCESS_KEY_ID || "",
+      SECRET_ACCESS_KEY: process.env.R2_SECRET_ACCESS_KEY || "",
+      BUCKET_NAME: process.env.R2_BUCKET_NAME || "",
+      STORAGE_PATH: process.env.R2_STORAGE_PATH || "card-images",
+      CUSTOM_DOMAIN: process.env.R2_CUSTOM_DOMAIN || "",
     };
 
     // Debug logging
