@@ -25,6 +25,7 @@ export const COLLECTION = {
   PRICE_DELTAS: "priceDeltas",
   GROUPS: "groups",
   GROUP_HASHES: "groupHashes",
+  SYNC_STATE: "syncState",
 } as const;
 
 export const BASE_URL = "https://tcgcsv.com/tcgplayer";

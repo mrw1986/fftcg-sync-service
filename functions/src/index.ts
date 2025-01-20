@@ -6,19 +6,25 @@ import { cardSync } from "./services/cardSync";
 import { priceSync } from "./services/priceSync";
 import { retention } from "./utils/retention";
 import { runtimeOpts } from "./config/firebase";
+import { logger } from "./utils/logger";
 
-// Scheduled card sync
 export const scheduledCardSync = onSchedule({
   schedule: "0 21 * * *", // Daily at 21:00 UTC
   timeZone: "UTC",
   region: "us-central1",
-  memory: runtimeOpts.memory,
-  minInstances: 0,
-  maxInstances: 10,
-  timeoutSeconds: runtimeOpts.timeoutSeconds,
+  memory: "2GiB",
+  timeoutSeconds: 540,
   retryCount: 3,
-}, async () => { // Removed _context parameter since it's unused
-  await cardSync.syncCards();
+  maxInstances: 1,
+}, async (): Promise<void> => { // Removed _event parameter
+  try {
+    logger.info("Starting scheduled card sync");
+    const result = await cardSync.syncCards();
+    logger.info("Scheduled card sync completed", result);
+  } catch (error) {
+    logger.error("Scheduled card sync failed", { error });
+    throw error;
+  }
 });
 
 // Manual card sync endpoint for testing
