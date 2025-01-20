@@ -36,27 +36,27 @@ export class StorageService {
 
   constructor() {
     // Debug logging
-    console.log('StorageService Configuration:', {
-        accountId: R2_CONFIG.ACCOUNT_ID,
-        accessKeyId: R2_CONFIG.ACCESS_KEY_ID ? '***' : 'not set',
-        secretAccessKey: R2_CONFIG.SECRET_ACCESS_KEY ? '***' : 'not set',
-        bucket: R2_CONFIG.BUCKET_NAME,
-        customDomain: R2_CONFIG.CUSTOM_DOMAIN,
-        storagePath: R2_CONFIG.STORAGE_PATH
+    console.log("StorageService Configuration:", {
+      accountId: R2_CONFIG.ACCOUNT_ID,
+      accessKeyId: R2_CONFIG.ACCESS_KEY_ID ? "***" : "not set",
+      secretAccessKey: R2_CONFIG.SECRET_ACCESS_KEY ? "***" : "not set",
+      bucket: R2_CONFIG.BUCKET_NAME,
+      customDomain: R2_CONFIG.CUSTOM_DOMAIN,
+      storagePath: R2_CONFIG.STORAGE_PATH,
     });
 
     if (!R2_CONFIG.BUCKET_NAME) {
-        throw new Error('R2 bucket name is not configured');
+      throw new Error("R2 bucket name is not configured");
     }
 
     this.client = new S3Client({
-        region: "auto",
-        endpoint: `https://${R2_CONFIG.ACCOUNT_ID}.r2.cloudflarestorage.com`,
-        credentials: {
-            accessKeyId: R2_CONFIG.ACCESS_KEY_ID,
-            secretAccessKey: R2_CONFIG.SECRET_ACCESS_KEY,
-        },
-        forcePathStyle: true,
+      region: "auto",
+      endpoint: `https://${R2_CONFIG.ACCOUNT_ID}.r2.cloudflarestorage.com`,
+      credentials: {
+        accessKeyId: R2_CONFIG.ACCESS_KEY_ID,
+        secretAccessKey: R2_CONFIG.SECRET_ACCESS_KEY,
+      },
+      forcePathStyle: true,
     });
 
     this.bucket = R2_CONFIG.BUCKET_NAME;
@@ -64,13 +64,13 @@ export class StorageService {
     this.storagePath = R2_CONFIG.STORAGE_PATH;
 
     // Verify client configuration
-    console.log('S3Client Configuration:', {
-        endpoint: `https://${R2_CONFIG.ACCOUNT_ID}.r2.cloudflarestorage.com`,
-        bucket: this.bucket,
-        customDomain: this.customDomain,
-        storagePath: this.storagePath
+    console.log("S3Client Configuration:", {
+      endpoint: `https://${R2_CONFIG.ACCOUNT_ID}.r2.cloudflarestorage.com`,
+      bucket: this.bucket,
+      customDomain: this.customDomain,
+      storagePath: this.storagePath,
     });
-}
+  }
 
   private isValidImageUrl(url: string | undefined): boolean {
     if (!url) return false;
@@ -139,7 +139,7 @@ export class StorageService {
           timeout: this.timeoutMs,
           headers: {
             "User-Agent": "FFTCG-Sync-Service/1.0",
-            Accept: "image/jpeg,image/png,image/*",
+            "Accept": "image/jpeg,image/png,image/*",
           },
           maxContentLength: 10 * 1024 * 1024, // 10MB max
           validateStatus: (status) => status === 200, // Only accept 200 status

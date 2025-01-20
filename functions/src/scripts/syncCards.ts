@@ -6,12 +6,12 @@ function parseArgs(args: string[]): { forceUpdate?: boolean; groupId?: string } 
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
-      case "--force":
-        options.forceUpdate = true;
-        break;
-      case "--group":
-        options.groupId = args[++i];
-        break;
+    case "--force":
+      options.forceUpdate = true;
+      break;
+    case "--group":
+      options.groupId = args[++i];
+      break;
     }
   }
 

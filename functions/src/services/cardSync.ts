@@ -21,53 +21,57 @@ export class CardSyncService {
   private readonly retry = new RetryWithBackoff();
 
   private getElements(card: CardProduct): string[] {
-  const elementField = card.extendedData.find(data => data.name === "Element");
-  if (!elementField?.value) return [];
-  
-  // Convert to string before splitting
-  const valueStr = String(elementField.value);
-  return valueStr
-    .split(/[;,]/)
-    .map((element: string) => element.trim())
-    .filter((element: string) => element.length > 0)
-    .map((element: string) => element.charAt(0).toUpperCase() + element.slice(1).toLowerCase());
+    const elementField = card.extendedData.find((data) => data.name === "Element");
+    if (!elementField?.value) return [];
+
+    // Convert to string before splitting
+    const valueStr = String(elementField.value);
+    return valueStr
+      .split(/[;,]/)
+      .map((element: string) => element.trim())
+      .filter((element: string) => element.length > 0)
+      .map((element: string) => element.charAt(0).toUpperCase() + element.slice(1).toLowerCase());
   }
 
-  private normalizeNumericValue(value: string | number | undefined, fieldName: string): number | null {
-  if (value === undefined || value === '') return null;
-  const num = typeof value === 'number' ? value : parseInt(String(value), 10);
-  return isNaN(num) ? null : num;
+  private normalizeNumericValue(value: string | number | undefined): number | null {
+    if (value === undefined || value === "") return null;
+    const num = typeof value === "number" ? value : parseInt(String(value), 10);
+    return isNaN(num) ? null : num;
   }
 
-  private processExtendedData(card: CardProduct): Array<{ name: string; displayName: string; value: string | number | null | string[] }> {
-  return card.extendedData.map(data => {
-    if (data.name === "Cost") {
-      const costValue = this.normalizeNumericValue(data.value, "Cost");
+  private processExtendedData(card: CardProduct): Array<{
+  name: string;
+  displayName: string;
+  value: string | number | null | string[];
+}> {
+    return card.extendedData.map((data) => {
+      if (data.name === "Cost") {
+        const costValue = this.normalizeNumericValue(data.value);
+        return {
+          ...data,
+          value: costValue, // Allow null for Cost
+        };
+      }
+      if (data.name === "Power") {
+        const powerValue = this.normalizeNumericValue(data.value);
+        return {
+          ...data,
+          value: powerValue, // Allow null for Power
+        };
+      }
+      if (data.name === "Element") {
+        return {
+          name: "Elements",
+          displayName: "Elements",
+          value: this.getElements(card),
+        };
+      }
       return {
         ...data,
-        value: costValue // Allow null for Cost
+        value: String(data.value), // All other values as strings
       };
-    }
-    if (data.name === "Power") {
-      const powerValue = this.normalizeNumericValue(data.value, "Power");
-      return {
-        ...data,
-        value: powerValue // Allow null for Power
-      };
-    }
-    if (data.name === "Element") {
-      return {
-        name: "Elements",
-        displayName: "Elements",
-        value: this.getElements(card)
-      };
-    }
-    return {
-      ...data,
-      value: String(data.value) // All other values as strings
-    };
-  });
-}
+    });
+  }
 
   private calculateHash(data: CardHashData): string {
     return crypto
@@ -124,54 +128,54 @@ export class CardSyncService {
   }
 
   private normalizeName(name: string | number): string {
-  const nameStr = String(name);
-  // Only capitalize the first letter, leave the rest unchanged
-  return nameStr.charAt(0).toUpperCase() + nameStr.slice(1);
-}
+    const nameStr = String(name);
+    // Only capitalize the first letter, leave the rest unchanged
+    return nameStr.charAt(0).toUpperCase() + nameStr.slice(1);
+  }
 
-private normalizeCardNumber(number: string): string {
+  private normalizeCardNumber(number: string): string {
   // Remove any existing hyphens and spaces
-  const clean = number.replace(/[-\s]/g, "");
-  
-  // Handle PR cards
-  if (clean.startsWith("PR")) {
-    const num = clean.slice(2);
-    return `PR-${num}`;
-  }
-  
-  // Handle regular card numbers
-  const match = clean.match(/^(\d{1,2})(\d{3}[A-Za-z]?)$/);
-  if (match) {
-    const [, prefix, rest] = match;
-    return `${prefix}-${rest}`;
-  }
-  
-  // Return original if no pattern matches
-  return clean;
-}
+    const clean = number.replace(/[-\s]/g, "");
 
-private getCardNumbers(card: CardProduct): string[] {
-  const numbers: string[] = [];
-  card.extendedData
-    .filter((data) => data.name === "Number")
-    .forEach((numberField) => {
+    // Handle PR cards
+    if (clean.startsWith("PR")) {
+      const num = clean.slice(2);
+      return `PR-${num}`;
+    }
+
+    // Handle regular card numbers
+    const match = clean.match(/^(\d{1,2})(\d{3}[A-Za-z]?)$/);
+    if (match) {
+      const [, prefix, rest] = match;
+      return `${prefix}-${rest}`;
+    }
+
+    // Return original if no pattern matches
+    return clean;
+  }
+
+  private getCardNumbers(card: CardProduct): string[] {
+    const numbers: string[] = [];
+    card.extendedData
+      .filter((data) => data.name === "Number")
+      .forEach((numberField) => {
       // Convert to string before splitting
-      const valueStr = String(numberField.value);
-      const vals = valueStr.split(/[,;/]/).map((n: string) => n.trim());
-      numbers.push(...vals.map((num: string) => this.normalizeCardNumber(num)));
-    });
+        const valueStr = String(numberField.value);
+        const vals = valueStr.split(/[,;/]/).map((n: string) => n.trim());
+        numbers.push(...vals.map((num: string) => this.normalizeCardNumber(num)));
+      });
 
-  if (numbers.length === 0) {
-    numbers.push(this.normalizeCardNumber(`P${card.productId}`));
+    if (numbers.length === 0) {
+      numbers.push(this.normalizeCardNumber(`P${card.productId}`));
+    }
+
+    return [...new Set(numbers)];
   }
-
-  return [...new Set(numbers)];
-}
 
   private isNonCardProduct(card: CardProduct): boolean {
-  const cardType = card.extendedData.find((data) => data.name === "CardType")?.value;
-  return !cardType || String(cardType).toLowerCase() === "sealed product";
-}
+    const cardType = card.extendedData.find((data) => data.name === "CardType")?.value;
+    return !cardType || String(cardType).toLowerCase() === "sealed product";
+  }
 
   private async saveDeltaUpdate(
     batch: FirebaseFirestore.WriteBatch,
@@ -295,21 +299,21 @@ private getCardNumbers(card: CardProduct): string[] {
             }
 
             const cardNumbers = this.getCardNumbers(card);
-const primaryCardNumber = cardNumbers[0];
+            const primaryCardNumber = cardNumbers[0];
 
-const cardDoc = {
-  productId: card.productId,
-  name: this.normalizeName(card.name),
-  cleanName: this.normalizeName(card.cleanName),
-  fullResUrl: imageResult.fullResUrl,
-  highResUrl: imageResult.highResUrl,
-  lowResUrl: imageResult.lowResUrl,
-  lastUpdated: FieldValue.serverTimestamp(),
-  groupId: parseInt(groupId),
-  isNonCard: this.isNonCardProduct(card),
-  cardNumbers,
-  primaryCardNumber,
-};
+            const cardDoc = {
+              productId: card.productId,
+              name: this.normalizeName(card.name),
+              cleanName: this.normalizeName(card.cleanName),
+              fullResUrl: imageResult.fullResUrl,
+              highResUrl: imageResult.highResUrl,
+              lowResUrl: imageResult.lowResUrl,
+              lastUpdated: FieldValue.serverTimestamp(),
+              groupId: parseInt(groupId),
+              isNonCard: this.isNonCardProduct(card),
+              cardNumbers,
+              primaryCardNumber,
+            };
 
             // Main card document
             const cardRef = db.collection(COLLECTION.CARDS)
@@ -321,7 +325,7 @@ const cardDoc = {
             const extendedDataRef = cardRef.collection("extendedData");
             const processedExtendedData = this.processExtendedData(card);
             processedExtendedData.forEach((data) => {
-            mainBatch.set(extendedDataRef.doc(data.name), data, { merge: true });
+              mainBatch.set(extendedDataRef.doc(data.name), data, { merge: true });
             });
 
             // Image metadata

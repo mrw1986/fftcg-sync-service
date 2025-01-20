@@ -101,10 +101,14 @@ export const scheduledCardSync = onSchedule(
     memory: runtimeOpts.memory,
     timeoutSeconds: runtimeOpts.timeoutSeconds,
     retryCount: 3,
+    region: "us-central1",
+    maxInstances: 1,
   },
-  async () => {
+  async (event) => {
     try {
-      logger.info("Starting scheduled card sync");
+      logger.info("Starting scheduled card sync", {
+        scheduledTime: event.scheduleTime,
+      });
       const result = await cardSync.syncCards({
         forceUpdate: false,
         skipImages: false,
@@ -127,10 +131,14 @@ export const scheduledPriceSync = onSchedule(
     memory: runtimeOpts.memory,
     timeoutSeconds: runtimeOpts.timeoutSeconds,
     retryCount: 3,
+    region: "us-central1",
+    maxInstances: 1,
   },
-  async () => {
+  async (event) => {
     try {
-      logger.info("Starting scheduled price sync");
+      logger.info("Starting scheduled price sync", {
+        scheduledTime: event.scheduleTime,
+      });
       const result = await priceSync.syncPrices({
         forceUpdate: false,
         silent: false,
@@ -151,10 +159,14 @@ export const scheduledCleanup = onSchedule(
     memory: runtimeOpts.memory,
     timeoutSeconds: runtimeOpts.timeoutSeconds,
     retryCount: 3,
+    region: "us-central1",
+    maxInstances: 1,
   },
-  async () => {
+  async (event) => {
     try {
-      logger.info("Starting scheduled cleanup");
+      logger.info("Starting scheduled cleanup", {
+        scheduledTime: event.scheduleTime,
+      });
       await retention.cleanOldData();
       logger.info("Cleanup completed");
     } catch (error) {
