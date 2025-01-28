@@ -2,13 +2,25 @@
 import { db, COLLECTION } from "../config/firebase";
 import { tcgcsvApi } from "../utils/api";
 import { storageService } from "./storageService";
-import { CardProduct, SyncResult, CardHashData, SyncOptions } from "../types";
+import { CardProduct, SyncResult, SyncOptions } from "../types";
 import { logger } from "../utils/logger";
 import { Cache } from "../utils/cache";
 import { RetryWithBackoff } from "../utils/retry";
 import * as crypto from "crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import { OptimizedBatchProcessor } from "./batchProcessor";
+
+interface CardDeltaData {
+  name: string;
+  cleanName: string;
+  modifiedOn: string;
+  cardType: string | null;
+  number: string | null;
+  rarity: string | null;
+  cost: number | null;
+  power: number | null;
+  elements: string[];
+}
 
 export class CardSyncService {
   private readonly CHUNK_SIZE = 1000;
@@ -94,10 +106,25 @@ export class CardSyncService {
     return !cardType || String(cardType).toLowerCase() === "sealed product";
   }
 
-  private calculateHash(data: CardHashData): string {
+  private getDeltaData(card: CardProduct): CardDeltaData {
+    return {
+      name: card.name,
+      cleanName: card.cleanName,
+      modifiedOn: card.modifiedOn,
+      cardType: this.getExtendedValue(card, "CardType"),
+      number: this.getExtendedValue(card, "Number"),
+      rarity: this.getExtendedValue(card, "Rarity"),
+      cost: this.normalizeNumericValue(this.getExtendedValue(card, "Cost")),
+      power: this.normalizeNumericValue(this.getExtendedValue(card, "Power")),
+      elements: this.getElements(card),
+    };
+  }
+
+  private calculateHash(card: CardProduct): string {
+    const deltaData = this.getDeltaData(card);
     return crypto
       .createHash("md5")
-      .update(JSON.stringify(data))
+      .update(JSON.stringify(deltaData))
       .digest("hex");
   }
 
@@ -172,6 +199,13 @@ export class CardSyncService {
           const cardNumbers = this.getCardNumbers(card);
           const primaryCardNumber = cardNumbers[0];
 
+          const currentHash = this.calculateHash(card);
+          const storedHash = hashMap.get(card.productId);
+
+          if (currentHash === storedHash && !options.forceUpdate) {
+            return;
+          }
+
           const imageResult = await this.retry.execute(() =>
             storageService.processAndStoreImage(
               card.imageUrl,
@@ -180,20 +214,6 @@ export class CardSyncService {
               primaryCardNumber
             )
           );
-
-          const relevantData: CardHashData = {
-            name: card.name,
-            cleanName: card.cleanName,
-            modifiedOn: card.modifiedOn,
-            extendedData: card.extendedData,
-          };
-
-          const currentHash = this.calculateHash(relevantData);
-          const storedHash = hashMap.get(card.productId);
-
-          if (currentHash === storedHash && !options.forceUpdate) {
-            return;
-          }
 
           const cardDoc = {
             productId: card.productId,
@@ -276,88 +296,88 @@ export class CardSyncService {
   }
 
   async syncCards(options: SyncOptions = {}): Promise<SyncResult> {
-  const result: SyncResult = {
-    success: true,
-    itemsProcessed: 0,
-    itemsUpdated: 0,
-    errors: [],
-    timing: {
-      startTime: new Date(),
-    },
-  };
+    const result: SyncResult = {
+      success: true,
+      itemsProcessed: 0,
+      itemsUpdated: 0,
+      errors: [],
+      timing: {
+        startTime: new Date(),
+      },
+    };
 
-  try {
-    logger.info("Starting card sync", { options });
+    try {
+      logger.info("Starting card sync", { options });
 
-    const groups = options.groupId ?
-      [{ groupId: options.groupId }] :
-      await this.retry.execute(() => tcgcsvApi.getGroups());
+      const groups = options.groupId ?
+        [{ groupId: options.groupId }] :
+        await this.retry.execute(() => tcgcsvApi.getGroups());
 
-    logger.info(`Found ${groups.length} groups to process`);
+      logger.info(`Found ${groups.length} groups to process`);
 
-    for (const group of groups) {
-      if (this.isApproachingTimeout(result.timing.startTime)) {
-        logger.warn("Approaching function timeout, stopping processing");
-        break;
-      }
-
-      result.timing.groupStartTime = new Date();
-
-      try {
-        logger.info(`Processing group ${group.groupId}`);
-
-        const cards = await this.retry.execute(() =>
-          tcgcsvApi.getGroupProducts(group.groupId)
-        );
-
-        logger.info(`Retrieved ${cards.length} cards for group ${group.groupId}`);
-
-        for (let i = 0; i < cards.length; i += this.CHUNK_SIZE) {
-          if (this.isApproachingTimeout(result.timing.startTime)) {
-            logger.warn("Approaching function timeout, stopping chunk processing");
-            break;
-          }
-
-          const cardChunk = cards.slice(i, i + this.CHUNK_SIZE);
-          const batchResults = await this.processCards(cardChunk, group.groupId, options);
-
-          result.itemsProcessed += batchResults.processed;
-          result.itemsUpdated += batchResults.updated;
-          result.errors.push(...batchResults.errors);
+      for (const group of groups) {
+        if (this.isApproachingTimeout(result.timing.startTime)) {
+          logger.warn("Approaching function timeout, stopping processing");
+          break;
         }
 
-        logger.info(`Completed group ${group.groupId}`, {
-          processed: result.itemsProcessed,
-          updated: result.itemsUpdated,
-          errors: result.errors.length,
-        });
+        result.timing.groupStartTime = new Date();
 
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : "Unknown error";
-        result.errors.push(`Error processing group ${group.groupId}: ${errorMessage}`);
-        logger.error(`Error processing group ${group.groupId}`, { error: errorMessage });
+        try {
+          logger.info(`Processing group ${group.groupId}`);
+
+          const cards = await this.retry.execute(() =>
+            tcgcsvApi.getGroupProducts(group.groupId)
+          );
+
+          logger.info(`Retrieved ${cards.length} cards for group ${group.groupId}`);
+
+          for (let i = 0; i < cards.length; i += this.CHUNK_SIZE) {
+            if (this.isApproachingTimeout(result.timing.startTime)) {
+              logger.warn("Approaching function timeout, stopping chunk processing");
+              break;
+            }
+
+            const cardChunk = cards.slice(i, i + this.CHUNK_SIZE);
+            const batchResults = await this.processCards(cardChunk, group.groupId, options);
+
+            result.itemsProcessed += batchResults.processed;
+            result.itemsUpdated += batchResults.updated;
+            result.errors.push(...batchResults.errors);
+          }
+
+          logger.info(`Completed group ${group.groupId}`, {
+            processed: result.itemsProcessed,
+            updated: result.itemsUpdated,
+            errors: result.errors.length,
+          });
+
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : "Unknown error";
+          result.errors.push(`Error processing group ${group.groupId}: ${errorMessage}`);
+          logger.error(`Error processing group ${group.groupId}`, { error: errorMessage });
+        }
       }
+
+      result.timing.endTime = new Date();
+      result.timing.duration =
+        (result.timing.endTime.getTime() - result.timing.startTime.getTime()) / 1000;
+
+      logger.info(`Card sync completed in ${result.timing.duration}s`, {
+        processed: result.itemsProcessed,
+        updated: result.itemsUpdated,
+        errors: result.errors.length,
+      });
+
+    } catch (error) {
+      result.success = false;
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      result.errors.push(`Card sync failed: ${errorMessage}`);
+      logger.error("Card sync failed", { error: errorMessage });
     }
 
-    result.timing.endTime = new Date();
-    result.timing.duration =
-      (result.timing.endTime.getTime() - result.timing.startTime.getTime()) / 1000;
-
-    logger.info(`Card sync completed in ${result.timing.duration}s`, {
-      processed: result.itemsProcessed,
-      updated: result.itemsUpdated,
-      errors: result.errors.length,
-    });
-
-  } catch (error) {
-    result.success = false;
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    result.errors.push(`Card sync failed: ${errorMessage}`);
-    logger.error("Card sync failed", { error: errorMessage });
+    return result;
   }
-
-  return result;
-}
 }
 
 export const cardSync = new CardSyncService();
