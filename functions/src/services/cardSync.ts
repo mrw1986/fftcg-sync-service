@@ -57,44 +57,59 @@ export class CardSyncService {
       .map((element: string) => element.charAt(0).toUpperCase() + element.slice(1).toLowerCase());
   }
 
-  private normalizeNumericValue(value: string | number | undefined): number | null {
-    if (value === undefined || value === "") return null;
-    const num = typeof value === "number" ? value : parseInt(String(value), 10);
-    return isNaN(num) ? null : num;
+  private getExtendedValue(card: CardProduct, fieldName: string): string | null {
+    const field = card.extendedData.find(data => data.name === fieldName);
+    return field?.value?.toString() || null;
   }
 
-  private processExtendedData(card: CardProduct): Array<{
-    name: string;
-    displayName: string;
-    value: string | number | null | string[];
-  }> {
-    return card.extendedData.map((data) => {
-      if (data.name === "Cost") {
-        const costValue = this.normalizeNumericValue(data.value);
-        return {
-          ...data,
-          value: costValue,
-        };
-      }
-      if (data.name === "Power") {
-        const powerValue = this.normalizeNumericValue(data.value);
-        return {
-          ...data,
-          value: powerValue,
-        };
-      }
-      if (data.name === "Element") {
-        return {
-          name: "Elements",
-          displayName: "Elements",
-          value: this.getElements(card),
-        };
-      }
-      return {
-        ...data,
-        value: String(data.value),
-      };
-    });
+  private normalizeNumericValue(value: string | number | null | undefined): number | null {
+  if (value === undefined || value === null || value === "") return null;
+  const num = typeof value === "number" ? value : parseFloat(String(value));
+  return isNaN(num) ? null : num;
+}
+
+  private normalizeName(name: string | number): string {
+    const nameStr = String(name);
+    return nameStr.charAt(0).toUpperCase() + nameStr.slice(1);
+  }
+
+  private normalizeCardNumber(number: string): string {
+    const clean = number.replace(/[-\s]/g, "");
+
+    if (clean.startsWith("PR")) {
+      const num = clean.slice(2);
+      return `PR-${num}`;
+    }
+
+    const match = clean.match(/^(\d{1,2})(\d{3}[A-Za-z]?)$/);
+    if (match) {
+      const [, prefix, rest] = match;
+      return `${prefix}-${rest}`;
+    }
+
+    return clean;
+  }
+
+  private getCardNumbers(card: CardProduct): string[] {
+    const numbers: string[] = [];
+    card.extendedData
+      .filter((data) => data.name === "Number")
+      .forEach((numberField) => {
+        const valueStr = String(numberField.value);
+        const vals = valueStr.split(/[,;/]/).map((n: string) => n.trim());
+        numbers.push(...vals.map((num: string) => this.normalizeCardNumber(num)));
+      });
+
+    if (numbers.length === 0) {
+      numbers.push(this.normalizeCardNumber(`P${card.productId}`));
+    }
+
+    return [...new Set(numbers)];
+  }
+
+  private isNonCardProduct(card: CardProduct): boolean {
+    const cardType = card.extendedData.find((data) => data.name === "CardType")?.value;
+    return !cardType || String(cardType).toLowerCase() === "sealed product";
   }
 
   private calculateHash(data: CardHashData): string {
@@ -147,50 +162,6 @@ export class CardSyncService {
     }));
 
     return hashMap;
-  }
-
-  private normalizeName(name: string | number): string {
-    const nameStr = String(name);
-    return nameStr.charAt(0).toUpperCase() + nameStr.slice(1);
-  }
-
-  private normalizeCardNumber(number: string): string {
-    const clean = number.replace(/[-\s]/g, "");
-
-    if (clean.startsWith("PR")) {
-      const num = clean.slice(2);
-      return `PR-${num}`;
-    }
-
-    const match = clean.match(/^(\d{1,2})(\d{3}[A-Za-z]?)$/);
-    if (match) {
-      const [, prefix, rest] = match;
-      return `${prefix}-${rest}`;
-    }
-
-    return clean;
-  }
-
-  private getCardNumbers(card: CardProduct): string[] {
-    const numbers: string[] = [];
-    card.extendedData
-      .filter((data) => data.name === "Number")
-      .forEach((numberField) => {
-        const valueStr = String(numberField.value);
-        const vals = valueStr.split(/[,;/]/).map((n: string) => n.trim());
-        numbers.push(...vals.map((num: string) => this.normalizeCardNumber(num)));
-      });
-
-    if (numbers.length === 0) {
-      numbers.push(this.normalizeCardNumber(`P${card.productId}`));
-    }
-
-    return [...new Set(numbers)];
-  }
-
-  private isNonCardProduct(card: CardProduct): boolean {
-    const cardType = card.extendedData.find((data) => data.name === "CardType")?.value;
-    return !cardType || String(cardType).toLowerCase() === "sealed product";
   }
 
   private async saveDeltaUpdate(
@@ -272,19 +243,24 @@ export class CardSyncService {
             isNonCard: this.isNonCardProduct(card),
             cardNumbers,
             primaryCardNumber,
+            
+            // Flattened extended data
+            cardType: this.getExtendedValue(card, "CardType"),
+            category: this.getExtendedValue(card, "Category"),
+            cost: this.normalizeNumericValue(this.getExtendedValue(card, "Cost")),
+            description: this.getExtendedValue(card, "Description"),
+            elements: this.getElements(card),
+            job: this.getExtendedValue(card, "Job"),
+            number: this.getExtendedValue(card, "Number"),
+            power: this.normalizeNumericValue(this.getExtendedValue(card, "Power")),
+            rarity: this.getExtendedValue(card, "Rarity"),
           };
 
           const cardRef = db.collection(COLLECTION.CARDS).doc(card.productId.toString());
           mainBatch.set(cardRef, cardDoc, { merge: true });
           batchOps++;
 
-          const extendedDataRef = cardRef.collection("extendedData");
-          const processedExtendedData = this.processExtendedData(card);
-          processedExtendedData.forEach((data) => {
-            mainBatch.set(extendedDataRef.doc(data.name), data, { merge: true });
-            batchOps++;
-          });
-
+          // Add image metadata
           mainBatch.set(
             cardRef.collection("metadata").doc("image"),
             imageResult.metadata,
@@ -292,6 +268,7 @@ export class CardSyncService {
           );
           batchOps++;
 
+          // Update hash
           const hashRef = db.collection(COLLECTION.CARD_HASHES).doc(card.productId.toString());
           mainBatch.set(hashRef, {
             hash: currentHash,
@@ -404,7 +381,7 @@ export class CardSyncService {
       if (previousState?.lastProcessedGroup && !options.groupId) {
         const lastGroupIndex = groups.findIndex((g) => g.groupId === previousState.lastProcessedGroup);
         if (lastGroupIndex !== -1) {
-          startIndex = lastGroupIndex + 1; // Start with next group
+          startIndex = lastGroupIndex + 1;
         }
       }
 
@@ -458,7 +435,6 @@ export class CardSyncService {
             }
           }
 
-          // Save state after completing each group
           await this.saveSyncState({
             lastProcessedGroup: group.groupId,
             timestamp: new Date(),
