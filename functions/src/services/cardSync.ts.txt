@@ -10,6 +10,13 @@ import * as crypto from "crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import { OptimizedBatchProcessor } from "./batchProcessor";
 
+interface SyncState {
+  lastProcessedGroup?: string;
+  lastProcessedIndex?: number;
+  timestamp: Date;
+}
+
+
 export class CardSyncService {
   private readonly CHUNK_SIZE = 1000;
   private readonly MAX_EXECUTION_TIME = 510; // 8.5 minutes
@@ -25,6 +32,18 @@ export class CardSyncService {
   private isApproachingTimeout(startTime: Date, safetyMarginSeconds = 30): boolean {
     const executionTime = (new Date().getTime() - startTime.getTime()) / 1000;
     return executionTime > (this.MAX_EXECUTION_TIME - safetyMarginSeconds);
+  }
+
+  private async saveSyncState(state: SyncState): Promise<void> {
+    await db.collection(COLLECTION.SYNC_STATE).doc("cardSync").set({
+      ...state,
+      timestamp: FieldValue.serverTimestamp(),
+    });
+  }
+
+  private async loadSyncState(): Promise<SyncState | null> {
+    const doc = await db.collection(COLLECTION.SYNC_STATE).doc("cardSync").get();
+    return doc.exists ? doc.data() as SyncState : null;
   }
 
   private getElements(card: CardProduct): string[] {
@@ -289,32 +308,47 @@ export class CardSyncService {
   try {
     logger.info("Starting card sync", { options });
 
+    const previousState = await this.loadSyncState();
     const groups = options.groupId ?
       [{ groupId: options.groupId }] :
       await this.retry.execute(() => tcgcsvApi.getGroups());
 
     logger.info(`Found ${groups.length} groups to process`);
 
-    for (const group of groups) {
+    let startIndex = 0;
+    if (previousState?.lastProcessedGroup && !options.groupId) {
+      const lastGroupIndex = groups.findIndex((g) => g.groupId === previousState.lastProcessedGroup);
+      if (lastGroupIndex !== -1) {
+        startIndex = lastGroupIndex + 1;
+      }
+    }
+
+    for (let groupIndex = startIndex; groupIndex < groups.length; groupIndex++) {
       if (this.isApproachingTimeout(result.timing.startTime)) {
         logger.warn("Approaching function timeout, stopping processing");
         break;
       }
 
+      const group = groups[groupIndex];
       result.timing.groupStartTime = new Date();
 
       try {
-        logger.info(`Processing group ${group.groupId}`);
+        logger.info(`Processing group ${group.groupId}`); // Added logging
 
         const cards = await this.retry.execute(() =>
           tcgcsvApi.getGroupProducts(group.groupId)
         );
 
-        logger.info(`Retrieved ${cards.length} cards for group ${group.groupId}`);
+        logger.info(`Retrieved ${cards.length} cards for group ${group.groupId}`); // Added logging
 
         for (let i = 0; i < cards.length; i += this.CHUNK_SIZE) {
           if (this.isApproachingTimeout(result.timing.startTime)) {
             logger.warn("Approaching function timeout, stopping chunk processing");
+            await this.saveSyncState({
+              lastProcessedGroup: group.groupId,
+              lastProcessedIndex: i,
+              timestamp: new Date(),
+            });
             break;
           }
 
@@ -325,6 +359,11 @@ export class CardSyncService {
           result.itemsUpdated += batchResults.updated;
           result.errors.push(...batchResults.errors);
         }
+
+        await this.saveSyncState({
+          lastProcessedGroup: group.groupId,
+          timestamp: new Date(),
+        });
 
         logger.info(`Completed group ${group.groupId}`, {
           processed: result.itemsProcessed,
