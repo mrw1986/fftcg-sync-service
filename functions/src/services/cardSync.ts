@@ -25,7 +25,7 @@ interface CardDeltaData {
 export class CardSyncService {
   private readonly CHUNK_SIZE = 1000;
   private readonly MAX_EXECUTION_TIME = 510; // 8.5 minutes
-  
+
   private readonly cache = new Cache<string>(15);
   private readonly retry = new RetryWithBackoff();
   private readonly batchProcessor: OptimizedBatchProcessor;
@@ -52,7 +52,7 @@ export class CardSyncService {
   }
 
   private getExtendedValue(card: CardProduct, fieldName: string): string | null {
-    const field = card.extendedData.find(data => data.name === fieldName);
+    const field = card.extendedData.find((data) => data.name === fieldName);
     return field?.value?.toString() || null;
   }
 
@@ -227,7 +227,7 @@ export class CardSyncService {
             isNonCard: this.isNonCardProduct(card),
             cardNumbers,
             primaryCardNumber,
-            
+
             // Flattened extended data
             cardType: this.getExtendedValue(card, "CardType"),
             category: this.getExtendedValue(card, "Category"),
@@ -241,13 +241,13 @@ export class CardSyncService {
           };
 
           // Add main card document
-          await this.batchProcessor.addOperation(batch => {
+          await this.batchProcessor.addOperation((batch) => {
             const cardRef = db.collection(COLLECTION.CARDS).doc(card.productId.toString());
             batch.set(cardRef, cardDoc, { merge: true });
           });
 
           // Add image metadata
-          await this.batchProcessor.addOperation(batch => {
+          await this.batchProcessor.addOperation((batch) => {
             const cardRef = db.collection(COLLECTION.CARDS).doc(card.productId.toString());
             batch.set(
               cardRef.collection("metadata").doc("image"),
@@ -257,7 +257,7 @@ export class CardSyncService {
           });
 
           // Update hash
-          await this.batchProcessor.addOperation(batch => {
+          await this.batchProcessor.addOperation((batch) => {
             const hashRef = db.collection(COLLECTION.CARD_HASHES).doc(card.productId.toString());
             batch.set(hashRef, {
               hash: currentHash,
@@ -266,7 +266,7 @@ export class CardSyncService {
           });
 
           // Save delta
-          await this.batchProcessor.addOperation(batch => {
+          await this.batchProcessor.addOperation((batch) => {
             const deltaRef = db.collection(COLLECTION.CARD_DELTAS).doc();
             batch.set(deltaRef, {
               productId: card.productId,
@@ -277,7 +277,6 @@ export class CardSyncService {
 
           this.cache.set(`hash_${card.productId}`, currentHash);
           result.updated++;
-
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : "Unknown error";
           result.errors.push(`Error processing card ${card.productId}: ${errorMessage}`);
@@ -351,7 +350,6 @@ export class CardSyncService {
             updated: result.itemsUpdated,
             errors: result.errors.length,
           });
-
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : "Unknown error";
           result.errors.push(`Error processing group ${group.groupId}: ${errorMessage}`);
@@ -368,7 +366,6 @@ export class CardSyncService {
         updated: result.itemsUpdated,
         errors: result.errors.length,
       });
-
     } catch (error) {
       result.success = false;
       const errorMessage = error instanceof Error ? error.message : "Unknown error";

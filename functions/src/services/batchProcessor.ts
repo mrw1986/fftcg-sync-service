@@ -16,7 +16,7 @@ export class OptimizedBatchProcessor {
   private initializeBatchPool(): void {
     this.batchPool = [];
     this.operationsInBatch.clear();
-    
+
     for (let i = 0; i < this.maxConcurrentBatches; i++) {
       const batch = this.db.batch();
       this.batchPool.push(batch);
@@ -32,21 +32,21 @@ export class OptimizedBatchProcessor {
         return batch;
       }
     }
-    
+
     // If all batches are full, create a new one
     const newBatch = this.db.batch();
-    
+
     // Find the index of a full batch to replace
-    const indexToReplace = this.batchPool.findIndex(batch => 
+    const indexToReplace = this.batchPool.findIndex((batch) =>
       (this.operationsInBatch.get(batch) || 0) >= this.maxOperationsPerBatch
     );
-    
+
     if (indexToReplace >= 0) {
       // Commit the full batch
       const batchToCommit = this.batchPool[indexToReplace];
       const commitPromise = this.commitBatch(batchToCommit);
       this.activePromises.push(commitPromise);
-      
+
       // Replace it with the new batch
       this.batchPool[indexToReplace] = newBatch;
     } else {
@@ -61,7 +61,7 @@ export class OptimizedBatchProcessor {
         this.batchPool[0] = newBatch;
       }
     }
-    
+
     this.operationsInBatch.set(newBatch, 0);
     return newBatch;
   }
@@ -73,15 +73,15 @@ export class OptimizedBatchProcessor {
 
     // Clean up completed promises
     const newActivePromises: Promise<void>[] = [];
-    
+
     await Promise.all(
       this.activePromises.map(async (promise) => {
         try {
           const isCompleted = await Promise.race([
             promise.then(() => true),
-            Promise.resolve(false)
+            Promise.resolve(false),
           ]);
-          
+
           if (!isCompleted) {
             newActivePromises.push(promise);
           }
@@ -105,8 +105,8 @@ export class OptimizedBatchProcessor {
       this.operationsInBatch.delete(batch); // Remove the committed batch from tracking
     } catch (error) {
       const typedError = error as { code?: string };
-      if (typedError.code === 'unavailable') {
-        await new Promise(resolve => setTimeout(resolve, 1000));
+      if (typedError.code === "unavailable") {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
         await this.commitBatch(batch);
       } else {
         throw error;
@@ -116,17 +116,17 @@ export class OptimizedBatchProcessor {
 
   async commitAll(): Promise<void> {
     // Gather all uncommitted batches
-    const uncommittedBatches = this.batchPool.filter(batch => 
-      this.operationsInBatch.has(batch) && 
+    const uncommittedBatches = this.batchPool.filter((batch) =>
+      this.operationsInBatch.has(batch) &&
       (this.operationsInBatch.get(batch) || 0) > 0
     );
 
     // Create commit promises for each uncommitted batch
-    const commitPromises = uncommittedBatches.map(batch => this.commitBatch(batch));
-    
+    const commitPromises = uncommittedBatches.map((batch) => this.commitBatch(batch));
+
     // Wait for all commits to complete
     await Promise.all([...this.activePromises, ...commitPromises]);
-    
+
     // Reset the state
     this.activePromises = [];
     this.initializeBatchPool();

@@ -12,7 +12,7 @@ import { OptimizedBatchProcessor } from "./batchProcessor";
 export class PriceSyncService {
   private readonly CHUNK_SIZE = 2000;
   private readonly MAX_EXECUTION_TIME = 510; // 8.5 minutes
-  
+
   private readonly cache = new Cache<string>(15);
   private readonly retry = new RetryWithBackoff();
   private readonly batchProcessor: OptimizedBatchProcessor;
@@ -93,7 +93,7 @@ export class PriceSyncService {
     midPrice: number;
   } | null | undefined): boolean {
     if (!data) return false;
-    
+
     return (
       Number.isInteger(this.normalizePriceValue(data.marketPrice)) &&
       Number.isInteger(this.normalizePriceValue(data.lowPrice)) &&
@@ -209,13 +209,13 @@ export class PriceSyncService {
           };
 
           // Add main price document
-          await this.batchProcessor.addOperation(batch => {
+          await this.batchProcessor.addOperation((batch) => {
             const priceRef = db.collection(COLLECTION.PRICES).doc(price.productId.toString());
             batch.set(priceRef, priceDoc, { merge: true });
           });
 
           // Add hash document
-          await this.batchProcessor.addOperation(batch => {
+          await this.batchProcessor.addOperation((batch) => {
             const hashRef = db.collection(COLLECTION.PRICE_HASHES).doc(price.productId.toString());
             batch.set(hashRef, {
               hash: currentHash,
@@ -224,7 +224,7 @@ export class PriceSyncService {
           });
 
           // Add historical price document
-          await this.batchProcessor.addOperation(batch => {
+          await this.batchProcessor.addOperation((batch) => {
             const docId = `${price.productId}_${today.toISOString().split("T")[0]}`;
             const historicalRef = db.collection(COLLECTION.HISTORICAL_PRICES).doc(docId);
             batch.set(historicalRef, historicalDoc, { merge: true });
@@ -232,7 +232,6 @@ export class PriceSyncService {
 
           this.cache.set(`price_hash_${price.productId}`, currentHash);
           result.updated++;
-
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : "Unknown error";
           result.errors.push(`Error processing price for product ${price.productId}: ${errorMessage}`);
@@ -308,11 +307,10 @@ export class PriceSyncService {
             updated: result.itemsUpdated,
             errors: result.errors.length,
           });
-
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : "Unknown error";
           result.errors.push(`Error processing prices for group ${
-          group.groupId}: ${errorMessage}`);
+            group.groupId}: ${errorMessage}`);
           logger.error(`Error processing prices for group ${group.groupId}`, {
             error: errorMessage,
           });
@@ -329,7 +327,6 @@ export class PriceSyncService {
         errors: result.errors.length,
         timing: result.timing,
       });
-
     } catch (error) {
       result.success = false;
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
