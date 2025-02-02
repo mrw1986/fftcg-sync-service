@@ -18,8 +18,7 @@ async function testImageProcessing() {
     const validImageResult = await storageService.processAndStoreImage(
       `${IMAGE_BASE_URL}/${TEST_GROUP_ID}/${TEST_PRODUCT_ID}_200w.jpg`,
       TEST_PRODUCT_ID,
-      TEST_GROUP_ID,
-      "1-001" // Example card number
+      TEST_GROUP_ID
     );
 
     logger.info("Valid image processing result:", {
@@ -44,8 +43,7 @@ async function testImageProcessing() {
     const placeholderResult = await storageService.processAndStoreImage(
       undefined,
       TEST_PRODUCT_ID,
-      TEST_GROUP_ID,
-      "1-001"
+      TEST_GROUP_ID
     );
 
     logger.info("Placeholder image result:", {

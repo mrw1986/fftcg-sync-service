@@ -54,7 +54,7 @@ async function migrateImages() {
         );
 
         updated++;
-        
+
         if (processed % 100 === 0) {
           logger.info(`Progress: ${processed}/${totalCards} (${updated} updated, ${errors} errors)`);
         }

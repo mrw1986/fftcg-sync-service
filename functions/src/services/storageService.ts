@@ -420,7 +420,7 @@ export class StorageService {
       logger.error(`Failed to process images for ${productId}`, {
         error: error instanceof Error ? error.message : "Unknown error",
         imageUrl,
-        groupId
+        groupId,
       });
       return this.getPlaceholderResult(baseMetadata, imageUrl);
     }
