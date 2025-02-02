@@ -237,9 +237,9 @@ export class StorageService {
     throw lastError || new Error("Upload failed after retries");
   }
 
-  private getImagePath(groupId: string, cardNumber: string, resolution: "1000x1000" | "400w" | "200w"): string {
+  private getImagePath(groupId: string, productId: number, resolution: "1000x1000" | "400w" | "200w"): string {
     const suffix = resolution === "1000x1000" ? "_in_1000x1000" : `_${resolution}`;
-    return `${this.storagePath}/${groupId}/${cardNumber}${suffix}.jpg`;
+    return `${this.storagePath}/${groupId}/${productId}${suffix}.jpg`;
   }
 
   private getPlaceholderResult(
@@ -267,8 +267,7 @@ export class StorageService {
   public async processAndStoreImage(
     imageUrl: string | undefined,
     productId: number,
-    groupId: string,
-    cardNumber: string
+    groupId: string
   ): Promise<ImageResult> {
     const baseMetadata = {
       productId: productId.toString(),
@@ -283,9 +282,9 @@ export class StorageService {
       }
 
       // Check if images already exist in R2
-      const fullResPath = this.getImagePath(groupId, cardNumber, "1000x1000");
-      const highResPath = this.getImagePath(groupId, cardNumber, "400w");
-      const lowResPath = this.getImagePath(groupId, cardNumber, "200w");
+      const fullResPath = this.getImagePath(groupId, productId, "1000x1000");
+      const highResPath = this.getImagePath(groupId, productId, "400w");
+      const lowResPath = this.getImagePath(groupId, productId, "200w");
 
       const [fullResExists, highResExists, lowResExists] = await Promise.all([
         this.checkImageExists(fullResPath).catch(() => false),
@@ -421,8 +420,7 @@ export class StorageService {
       logger.error(`Failed to process images for ${productId}`, {
         error: error instanceof Error ? error.message : "Unknown error",
         imageUrl,
-        groupId,
-        cardNumber,
+        groupId
       });
       return this.getPlaceholderResult(baseMetadata, imageUrl);
     }

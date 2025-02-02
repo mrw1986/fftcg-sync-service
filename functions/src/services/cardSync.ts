@@ -210,8 +210,7 @@ export class CardSyncService {
             storageService.processAndStoreImage(
               card.imageUrl,
               card.productId,
-              groupId,
-              primaryCardNumber
+              groupId
             )
           );
 
@@ -224,7 +223,22 @@ export class CardSyncService {
             lowResUrl: imageResult.lowResUrl,
             lastUpdated: FieldValue.serverTimestamp(),
             groupId: parseInt(groupId),
-            isNonCard: this.isNonCardProduct(card),
+            isNonCard: (() => {
+              const initialIsNonCard = this.isNonCardProduct(card);
+              if (initialIsNonCard) {
+                // Check if any card-specific fields have non-null values
+                const hasCardFields =
+                  this.getExtendedValue(card, "CardType") !== null ||
+                  this.normalizeNumericValue(this.getExtendedValue(card, "Power")) !== null ||
+                  this.normalizeNumericValue(this.getExtendedValue(card, "Cost")) !== null ||
+                  this.getExtendedValue(card, "Number") !== null ||
+                  this.getExtendedValue(card, "Category") !== null ||
+                  this.getExtendedValue(card, "Job") !== null ||
+                  this.getElements(card).length > 0;
+                return !hasCardFields;
+              }
+              return initialIsNonCard;
+            })(),
             cardNumbers,
             primaryCardNumber,
 
