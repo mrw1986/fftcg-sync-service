@@ -1,4 +1,4 @@
-import { squareEnixSync, type SquareEnixCard } from '../services/squareEnixSync';
+import { squareEnixSync } from '../services/squareEnixSync';
 
 async function testApi() {
   try {
@@ -6,59 +6,61 @@ async function testApi() {
 
     // Fetch all cards using the service
     const cards = await squareEnixSync.fetchAllCards();
-    console.log(`Successfully fetched ${cards.length} cards`);
-
-    // Test some sample card codes
-    const sampleCodes = [
-      'PR-071',  // Promo card
-      '1-001H',  // Single digit prefix
-      '11-083R', // Double digit prefix
-      'A-001'    // A prefix
-    ];
-
-    // Create a mock TCGCSV card for testing enrichment
-    const mockCard = {
-      productId: 123,
-      name: 'Test Card',
-      cleanName: 'Test Card',
-      cardNumbers: ['1-001H'],
-      imageUrl: 'https://example.com/image.jpg',
-      extendedData: [
-        {
-          name: 'Number',
-          value: '1-001H'
-        }
-      ]
-    };
-
-    // Test enrichment
-    const enrichedCard = squareEnixSync.enrichCardData(mockCard, cards);
+    const totalCards = cards.length;
+    console.log(`Successfully fetched ${totalCards} cards`);
     
-    // Log enrichment results
-    console.log('Sample card enrichment result:');
-    console.log(JSON.stringify({ 
-      original: mockCard, 
-      enriched: enrichedCard 
-    }, null, 2));
+    // Display first card as a sample
+    if (cards.length > 0) {
+      const firstCard = cards[0];
+      console.log('\nFirst card sample:');
+      const sampleCard = {
+        id: firstCard.id,
+        code: firstCard.code,
+        image: firstCard.image,
+        element: firstCard.element,
+        rarity: firstCard.rarity,
+        cost: firstCard.cost,
+        power: firstCard.power,
+        category_1: firstCard.category_1,
+        category_2: firstCard.category_2,
+        multicard: firstCard.multicard,
+        ex_burst: firstCard.ex_burst,
+        set: firstCard.set,
+        name_en: firstCard.name_en,
+        type_en: firstCard.type_en,
+        job_en: firstCard.job_en,
+        text_en: firstCard.text_en,
+        images: firstCard.images
+      };
 
-    // Find and display specific cards by code
-    console.log('\nLooking up sample card codes...');
-    for (const code of sampleCodes) {
-      const card = cards.find((c: SquareEnixCard) => c.code === code);
-      
-      if (card) {
-        console.log(`\nFound card ${code}:`);
-        console.log(JSON.stringify({
-          code: card.code,
-          name: card.name_en,
-          type: card.type_en,
-          element: card.element,
-          set: card.set,
-          images: card.images
-        }, null, 2));
-      } else {
-        console.log(`\nCard not found: ${code}`);
-      }
+      // Log the sample card with special handling for arrays
+      const output = Object.entries(sampleCard).map(([key, value]) => {
+        if (Array.isArray(value)) {
+          return `${key}: ${JSON.stringify(value)}`;
+        }
+        if (typeof value === 'object' && value !== null) {
+          return `${key}: ${JSON.stringify(value, null, 2)}`;
+        }
+        return `${key}: ${value}`;
+      }).join('\n');
+
+      console.log(output);
+
+      // Verify data integrity
+      console.log('\nVerifying data integrity:');
+      console.log('1. Sequential IDs:', cards.every((card, index) => card.id === index + 1));
+      console.log('2. Total cards validation:', totalCards > 0);
+      console.log('3. First card validation:');
+      console.log('   - ID = 1:', firstCard.id === 1);
+      console.log('   - Code = 1-001H:', firstCard.code === '1-001H');
+      console.log('   - Element = ["火"]:', JSON.stringify(firstCard.element) === JSON.stringify(['火']));
+      console.log('   - Set = ["Opus I"]:', JSON.stringify(firstCard.set) === JSON.stringify(['Opus I']));
+      console.log('   - Has valid image URLs:', 
+        firstCard.images.thumbs.length > 0 && 
+        firstCard.images.full.length > 0 && 
+        firstCard.images.thumbs[0].startsWith('https://') &&
+        firstCard.images.full[0].startsWith('https://')
+      );
     }
 
   } catch (error) {
