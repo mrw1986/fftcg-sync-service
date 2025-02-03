@@ -67,38 +67,115 @@ export class CardSyncService {
     return nameStr.charAt(0).toUpperCase() + nameStr.slice(1);
   }
 
-  private normalizeCardNumber(number: string): string {
-    const clean = number.replace(/[-\s]/g, "");
-
-    if (clean.startsWith("PR")) {
-      const num = clean.slice(2);
-      return `PR-${num}`;
-    }
-
-    const match = clean.match(/^(\d{1,2})(\d{3}[A-Za-z]?)$/);
-    if (match) {
-      const [, prefix, rest] = match;
-      return `${prefix}-${rest}`;
-    }
-
-    return clean;
+  private isValidNormalizedNumber(number: string): boolean {
+    // Check PR-### format
+    if (number.match(/^PR-\d{3}$/)) return true;
+    // Check #-###X or ##-###X format
+    if (number.match(/^\d{1,2}-\d{3}[A-Z]$/)) return true;
+    // Check A-### format
+    if (number.match(/^A-\d{3}$/)) return true;
+    return false;
   }
 
-  private getCardNumbers(card: CardProduct): string[] {
+  private normalizeCardNumber(number: string): string {
+    // Remove all separators and whitespace
+    const clean = number.replace(/[-\s.,;]/g, "").toUpperCase();
+
+    // Any number starting with P (but not PR) is invalid
+    if (clean.startsWith("P") && !clean.startsWith("PR")) {
+      logger.warn(`Invalid card number format (starts with P): ${number}`);
+      return "N/A";
+    }
+
+    // Handle PR prefix case (PR-###)
+    if (clean.startsWith("PR")) {
+      // Match PR followed by digits, handling leading zeros
+      const match = clean.match(/^PR0*(\d{1,3})/);
+      if (!match) {
+        logger.warn(`Invalid PR card number format: ${number}`);
+        return "N/A";
+      }
+      // Pad to 3 digits
+      const paddedNum = match[1].padStart(3, "0");
+      return `PR-${paddedNum}`;
+    }
+
+    // Handle A-### format
+    if (clean.startsWith("A")) {
+      const match = clean.match(/^A(\d{3})/);
+      if (match) {
+        return `A-${match[1]}`;
+      }
+    }
+
+    // Handle numeric prefix cases (#-###X or ##-###X)
+    const match = clean.match(/^(\d{1,2})(\d{3})([A-Z])$/);
+    if (match) {
+      const [, prefix, nums, letter] = match;
+      // Validate prefix is between 1-99
+      const prefixNum = parseInt(prefix);
+      if (prefixNum < 1 || prefixNum > 99) {
+        logger.warn(`Invalid card number prefix: ${number}`);
+        return "N/A";
+      }
+      return `${prefix}-${nums}${letter}`;
+    }
+
+    // If the format doesn't match our expected patterns, log a warning and return N/A
+    logger.warn(`Unable to normalize card number: ${number}`);
+    return "N/A";
+  }
+
+  private getCardNumbers(card: CardProduct): { numbers: string[]; primary: string; fullNumber: string } {
     const numbers: string[] = [];
+    let originalFormat = "";
+
+    // Get all card numbers and preserve original format
     card.extendedData
       .filter((data) => data.name === "Number")
       .forEach((numberField) => {
         const valueStr = String(numberField.value);
+        originalFormat = valueStr;
         const vals = valueStr.split(/[,;/]/).map((n: string) => n.trim());
         numbers.push(...vals.map((num: string) => this.normalizeCardNumber(num)));
       });
 
+    // If no numbers found, use N/A
     if (numbers.length === 0) {
-      numbers.push(this.normalizeCardNumber(`P${card.productId}`));
+      numbers.push("N/A");
+      originalFormat = "N/A";
     }
 
-    return [...new Set(numbers)];
+    // Remove duplicates and N/A values while preserving order
+    const uniqueNumbers = [...new Set(numbers)].filter((num) => num !== "N/A");
+
+    // Find a valid primary card number
+    let primary = "N/A";
+
+    // First try the rightmost number
+    const rightmost = uniqueNumbers[uniqueNumbers.length - 1];
+    if (rightmost && this.isValidNormalizedNumber(rightmost)) {
+      primary = rightmost;
+    } else {
+      // If rightmost isn't valid, try to find the first valid number
+      const validNumber = uniqueNumbers.find((num) => this.isValidNormalizedNumber(num));
+      if (validNumber) {
+        primary = validNumber;
+      }
+    }
+
+    // Create full number string using the same separator as the original
+    const separator = originalFormat.includes("/") ? "/" :
+      originalFormat.includes(";") ? ";" :
+        originalFormat.includes(",") ? "," : "/";
+
+    const fullNumber = uniqueNumbers.length > 0 ? uniqueNumbers.join(separator) : "N/A";
+
+    return {
+      numbers: uniqueNumbers,
+      primary,
+      fullNumber,
+    };
   }
 
   private isNonCardProduct(card: CardProduct): boolean {
@@ -196,8 +273,8 @@ export class CardSyncService {
         try {
           result.processed++;
 
-          const cardNumbers = this.getCardNumbers(card);
-          const primaryCardNumber = cardNumbers[0];
+          const { numbers: cardNumbers, primary: primaryCardNumber,
+            fullNumber: fullCardNumber } = this.getCardNumbers(card);
 
           const currentHash = this.calculateHash(card);
           const storedHash = hashMap.get(card.productId);
@@ -239,8 +316,9 @@ export class CardSyncService {
               }
               return initialIsNonCard;
             })(),
-            cardNumbers,
-            primaryCardNumber,
+            cardNumbers: cardNumbers,
+            primaryCardNumber: primaryCardNumber,
+            fullCardNumber: fullCardNumber,
 
             // Flattened extended data
             cardType: this.getExtendedValue(card, "CardType"),
