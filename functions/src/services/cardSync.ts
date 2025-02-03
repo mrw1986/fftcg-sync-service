@@ -136,18 +136,27 @@ export class CardSyncService {
       .forEach((numberField) => {
         const valueStr = String(numberField.value);
         originalFormat = valueStr;
+        // Split on any separator and normalize each number
         const vals = valueStr.split(/[,;/]/).map((n: string) => n.trim());
-        numbers.push(...vals.map((num: string) => this.normalizeCardNumber(num)));
+        const normalizedNums = vals.map((num: string) => {
+          // First normalize the number format
+          const normalizedNum = this.normalizeCardNumber(num);
+          // Then replace any remaining slashes with semicolons
+          return normalizedNum.replace(/\//g, ";");
+        });
+        // Filter out any invalid numbers before adding
+        const validNums = normalizedNums.filter(num => num !== "N/A");
+        numbers.push(...validNums);
       });
 
-    // If no numbers found, use N/A
+    // If no valid numbers found, use N/A
     if (numbers.length === 0) {
       numbers.push("N/A");
       originalFormat = "N/A";
     }
 
-    // Remove duplicates and N/A values while preserving order
-    const uniqueNumbers = [...new Set(numbers)].filter((num) => num !== "N/A");
+    // Remove duplicates while preserving order
+    const uniqueNumbers = [...new Set(numbers)];
 
     // Find a valid primary card number
     let primary = "N/A";
@@ -164,12 +173,15 @@ export class CardSyncService {
       }
     }
 
-    // Create full number string using the same separator as the original
-    const separator = originalFormat.includes("/") ? "/" :
-      originalFormat.includes(";") ? ";" :
-        originalFormat.includes(",") ? "," : "/";
+    // For fullNumber, use semicolon as a safe separator that won't conflict with Firestore paths
+    const fullNumber = uniqueNumbers.length > 0 ? uniqueNumbers.join(";") : "N/A";
 
-    const fullNumber = uniqueNumbers.length > 0 ? uniqueNumbers.join(separator) : "N/A";
+    logger.info("Processed card numbers:", {
+      original: originalFormat,
+      normalized: uniqueNumbers,
+      primary,
+      fullNumber
+    });
 
     return {
       numbers: uniqueNumbers,
@@ -291,6 +303,7 @@ export class CardSyncService {
             )
           );
 
+
           const cardDoc = {
             productId: card.productId,
             name: this.normalizeName(card.name),
@@ -300,22 +313,7 @@ export class CardSyncService {
             lowResUrl: imageResult.lowResUrl,
             lastUpdated: FieldValue.serverTimestamp(),
             groupId: parseInt(groupId),
-            isNonCard: (() => {
-              const initialIsNonCard = this.isNonCardProduct(card);
-              if (initialIsNonCard) {
-                // Check if any card-specific fields have non-null values
-                const hasCardFields =
-                  this.getExtendedValue(card, "CardType") !== null ||
-                  this.normalizeNumericValue(this.getExtendedValue(card, "Power")) !== null ||
-                  this.normalizeNumericValue(this.getExtendedValue(card, "Cost")) !== null ||
-                  this.getExtendedValue(card, "Number") !== null ||
-                  this.getExtendedValue(card, "Category") !== null ||
-                  this.getExtendedValue(card, "Job") !== null ||
-                  this.getElements(card).length > 0;
-                return !hasCardFields;
-              }
-              return initialIsNonCard;
-            })(),
+            isNonCard: this.isNonCardProduct(card),
             cardNumbers: cardNumbers,
             primaryCardNumber: primaryCardNumber,
             fullCardNumber: fullCardNumber,

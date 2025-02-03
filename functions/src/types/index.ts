@@ -130,3 +130,76 @@ export interface PriceChanges {
     subTypeName: "Foil";
   };
 }
+
+export interface SquareEnixDeltaData {
+  code: string;
+  name_en: string;
+  type_en: string;
+  job_en: string;
+  text_en: string;
+  element: string[];
+  rarity: string;
+  cost: string;
+  power: string;
+  category_1: string;
+  category_2: string | null;
+  multicard: string;
+  ex_burst: string;
+  set: string[];
+  images: {
+    thumbs: string[];
+    full: string[];
+  };
+}
+
+export interface SquareEnixCardDoc {
+  id: number; // Sequential numeric ID
+  code: string; // Original card code with slashes
+  normalizedCode?: string; // Card code with slashes replaced by semicolons
+  name: {
+    en: string;
+    de: string;
+    es: string;
+    fr: string;
+    it: string;
+    ja: string;
+  };
+  type: {
+    en: string;
+    de: string;
+    es: string;
+    fr: string;
+    it: string;
+    ja: string;
+  };
+  job: {
+    en: string;
+    de: string;
+    es: string;
+    fr: string;
+    it: string;
+    ja: string;
+  };
+  text: {
+    en: string;
+    de: string;
+    es: string;
+    fr: string;
+    it: string;
+    ja: string;
+  };
+  element: string[];
+  rarity: string;
+  cost: string;
+  power: string;
+  category_1: string;
+  category_2: string | null;
+  multicard: boolean;
+  ex_burst: boolean;
+  set: string[];
+  images: {
+    thumbs: string[];
+    full: string[];
+  };
+  lastUpdated: FieldValue;
+}

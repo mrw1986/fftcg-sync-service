@@ -26,6 +26,9 @@ export const COLLECTION = {
   GROUPS: "groups",
   GROUP_HASHES: "groupHashes",
   SYNC_STATE: "syncState",
+  SQUARE_ENIX_CARDS: "squareEnixCards",
+  SQUARE_ENIX_HASHES: "squareEnixHashes",
+  SQUARE_ENIX_DELTAS: "squareEnixDeltas",
 } as const;
 
 export const BASE_URL = "https://tcgcsv.com/tcgplayer";
