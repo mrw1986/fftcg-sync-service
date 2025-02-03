@@ -10,7 +10,6 @@ async function main() {
 
     // Fetch cards from API
     const cards = await squareEnixSync.fetchAllCards();
-    logger.info(`Fetched ${cards.length} cards from Square Enix API`);
 
     // Create a batch to handle multiple writes
     let batch = db.batch();
@@ -27,43 +26,27 @@ async function main() {
         continue;
       }
 
+      // Element translation map
+      const elementTranslations: { [key: string]: string } = {
+        "火": "Fire",
+        "氷": "Ice",
+        "風": "Wind",
+        "土": "Earth",
+        "雷": "Lightning",
+        "水": "Water",
+        "光": "Light",
+        "闇": "Dark"
+      };
+
       // Create the document data
       const cardDoc: SquareEnixCardDoc = {
         id: card.id,
         code: card.code,
-        name: {
-          en: card.name_en,
-          de: card.name_de,
-          es: card.name_es,
-          fr: card.name_fr,
-          it: card.name_it,
-          ja: card.name_ja,
-        },
-        type: {
-          en: card.type_en,
-          de: card.type_de,
-          es: card.type_es,
-          fr: card.type_fr,
-          it: card.type_it,
-          ja: card.type_ja,
-        },
-        job: {
-          en: card.job_en,
-          de: card.job_de,
-          es: card.job_es,
-          fr: card.job_fr,
-          it: card.job_it,
-          ja: card.job_ja,
-        },
-        text: {
-          en: card.text_en,
-          de: card.text_de,
-          es: card.text_es,
-          fr: card.text_fr,
-          it: card.text_it,
-          ja: card.text_ja,
-        },
-        element: card.element,
+        name: card.name_en,
+        type: card.type_en,
+        job: card.job_en,
+        text: card.text_en,
+        element: card.element ? card.element.map((e: string) => elementTranslations[e] || e) : [],
         rarity: card.rarity,
         cost: card.cost,
         power: card.power,

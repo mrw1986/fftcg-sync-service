@@ -154,41 +154,12 @@ export interface SquareEnixDeltaData {
 
 export interface SquareEnixCardDoc {
   id: number; // Sequential numeric ID
-  code: string; // Original card code with slashes
-  normalizedCode?: string; // Card code with slashes replaced by semicolons
-  name: {
-    en: string;
-    de: string;
-    es: string;
-    fr: string;
-    it: string;
-    ja: string;
-  };
-  type: {
-    en: string;
-    de: string;
-    es: string;
-    fr: string;
-    it: string;
-    ja: string;
-  };
-  job: {
-    en: string;
-    de: string;
-    es: string;
-    fr: string;
-    it: string;
-    ja: string;
-  };
-  text: {
-    en: string;
-    de: string;
-    es: string;
-    fr: string;
-    it: string;
-    ja: string;
-  };
-  element: string[];
+  code: string; // Original card code
+  name: string;
+  type: string;
+  job: string;
+  text: string;
+  element: string[]; // Translated to English
   rarity: string;
   cost: string;
   power: string;
