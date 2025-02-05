@@ -4,10 +4,18 @@ import * as admin from "firebase-admin";
 const app = !admin.apps.length ? admin.initializeApp() : admin.app();
 const db = admin.firestore(app);
 
-// Enable ignoreUndefinedProperties and other settings
+// Enable settings for better performance and reliability
 db.settings({
   ignoreUndefinedProperties: true,
   timestampsInSnapshots: true,
+  minimumBackoffSeconds: 10,
+  maximumBackoffSeconds: 60,
+  longPollingOptions: {
+    maxRetries: 5,
+    backoffMultiplier: 1.5,
+    initialDelayMs: 1000,
+    maxDelayMs: 60000,
+  }
 });
 
 export { db };

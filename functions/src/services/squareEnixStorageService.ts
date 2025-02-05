@@ -5,7 +5,6 @@ import { logger } from "../utils/logger";
 import { RetryWithBackoff } from "../utils/retry";
 import { FieldValue } from "firebase-admin/firestore";
 import { OptimizedBatchProcessor } from "./batchProcessor";
-import { storageService } from "./storageService";
 import { Cache } from "../utils/cache";
 
 export class SquareEnixStorageService {
@@ -29,49 +28,6 @@ export class SquareEnixStorageService {
     return code.replace(/\//g, ";");
   }
 
-  private async processAndStoreImages(
-    card: any,
-    groupId: string
-  ): Promise<{ fullResUrl: string | null; lowResUrl: string | null }> {
-    try {
-      // Process full resolution image
-      const fullResResult = card.images?.full?.length > 0
-        ? await this.retry.execute(() =>
-            storageService.processAndStoreImage(
-              card.images.full[0],
-              card.id,
-              groupId
-            )
-          )
-        : null;
-
-      // Process thumbnail image
-      const thumbResult = card.images?.thumbs?.length > 0
-        ? await this.retry.execute(() =>
-            storageService.processAndStoreImage(
-              card.images.thumbs[0],
-              card.id,
-              groupId
-            )
-          )
-        : null;
-
-      return {
-        fullResUrl: fullResResult?.fullResUrl || null,
-        lowResUrl: thumbResult?.lowResUrl || null,
-      };
-    } catch (error) {
-      logger.error(`Failed to process images for card ${card.id}`, {
-        error: error instanceof Error ? error.message : "Unknown error",
-        cardCode: card.code,
-      });
-      return {
-        fullResUrl: null,
-        lowResUrl: null,
-      };
-    }
-  }
-
   private async processCards(
     cards: any[],
     startTime: Date,
@@ -88,7 +44,6 @@ export class SquareEnixStorageService {
     };
 
     try {
-      // Process all operations in parallel
       await Promise.all(cards.map(async (card) => {
         try {
           if (this.isApproachingTimeout(startTime)) {
@@ -105,52 +60,40 @@ export class SquareEnixStorageService {
             return;
           }
 
-          // Process images and create document in parallel
-          const [imageUrls] = await Promise.all([
-            this.processAndStoreImages(card, "square-enix"),
-            this.batchProcessor.addOperation((batch) => {
-              const cardDoc: SquareEnixCardDoc = {
-                id: card.id,
-                code: card.code,
-                name: card.name_en,
-                type: card.type_en,
-                job: card.job_en,
-                text: card.text_en,
-                element: card.element,
-                rarity: card.rarity,
-                cost: card.cost,
-                power: card.power,
-                category_1: card.category_1,
-                category_2: card.category_2 || null,
-                multicard: card.multicard === "1",
-                ex_burst: card.ex_burst === "1",
-                set: card.set,
-                images: {
-                  thumbs: card.images.thumbs,
-                  full: card.images.full,
-                },
-                processedImages: {
-                  fullResUrl: null, // Will be updated after image processing
-                  lowResUrl: null,
-                },
-                lastUpdated: FieldValue.serverTimestamp(),
-              };
+          // Filter and transform fields
+          const cardDoc: SquareEnixCardDoc = {
+            id: card.id,
+            code: card.code,
+            name: card.name_en,
+            type: card.type_en,
+            job: card.job_en,
+            text: card.text_en,
+            element: card.element, // Already translated by squareEnixSync
+            rarity: card.rarity,
+            cost: card.cost,
+            power: card.power,
+            category_1: card.category_1,
+            category_2: card.category_2 || null,
+            multicard: card.multicard === "1",
+            ex_burst: card.ex_burst === "1",
+            set: card.set,
+            images: {
+              thumbs: card.images.thumbs,
+              full: card.images.full,
+            },
+            processedImages: {
+              highResUrl: null,
+              lowResUrl: null,
+            },
+            productId: null, // Will be updated during matching
+            groupId: null, // Will be updated during matching
+            lastUpdated: FieldValue.serverTimestamp(),
+          };
 
-              const docRef = db.collection(COLLECTION.SQUARE_ENIX_CARDS).doc(this.sanitizeDocumentId(card.code));
-              batch.set(docRef, cardDoc, { merge: true });
-            })
-          ]);
-
-          // Update image URLs if available
-          if (imageUrls.fullResUrl || imageUrls.lowResUrl) {
-            await this.batchProcessor.addOperation((batch) => {
-              const docRef = db.collection(COLLECTION.SQUARE_ENIX_CARDS).doc(this.sanitizeDocumentId(card.code));
-              batch.update(docRef, {
-                "processedImages.fullResUrl": imageUrls.fullResUrl,
-                "processedImages.lowResUrl": imageUrls.lowResUrl,
-              });
-            });
-          }
+          await this.batchProcessor.addOperation((batch) => {
+            const docRef = db.collection(COLLECTION.SQUARE_ENIX_CARDS).doc(this.sanitizeDocumentId(card.code));
+            batch.set(docRef, cardDoc, { merge: true });
+          });
 
           this.cache.set(cacheKey, card);
           result.updated++;
@@ -178,7 +121,7 @@ export class SquareEnixStorageService {
     return result;
   }
 
-  async syncSquareEnixCards(): Promise<SyncResult> {
+  async syncSquareEnixCards(options: { forceUpdate?: boolean } = {}): Promise<SyncResult> {
     const result: SyncResult = {
       success: true,
       itemsProcessed: 0,
@@ -204,7 +147,7 @@ export class SquareEnixStorageService {
         }
 
         const cardChunk = cards.slice(i, i + this.CHUNK_SIZE);
-        const batchResults = await this.processCards(cardChunk, result.timing.startTime);
+        const batchResults = await this.processCards(cardChunk, result.timing.startTime, options);
 
         result.itemsProcessed += batchResults.processed;
         result.itemsUpdated += batchResults.updated;

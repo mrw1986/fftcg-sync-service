@@ -6,6 +6,16 @@ export class SquareEnixSyncService {
   private readonly retry = new RetryWithBackoff();
   private readonly baseUrl = "https://fftcg.square-enix-games.com/en";
   private sessionCookies: string | null = null;
+  private readonly elementMap: Record<string, string> = {
+    '火': 'Fire',
+    '氷': 'Ice',
+    '風': 'Wind',
+    '土': 'Earth',
+    '雷': 'Lightning',
+    '水': 'Water',
+    '光': 'Light',
+    '闇': 'Dark'
+  };
 
   private async establishSession(): Promise<void> {
     try {
@@ -54,6 +64,10 @@ export class SquareEnixSyncService {
     }
   }
 
+  private translateElements(elements: string[]): string[] {
+    return elements.map(element => this.elementMap[element] || element);
+  }
+
   async fetchAllCards(): Promise<any[]> {
     try {
       // Establish session first
@@ -80,8 +94,8 @@ export class SquareEnixSyncService {
             "sec-fetch-mode": "cors",
             "sec-fetch-site": "same-origin",
             "sec-gpc": "1",
-            "user-agent": 
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " + 
+            "user-agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
               "(KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 Edg/132.0.0.0",
             "x-requested-with": "XMLHttpRequest",
           },
@@ -108,14 +122,67 @@ export class SquareEnixSyncService {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      const data = await response.json() as { count: number; cards: any[] };
-      
-      if (!Array.isArray(data.cards)) {
-        throw new Error("Invalid response format: cards array not found");
+      interface SquareEnixApiResponse {
+        count: number;
+        cards: Array<{
+          id: string;
+          code: string;
+          name_en: string;
+          type_en: string;
+          job_en: string;
+          text_en: string;
+          element: string[];
+          rarity: string;
+          cost: string;
+          power: string;
+          category_1: string;
+          category_2?: string;
+          multicard: string;
+          ex_burst: string;
+          set: string[];
+          images: {
+            thumbs: string[];
+            full: string[];
+          };
+        }>;
       }
 
-      logger.info(`Fetched ${data.count} cards from Square Enix API`);
-      return data.cards;
+      const data = await response.json() as unknown;
+      
+      // Add more detailed validation
+      if (!data || typeof data !== 'object') {
+        throw new Error("Invalid response format: expected object but got " + typeof data);
+      }
+
+      if (!('cards' in data)) {
+        throw new Error("Invalid response format: 'cards' property not found in response");
+      }
+
+      if (!Array.isArray(data.cards)) {
+        throw new Error("Invalid response format: 'cards' property is not an array");
+      }
+
+      const apiResponse = data as SquareEnixApiResponse;
+
+      // Validate each card has required properties
+      const processedCards = apiResponse.cards.map((card, index) => {
+        if (!card || typeof card !== 'object') {
+          throw new Error(`Invalid card at index ${index}: not an object`);
+        }
+
+        if (!Array.isArray(card.element)) {
+          logger.warn(`Card at index ${index} has invalid element property`, { card });
+          card.element = [];
+        }
+
+        return {
+          ...card,
+          element: this.translateElements(card.element)
+        };
+      });
+
+      logger.info(`Fetched ${apiResponse.count} cards from Square Enix API`);
+      return processedCards;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
       logger.error("Failed to fetch cards from Square Enix API", { error: errorMessage });

@@ -3,8 +3,10 @@ import { logger } from "../utils/logger";
 import { RetryWithBackoff } from "../utils/retry";
 import { OptimizedBatchProcessor } from "../services/batchProcessor";
 import { FieldValue } from "firebase-admin/firestore";
+import { storageService } from "../services/storageService";
 
-interface TcgCard {
+export interface TcgCard {
+  [key: string]: any; // Add index signature for dynamic field access
   id: string;
   name: string;
   cardNumbers?: string[];
@@ -17,38 +19,42 @@ interface TcgCard {
   rarity?: string;
   cardType?: string;
   category?: string;
+  category_2?: string;
+  cleanName?: string;
   elements?: string[];
   sets?: string[];
   fullResUrl?: string | null;
   highResUrl?: string | null;
   lowResUrl?: string | null;
+  groupId?: number;
+  isNonCard: boolean;
 }
 
-interface SquareEnixCard {
+export interface SquareEnixCard {
   id: string;
   code: string;
   name: string;
   type: string;
   category_1: string;
+  category_2: string | null;
   element: string[];
   job: string;
   power: string;
   cost: string;
   rarity: string;
   set: string[];
-  processedImages?: {
-    fullResUrl: string | null;
-    lowResUrl: string | null;
+  images: {
+    thumbs: string[];
+    full: string[];
   };
 }
 
+type FieldMappings = {
+  [K in keyof TcgCard]?: any;
+};
+
 const retry = new RetryWithBackoff();
 const batchProcessor = new OptimizedBatchProcessor(db);
-
-// Helper to sanitize document IDs (must match squareEnixStorageService.ts)
-function sanitizeDocumentId(code: string): string {
-  return code.replace(/\//g, ";");
-}
 
 // Helper to un-sanitize document IDs for comparison
 function unSanitizeDocumentId(code: string): string {
@@ -74,12 +80,7 @@ function findCardNumberMatch(tcgCard: TcgCard, seCard: SquareEnixCard): boolean 
     }
     return num === seCard.code;
   })) {
-    logger.info("Matched on cardNumbers array", { 
-      tcgCard: tcgCard.id, 
-      seCard: seCard.id,
-      code: seCard.code,
-      isPromo
-    });
+    // Removed verbose match logging
     return true;
   }
 
@@ -181,33 +182,111 @@ function parseNumber(value: string | null | undefined): number | null {
   return isNaN(num) ? null : num;
 }
 
+// Process and store images using TCG card paths
+async function processImages(
+  tcgCard: TcgCard,
+  seCard: SquareEnixCard
+): Promise<{ highResUrl: string | null; lowResUrl: string | null }> {
+  try {
+    if (!tcgCard.groupId) {
+      logger.warn("No groupId found for card", { id: tcgCard.id });
+      return { highResUrl: null, lowResUrl: null };
+    }
+
+    const groupId = tcgCard.groupId;
+    // Process full resolution image (maps to highResUrl)
+    const fullResResult = groupId && seCard.images?.full?.length > 0
+      ? await retry.execute(() =>
+          storageService.processAndStoreImage(
+            seCard.images.full[0],
+            parseInt(tcgCard.id),
+            groupId.toString(),
+            true // Use maintainTcgcsvStructure flag
+          )
+        )
+      : null;
+
+    // Process thumbnail image (maps to lowResUrl)
+    const thumbResult = groupId && seCard.images?.thumbs?.length > 0
+      ? await retry.execute(() =>
+          storageService.processAndStoreImage(
+            seCard.images.thumbs[0],
+            parseInt(tcgCard.id),
+            groupId.toString(),
+            true // Use maintainTcgcsvStructure flag
+          )
+        )
+      : null;
+
+    return {
+      highResUrl: fullResResult?.highResUrl || null,
+      lowResUrl: thumbResult?.lowResUrl || null,
+    };
+  } catch (error) {
+    logger.error(`Failed to process images for card ${tcgCard.id}`, {
+      error: error instanceof Error ? error.message : "Unknown error",
+      seCardCode: seCard.code,
+    });
+    return { highResUrl: null, lowResUrl: null };
+  }
+}
+
 // Get fields that need to be updated
-function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): Partial<TcgCard> {
+export async function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): Promise<Partial<TcgCard>> {
   const updates: Partial<TcgCard> = {};
   const isPromo = isPromoCard(tcgCard);
 
-  // Update image URLs if TCG card URLs are null and Square Enix has processed images
-  if (seCard.processedImages) {
-    if ((tcgCard.fullResUrl === null || tcgCard.highResUrl === null) && seCard.processedImages.fullResUrl) {
-      updates.fullResUrl = seCard.processedImages.fullResUrl;
-      updates.highResUrl = seCard.processedImages.fullResUrl;
-      logger.info("Updating high/full res image URLs from Square Enix", {
-        id: tcgCard.id,
-        name: tcgCard.name,
-        oldFullResUrl: tcgCard.fullResUrl,
-        oldHighResUrl: tcgCard.highResUrl,
-        newUrl: seCard.processedImages.fullResUrl
-      });
-    }
+  const PLACEHOLDER_URL = "https://fftcgcompanion.com/card-images/image-coming-soon.jpeg";
 
-    if (tcgCard.lowResUrl === null && seCard.processedImages.lowResUrl) {
-      updates.lowResUrl = seCard.processedImages.lowResUrl;
-      logger.info("Updating low res image URL from Square Enix", {
+  // Check if any image URLs are missing
+  if (tcgCard.highResUrl === null || tcgCard.lowResUrl === null || tcgCard.fullResUrl === null) {
+    // For non-card products, use placeholder immediately if any URLs are missing
+    if (tcgCard.isNonCard) {
+      if (tcgCard.highResUrl === null) updates.highResUrl = PLACEHOLDER_URL;
+      if (tcgCard.fullResUrl === null) updates.fullResUrl = PLACEHOLDER_URL;
+      if (tcgCard.lowResUrl === null) updates.lowResUrl = PLACEHOLDER_URL;
+      logger.info("Using placeholder image URLs for non-card product", {
         id: tcgCard.id,
         name: tcgCard.name,
-        oldLowResUrl: tcgCard.lowResUrl,
-        newUrl: seCard.processedImages.lowResUrl
+        isNonCard: tcgCard.isNonCard,
+        placeholderUrl: PLACEHOLDER_URL
       });
+    } else {
+      // For regular cards, try Square Enix images first
+      const imageResults = await processImages(tcgCard, seCard);
+      if (tcgCard.highResUrl === null && imageResults.highResUrl) {
+        updates.highResUrl = imageResults.highResUrl;
+        updates.fullResUrl = imageResults.highResUrl;
+        logger.info("Adding missing high/full res image URLs from Square Enix", {
+          id: tcgCard.id,
+          name: tcgCard.name,
+          newUrl: imageResults.highResUrl,
+          isNonCard: tcgCard.isNonCard
+        });
+      }
+      if (tcgCard.lowResUrl === null && imageResults.lowResUrl) {
+        updates.lowResUrl = imageResults.lowResUrl;
+        logger.info("Adding missing low res image URL from Square Enix", {
+          id: tcgCard.id,
+          name: tcgCard.name,
+          newUrl: imageResults.lowResUrl,
+          isNonCard: tcgCard.isNonCard
+        });
+      }
+
+      // After trying Square Enix API, if we still have missing URLs, use placeholder
+      if (tcgCard.highResUrl === null && !imageResults.highResUrl) updates.highResUrl = PLACEHOLDER_URL;
+      if (tcgCard.fullResUrl === null && !imageResults.highResUrl) updates.fullResUrl = PLACEHOLDER_URL;
+      if (tcgCard.lowResUrl === null && !imageResults.lowResUrl) updates.lowResUrl = PLACEHOLDER_URL;
+
+      if (updates.highResUrl === PLACEHOLDER_URL || updates.lowResUrl === PLACEHOLDER_URL) {
+        logger.info("Using placeholder for missing image URLs after Square Enix attempt", {
+          id: tcgCard.id,
+          name: tcgCard.name,
+          isNonCard: tcgCard.isNonCard,
+          placeholderUrl: PLACEHOLDER_URL
+        });
+      }
     }
   }
 
@@ -223,75 +302,44 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): Partial<Tc
     }
   }
 
-  // Compare and update fields, handling NULL values
-  if (tcgCard.cardType === null || tcgCard.cardType === undefined || tcgCard.cardType !== seCard.type) {
-    updates.cardType = seCard.type;
-  }
+  // Field mappings based on screenshot alignment
+  const fieldMappings: FieldMappings = {
+    cardType: seCard.type,
+    category: seCard.category_1,
+    category_2: seCard.category_2 || undefined, // Use undefined instead of null to match optional field
+    cleanName: seCard.name,
+    cost: parseNumber(seCard.cost),
+    elements: seCard.element,
+    job: seCard.type === 'Summon' || tcgCard.cardType === 'Summon' ? null : seCard.job,
+    name: seCard.name,
+    power: parseNumber(seCard.power),
+    rarity: isPromo ? 'Promo' : mapRarity(seCard.rarity)
+  };
 
-  if (tcgCard.category === null || tcgCard.category === undefined || tcgCard.category !== seCard.category_1) {
-    updates.category = seCard.category_1;
-  }
-
-  // Convert and compare cost (string -> number)
-  const seCost = parseNumber(seCard.cost);
-  if (seCost !== null && (tcgCard.cost === null || tcgCard.cost === undefined || tcgCard.cost !== seCost)) {
-    updates.cost = seCost;
-    logger.info("Updating cost", {
-      id: tcgCard.id,
-      name: tcgCard.name,
-      oldCost: tcgCard.cost,
-      newCost: seCost,
-      seCardCost: seCard.cost,
-      reason: tcgCard.cost === null || tcgCard.cost === undefined ? "NULL value" : "Value mismatch"
-    });
-  }
-
-  // Compare arrays, handling NULL values
-  const currentElements = tcgCard.elements || [];
-  if (tcgCard.elements === null || tcgCard.elements === undefined || 
-      JSON.stringify(currentElements.sort()) !== JSON.stringify(seCard.element.sort())) {
-    updates.elements = seCard.element;
-  }
-
-  if (tcgCard.job === null || tcgCard.job === undefined || tcgCard.job !== seCard.job) {
-    updates.job = seCard.job;
-  }
-
-  if (tcgCard.name === null || tcgCard.name === undefined || tcgCard.name !== seCard.name) {
-    updates.name = seCard.name;
-  }
-
-  // Convert and compare power (string -> number)
-  const sePower = parseNumber(seCard.power);
-  if (sePower !== null && (tcgCard.power === null || tcgCard.power === undefined || tcgCard.power !== sePower)) {
-    updates.power = sePower;
-    logger.info("Updating power", {
-      id: tcgCard.id,
-      name: tcgCard.name,
-      oldPower: tcgCard.power,
-      newPower: sePower,
-      seCardPower: seCard.power,
-      reason: tcgCard.power === null || tcgCard.power === undefined ? "NULL value" : "Value mismatch"
-    });
-  }
-
-  // Compare and update sets array
-  if (tcgCard.sets === null || tcgCard.sets === undefined || 
-      JSON.stringify(tcgCard.sets?.sort() || []) !== JSON.stringify(seCard.set.sort())) {
-    updates.sets = seCard.set;
-    logger.info("Updating sets", {
-      id: tcgCard.id,
-      name: tcgCard.name,
-      oldSets: tcgCard.sets,
-      newSets: seCard.set,
-      reason: tcgCard.sets === null || tcgCard.sets === undefined ? "NULL value" : "Value mismatch"
-    });
-  }
-
-  // Only update rarity for non-Promo cards
-  if (!isPromo && tcgCard.rarity !== mapRarity(seCard.rarity)) {
-    updates.rarity = mapRarity(seCard.rarity);
-  }
+  // Compare and update fields
+  (Object.entries(fieldMappings) as [keyof TcgCard, any][]).forEach(([field, value]) => {
+    if (field === 'cost' || field === 'power') {
+      if (value !== null && (tcgCard[field] === null || tcgCard[field] === undefined || tcgCard[field] !== value)) {
+        updates[field] = value;
+        logger.info(`Updating ${field}`, {
+          id: tcgCard.id,
+          name: tcgCard.name,
+          [`old${field.charAt(0).toUpperCase() + field.slice(1)}`]: tcgCard[field],
+          [`new${field.charAt(0).toUpperCase() + field.slice(1)}`]: value,
+          [`seCard${field.charAt(0).toUpperCase() + field.slice(1)}`]: field === 'cost' ? seCard.cost : seCard.power,
+          reason: tcgCard[field] === null || tcgCard[field] === undefined ? "NULL value" : "Value mismatch"
+        });
+      }
+    } else if (Array.isArray(value)) {
+      const currentValue = tcgCard[field] || [];
+      if (tcgCard[field] === null || tcgCard[field] === undefined || 
+          JSON.stringify(currentValue.sort()) !== JSON.stringify(value.sort())) {
+        updates[field] = value;
+      }
+    } else if (tcgCard[field] === null || tcgCard[field] === undefined || tcgCard[field] !== value) {
+      updates[field] = value;
+    }
+  });
 
   // Log what's being updated and why
   if (Object.keys(updates).length > 0) {
@@ -307,7 +355,9 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): Partial<Tc
           job: tcgCard.job,
           name: tcgCard.name,
           power: tcgCard.power,
-          rarity: tcgCard.rarity
+          rarity: tcgCard.rarity,
+          highResUrl: tcgCard.highResUrl,
+          lowResUrl: tcgCard.lowResUrl
         }
       },
       seCard: {
@@ -331,16 +381,47 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): Partial<Tc
   return updates;
 }
 
-async function main() {
-  try {
-    logger.info("Starting card update process");
+function parseArgs(args: string[]): { forceUpdate?: boolean; groupId?: string } {
+  const options: { forceUpdate?: boolean; groupId?: string } = {};
 
-    // Fetch all cards
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--force") {
+      options.forceUpdate = true;
+    } else if (arg === "--group") {
+      // Look ahead for the group ID, but don't increment i yet
+      const nextArg = args[i + 1];
+      if (nextArg && !nextArg.startsWith("--")) {
+        options.groupId = nextArg;
+        i++; // Skip the group ID in the next iteration
+      }
+    } else if (!arg.startsWith("--")) {
+      // If we find a non-flag argument and the previous arg was --group
+      if (i > 0 && args[i - 1] === "--group") {
+        options.groupId = arg;
+      }
+    }
+  }
+
+  return options;
+}
+
+export async function main() {
+  try {
+    const args = process.argv.slice(2);
+    const options = parseArgs(args);
+
+    logger.info("Starting card update process", { options });
+
+    // Fetch cards based on groupId
     const [tcgCardsSnapshot, seCardsSnapshot] = await Promise.all([
-      retry.execute(() => 
-        db.collection(COLLECTION.CARDS)
-          .get()
-      ),
+      retry.execute(async () => {
+        const cardsRef = db.collection(COLLECTION.CARDS);
+        if (options.groupId) {
+          return cardsRef.where("groupId", "==", parseInt(options.groupId)).get();
+        }
+        return cardsRef.get();
+      }),
       retry.execute(() => 
         db.collection(COLLECTION.SQUARE_ENIX_CARDS)
           .get()
@@ -369,30 +450,49 @@ async function main() {
 
     // Process each TCG card
     for (const tcgCard of tcgCards) {
-      logger.info("Processing card", {
-        id: tcgCard.id,
-        name: tcgCard.name,
-        numbers: {
-          cardNumbers: tcgCard.cardNumbers,
-          fullCardNumber: tcgCard.fullCardNumber,
-          number: tcgCard.number,
-          primaryCardNumber: tcgCard.primaryCardNumber
-        }
-      });
+      // Removed verbose card processing log
+
+      const PLACEHOLDER_URL = "https://fftcgcompanion.com/card-images/image-coming-soon.jpeg";
 
       // Find potential matches based on card numbers
       const matches = seCards.filter(seCard => findCardNumberMatch(tcgCard, seCard));
 
-      if (matches.length === 0) continue;
+      if (matches.length === 0) {
+        // If no matches found and card has no images, use placeholder (for both regular cards and non-cards)
+        if (tcgCard.highResUrl === null &&
+            tcgCard.lowResUrl === null &&
+            tcgCard.fullResUrl === null) {
+          logger.info("No Square Enix match found and no images exist, using placeholder", {
+            id: tcgCard.id,
+            name: tcgCard.name,
+            cardNumbers: tcgCard.cardNumbers,
+            number: tcgCard.number,
+            primaryCardNumber: tcgCard.primaryCardNumber,
+            fullCardNumber: tcgCard.fullCardNumber
+          });
+
+          await batchProcessor.addOperation((batch) => {
+            const cardRef = db.collection(COLLECTION.CARDS).doc(tcgCard.id);
+            batch.update(cardRef, {
+              highResUrl: PLACEHOLDER_URL,
+              fullResUrl: PLACEHOLDER_URL,
+              lowResUrl: PLACEHOLDER_URL,
+              lastUpdated: FieldValue.serverTimestamp()
+            });
+          });
+          updateCount++;
+        }
+        continue;
+      }
 
       matchCount++;
 
       // Use the first valid match
       const match = matches[0];
-      const updates = getFieldsToUpdate(tcgCard, match);
+      const updates = await getFieldsToUpdate(tcgCard, match);
 
-      // Only update if there are fields to update
-      if (Object.keys(updates).length > 0) {
+      // Update if there are fields to update or force flag is set
+      if (Object.keys(updates).length > 0 || options.forceUpdate) {
         logger.info("Updating card with Square Enix data", {
           tcgCard: {
             id: tcgCard.id,
@@ -403,7 +503,9 @@ async function main() {
               elements: tcgCard.elements,
               job: tcgCard.job,
               power: tcgCard.power,
-              rarity: tcgCard.rarity
+              rarity: tcgCard.rarity,
+              highResUrl: tcgCard.highResUrl,
+              lowResUrl: tcgCard.lowResUrl
             }
           },
           seCard: {
@@ -435,21 +537,52 @@ async function main() {
           name: tcgCard.name
         });
       }
+
+      // Update Square Enix card with productId and groupId if it exists
+      await batchProcessor.addOperation((batch) => {
+        // Use sanitized code as document ID
+        const sanitizedCode = match.code.replace(/\//g, ";");
+        const seCardRef = db.collection(COLLECTION.SQUARE_ENIX_CARDS).doc(sanitizedCode);
+        batch.set(seCardRef, {
+          id: match.id, // Keep the id field for reference
+          productId: parseInt(tcgCard.id),
+          groupId: tcgCard.groupId,
+          lastUpdated: FieldValue.serverTimestamp()
+        }, { merge: true });
+      });
     }
 
-    // Commit any remaining updates
-    await batchProcessor.commitAll();
+    try {
+      // Commit any remaining updates
+      await batchProcessor.commitAll();
 
-    logger.info("Update process completed", {
-      totalCards: tcgCards.length,
-      matchesFound: matchCount,
-      cardsUpdated: updateCount
-    });
+      logger.info("Update process completed", {
+        totalCards: tcgCards.length,
+        matchesFound: matchCount,
+        cardsUpdated: updateCount
+      });
 
+      return {
+        success: true,
+        totalCards: tcgCards.length,
+        matchesFound: matchCount,
+        cardsUpdated: updateCount
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      logger.error("Failed to commit updates", { error: errorMessage });
+      return {
+        success: false,
+        error: errorMessage
+      };
+    }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     logger.error("Update process failed", { error: errorMessage });
-    process.exit(1);
+    return {
+      success: false,
+      error: errorMessage
+    };
   }
 }
 

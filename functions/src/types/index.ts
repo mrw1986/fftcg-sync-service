@@ -1,5 +1,21 @@
 import { FieldValue } from "firebase-admin/firestore";
 
+export interface ImageResult {
+  fullResUrl: string | null;
+  highResUrl: string | null;
+  lowResUrl: string | null;
+  metadata: {
+    contentType: string;
+    productId: string;
+    groupId: string;
+    lastUpdated: string;
+    isPlaceholder?: boolean;
+    originalUrl?: string;
+    existingImage?: boolean;
+    errorMessage?: string;
+  };
+}
+
 export interface CardProduct {
   productId: number;
   name: string;
@@ -173,8 +189,10 @@ export interface SquareEnixCardDoc {
     full: string[];
   };
   processedImages: {
-    fullResUrl: string | null;
+    highResUrl: string | null;
     lowResUrl: string | null;
   };
+  productId: number | null; // Added for R2 storage
+  groupId: number | null; // Added for R2 storage
   lastUpdated: FieldValue;
 }

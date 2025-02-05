@@ -2,7 +2,7 @@
 import { db, COLLECTION } from "../config/firebase";
 import { tcgcsvApi } from "../utils/api";
 import { storageService } from "./storageService";
-import { CardProduct, SyncResult, SyncOptions } from "../types";
+import { CardProduct, SyncResult, SyncOptions, ImageResult } from "../types";
 import { logger } from "../utils/logger";
 import { Cache } from "../utils/cache";
 import { RetryWithBackoff } from "../utils/retry";
@@ -295,14 +295,27 @@ export class CardSyncService {
             return;
           }
 
-          const imageResult = await this.retry.execute(() =>
-            storageService.processAndStoreImage(
-              card.imageUrl,
-              card.productId,
-              groupId
-            )
-          );
-
+          // Process image handling
+          const imageResult = await (async () => {
+            if (card.imageUrl) {
+              // If URL exists, process normally
+              return await this.retry.execute(() =>
+                storageService.processAndStoreImage(
+                  card.imageUrl,
+                  card.productId,
+                  groupId
+                )
+              );
+            } else {
+              // For any card without image, use null
+              return {
+                fullResUrl: null,
+                highResUrl: null,
+                lowResUrl: null,
+                metadata: {}
+              } as ImageResult;
+            }
+          })();
 
           const cardDoc = {
             productId: card.productId,

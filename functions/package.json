@@ -11,7 +11,19 @@
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log",
     "cleanup:elements": "ts-node src/scripts/cleanupElements.ts",
-    "sync:groups": "ts-node src/scripts/syncGroups.ts"
+    "sync:groups": "ts-node src/scripts/syncGroups.ts",
+    "sync:cards": "ts-node src/scripts/syncCards.ts",
+    "sync:cards:force": "ts-node src/scripts/syncCards.ts --force",
+    "sync:cards:group": "ts-node src/scripts/syncCards.ts --group",
+    "sync:cards:group:force": "ts-node src/scripts/syncCards.ts --group --force",
+    "sync:square-enix": "ts-node src/scripts/storeSquareEnixCards.ts",
+    "sync:square-enix:force": "ts-node src/scripts/storeSquareEnixCards.ts --force",
+    "sync:update-cards": "ts-node src/scripts/updateCardsWithSquareEnixData.ts",
+    "sync:update-cards:force": "ts-node src/scripts/updateCardsWithSquareEnixData.ts --force",
+    "sync:all": "ts-node src/scripts/syncAll.ts",
+    "sync:all:force": "ts-node src/scripts/syncAll.ts --force",
+    "sync:all:group": "ts-node src/scripts/syncAll.ts --group",
+    "sync:all:group:force": "ts-node src/scripts/syncAll.ts --group 1939 --force"
   },
   "engines": {
     "node": "22"

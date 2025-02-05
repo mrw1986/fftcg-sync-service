@@ -5,9 +5,13 @@ export class OptimizedBatchProcessor {
   private operationsInBatch: Map<WriteBatch, number> = new Map();
   private activePromises: Promise<void>[] = [];
 
+  private readonly COMMIT_TIMEOUT = 60000; // 60 seconds
+  private readonly MAX_RETRIES = 3;
+  private readonly RETRY_DELAY = 5000; // 5 seconds
+
   constructor(
     private readonly db: Firestore,
-    private readonly maxConcurrentBatches: number = 50,
+    private maxConcurrentBatches: number = 20, // Removed readonly to allow dynamic adjustment
     private readonly maxOperationsPerBatch: number = 450
   ) {
     this.initializeBatchPool();
@@ -99,15 +103,33 @@ export class OptimizedBatchProcessor {
     }
   }
 
-  private async commitBatch(batch: WriteBatch): Promise<void> {
+  private async commitBatch(batch: WriteBatch, retryCount: number = 0): Promise<void> {
     try {
-      await batch.commit();
+      // Create a timeout promise
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Commit timeout')), this.COMMIT_TIMEOUT);
+      });
+
+      // Attempt the commit with timeout
+      await Promise.race([
+        batch.commit(),
+        timeoutPromise
+      ]);
+
       this.operationsInBatch.delete(batch); // Remove the committed batch from tracking
     } catch (error) {
-      const typedError = error as { code?: string };
-      if (typedError.code === "unavailable") {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        await this.commitBatch(batch);
+      const typedError = error as { code?: string; details?: string; message?: string };
+      const isRetryableError =
+        typedError.code === "unavailable" ||
+        typedError.code === "4" || // DEADLINE_EXCEEDED
+        typedError.message === 'Commit timeout' ||
+        (typedError.details && typedError.details.includes('Deadline exceeded'));
+
+      if (isRetryableError && retryCount < this.MAX_RETRIES) {
+        // Exponential backoff
+        const delay = this.RETRY_DELAY * Math.pow(2, retryCount);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return this.commitBatch(batch, retryCount + 1);
       } else {
         throw error;
       }
@@ -115,20 +137,46 @@ export class OptimizedBatchProcessor {
   }
 
   async commitAll(): Promise<void> {
-    // Gather all uncommitted batches
-    const uncommittedBatches = this.batchPool.filter((batch) =>
-      this.operationsInBatch.has(batch) &&
-      (this.operationsInBatch.get(batch) || 0) > 0
-    );
+    try {
+      // Gather all uncommitted batches
+      const uncommittedBatches = this.batchPool.filter((batch) =>
+        this.operationsInBatch.has(batch) &&
+        (this.operationsInBatch.get(batch) || 0) > 0
+      );
 
-    // Create commit promises for each uncommitted batch
-    const commitPromises = uncommittedBatches.map((batch) => this.commitBatch(batch));
+      // Process batches in smaller chunks to prevent overwhelming Firestore
+      const CHUNK_SIZE = 5;
+      for (let i = 0; i < uncommittedBatches.length; i += CHUNK_SIZE) {
+        const batchChunk = uncommittedBatches.slice(i, i + CHUNK_SIZE);
+        
+        // Create commit promises for the current chunk
+        const commitPromises = batchChunk.map((batch) => this.commitBatch(batch, 0));
+        
+        // Wait for current chunk to complete before processing next chunk
+        await Promise.all(commitPromises);
+        
+        // Small delay between chunks to prevent overload
+        if (i + CHUNK_SIZE < uncommittedBatches.length) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
 
-    // Wait for all commits to complete
-    await Promise.all([...this.activePromises, ...commitPromises]);
+      // Wait for any remaining active promises
+      await Promise.all(this.activePromises);
 
-    // Reset the state
-    this.activePromises = [];
-    this.initializeBatchPool();
+      // Reset the state
+      this.activePromises = [];
+      this.initializeBatchPool();
+    } catch (error) {
+      const typedError = error as { code?: string; details?: string; message?: string };
+      if (typedError.code === "4" || // DEADLINE_EXCEEDED
+          (typedError.details && typedError.details.includes('Deadline exceeded'))) {
+        // If we hit a deadline, reduce chunk size and retry
+        this.maxConcurrentBatches = Math.max(5, Math.floor(this.maxConcurrentBatches * 0.5));
+        await this.commitAll();
+      } else {
+        throw error;
+      }
+    }
   }
 }

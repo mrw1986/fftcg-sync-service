@@ -1,11 +1,26 @@
 import { squareEnixStorage } from "../services/squareEnixStorageService";
 import { logger } from "../utils/logger";
 
+function parseArgs(args: string[]): { forceUpdate?: boolean } {
+  const options: { forceUpdate?: boolean } = {};
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--force") {
+      options.forceUpdate = true;
+    }
+  }
+
+  return options;
+}
+
 async function main() {
   try {
-    logger.info("Starting Square Enix cards storage process");
+    const args = process.argv.slice(2);
+    const options = parseArgs(args);
 
-    const result = await squareEnixStorage.syncSquareEnixCards();
+    logger.info("Starting Square Enix cards storage process", { options });
+
+    const result = await squareEnixStorage.syncSquareEnixCards(options);
 
     logger.info("Square Enix cards storage process completed", {
       processed: result.itemsProcessed,

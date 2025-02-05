@@ -4,21 +4,7 @@ import axios from "axios";
 import { R2_CONFIG } from "../config/r2Config";
 import { logger } from "../utils/logger";
 
-interface ImageResult {
-  fullResUrl: string | null;
-  highResUrl: string | null;
-  lowResUrl: string | null;
-  metadata: {
-    contentType: string;
-    productId: string;
-    groupId: string;
-    lastUpdated: string;
-    isPlaceholder?: boolean;
-    originalUrl?: string;
-    existingImage?: boolean;
-    errorMessage?: string;
-  };
-}
+import { ImageResult } from "../types";
 
 export class StorageService {
   private client: S3Client;
@@ -276,7 +262,8 @@ export class StorageService {
   public async processAndStoreImage(
     imageUrl: string | undefined,
     productId: number,
-    groupId: string
+    groupId: string,
+    maintainTcgcsvStructure: boolean = false
   ): Promise<ImageResult> {
     const baseMetadata = {
       productId: productId.toString(),
@@ -327,12 +314,19 @@ export class StorageService {
 
       try {
         const baseUrl = imageUrl || "";
-        let downloadUrls: string[];
+        let downloadUrls: (string | null)[] = [];
 
         // Handle Square Enix URLs
         if (baseUrl.includes("fftcg.cdn.sewest.net")) {
-          // Square Enix URLs are already in their final format
-          downloadUrls = [baseUrl];
+          if (baseUrl.includes("/cards/full/")) {
+            // Full resolution image - use for both full and high res
+            downloadUrls = [baseUrl, baseUrl, null];
+          } else if (baseUrl.includes("/cards/thumbs/")) {
+            // Thumbnail image - use for low res
+            downloadUrls = [null, null, baseUrl];
+          } else {
+            downloadUrls = [baseUrl, null, null];
+          }
         } else {
           // TCGCSV URLs need transformation
           downloadUrls = [
@@ -349,17 +343,26 @@ export class StorageService {
         // Try to download each resolution
         const buffers = await Promise.all(
           downloadUrls.map(url =>
-            this.downloadImage(url).catch((error) => {
+            url ? this.downloadImage(url).catch((error) => {
               logger.info(`Failed to download image: ${error.message}`);
               return null;
-            })
+            }) : Promise.resolve(null)
           )
         );
 
-        // For Square Enix URLs, use the same buffer for all resolutions
-        const [fullResBuffer, highResBuffer, lowResBuffer] = baseUrl.includes("fftcg.cdn.sewest.net")
-          ? [buffers[0], buffers[0], buffers[0]]
-          : buffers;
+        // Map buffers to their correct resolutions
+        let [fullResBuffer, highResBuffer, lowResBuffer] = buffers;
+
+        // For Square Enix URLs, handle buffer mapping based on URL type
+        if (baseUrl.includes("fftcg.cdn.sewest.net")) {
+          if (baseUrl.includes("/cards/full/")) {
+            // Use full res buffer for both full and high res
+            highResBuffer = fullResBuffer;
+          } else if (baseUrl.includes("/cards/thumbs/")) {
+            // Use thumbs buffer for low res only
+            [fullResBuffer, highResBuffer] = [null, null];
+          }
+        }
 
         // Log which resolutions were successfully downloaded
         logger.info(`Download results for product ${productId}:`, {

@@ -16,13 +16,35 @@ export interface SyncStats {
 
 export class Logger {
   private readonly COLLECTION = "logs";
+  private firestoreEnabled = true;
+  private pendingLogs: Promise<void>[] = [];
+  private readonly VERBOSE = false; // Control logging verbosity
+
+  async disableFirestore(): Promise<void> {
+    // Wait for all pending logs to complete
+    await Promise.all(this.pendingLogs);
+    this.firestoreEnabled = false;
+  }
 
   async info(message: string, data?: LogData | SyncResult): Promise<void> {
-    await this.log("INFO", message, data);
+    if (!this.VERBOSE) {
+      // Only log to console for important info messages
+      if (message.includes("completed") || message.includes("started") || message.includes("failed")) {
+        console.log(`[INFO] ${message}`, data || "");
+      }
+      return;
+    }
+    const logPromise = this.log("INFO", message, data);
+    this.pendingLogs.push(logPromise);
+    await logPromise;
+    this.pendingLogs = this.pendingLogs.filter(p => p !== logPromise);
   }
 
   async error(message: string, data?: LogData | { error: unknown }): Promise<void> {
-    await this.log("ERROR", message, data);
+    const logPromise = this.log("ERROR", message, data);
+    this.pendingLogs.push(logPromise);
+    await logPromise;
+    this.pendingLogs = this.pendingLogs.filter(p => p !== logPromise);
   }
 
   async logSyncStats(stats: SyncStats): Promise<void> {
@@ -52,7 +74,10 @@ export class Logger {
   }
 
   async warn(message: string, data?: LogData | { error: unknown }): Promise<void> {
-    await this.log("WARN", message, data);
+    const logPromise = this.log("WARN", message, data);
+    this.pendingLogs.push(logPromise);
+    await logPromise;
+    this.pendingLogs = this.pendingLogs.filter(p => p !== logPromise);
   }
 
   async log(
@@ -72,8 +97,8 @@ export class Logger {
     const logFn = level === "ERROR" ? console.error : level === "WARN" ? console.warn : console.log;
     logFn(`[${level}] ${message}`, metadata || "");
 
-    // Only log to Firestore if not in local development
-    if (!environment.isLocal) {
+    // Only log to Firestore if enabled and not in local development
+    if (this.firestoreEnabled && !environment.isLocal) {
       try {
         await db.collection(this.COLLECTION).add(entry);
       } catch (error) {
