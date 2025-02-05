@@ -11,8 +11,8 @@ interface TcgCard {
   fullCardNumber?: string;
   number?: string;
   primaryCardNumber?: string;
-  power?: string;
-  cost?: string;
+  power?: number;
+  cost?: number;
   job?: string;
   rarity?: string;
   cardType?: string;
@@ -38,59 +38,235 @@ const batchProcessor = new OptimizedBatchProcessor(db);
 
 // Check if a TCG card matches a Square Enix card
 function findCardNumberMatch(tcgCard: TcgCard, seCard: SquareEnixCard): boolean {
+  // For Promo cards, only match on the non-PR part of the number
+  const isPromo = isPromoCard(tcgCard);
+  
+  // Helper to extract the base card number from a PR number
+  const getBaseNumber = (num: string): string | null => {
+    const match = num.match(/PR-\d+\/(.+)/);
+    return match ? match[1] : null;
+  };
+
   // Check each possible number field
-  if (tcgCard.cardNumbers?.includes(seCard.code)) {
+  if (tcgCard.cardNumbers?.some(num => {
+    if (isPromo) {
+      const baseNum = getBaseNumber(num);
+      return baseNum === seCard.code;
+    }
+    return num === seCard.code;
+  })) {
     logger.info("Matched on cardNumbers array", { 
       tcgCard: tcgCard.id, 
       seCard: seCard.id,
-      code: seCard.code 
+      code: seCard.code,
+      isPromo
     });
     return true;
   }
 
-  if (tcgCard.fullCardNumber === seCard.code) {
-    logger.info("Matched on fullCardNumber", { 
-      tcgCard: tcgCard.id, 
-      seCard: seCard.id,
-      code: seCard.code 
-    });
-    return true;
-  }
+  if (isPromo) {
+    const baseFullNumber = tcgCard.fullCardNumber ? getBaseNumber(tcgCard.fullCardNumber) : null;
+    const baseNumber = tcgCard.number ? getBaseNumber(tcgCard.number) : null;
+    const basePrimaryNumber = tcgCard.primaryCardNumber ? getBaseNumber(tcgCard.primaryCardNumber) : null;
 
-  if (tcgCard.number === seCard.code) {
-    logger.info("Matched on number", { 
-      tcgCard: tcgCard.id, 
-      seCard: seCard.id,
-      code: seCard.code 
-    });
-    return true;
-  }
+    if (baseFullNumber === seCard.code) {
+      logger.info("Matched Promo on fullCardNumber base number", { 
+        tcgCard: tcgCard.id, 
+        seCard: seCard.id,
+        code: seCard.code,
+        baseNumber: baseFullNumber
+      });
+      return true;
+    }
 
-  if (tcgCard.primaryCardNumber === seCard.code) {
-    logger.info("Matched on primaryCardNumber", { 
-      tcgCard: tcgCard.id, 
-      seCard: seCard.id,
-      code: seCard.code 
-    });
-    return true;
+    if (baseNumber === seCard.code) {
+      logger.info("Matched Promo on number base number", { 
+        tcgCard: tcgCard.id, 
+        seCard: seCard.id,
+        code: seCard.code,
+        baseNumber
+      });
+      return true;
+    }
+
+    if (basePrimaryNumber === seCard.code) {
+      logger.info("Matched Promo on primaryCardNumber base number", { 
+        tcgCard: tcgCard.id, 
+        seCard: seCard.id,
+        code: seCard.code,
+        baseNumber: basePrimaryNumber
+      });
+      return true;
+    }
+  } else {
+    // Regular non-Promo matching
+    if (tcgCard.fullCardNumber === seCard.code) {
+      logger.info("Matched on fullCardNumber", { 
+        tcgCard: tcgCard.id, 
+        seCard: seCard.id,
+        code: seCard.code 
+      });
+      return true;
+    }
+
+    if (tcgCard.number === seCard.code) {
+      logger.info("Matched on number", { 
+        tcgCard: tcgCard.id, 
+        seCard: seCard.id,
+        code: seCard.code 
+      });
+      return true;
+    }
+
+    if (tcgCard.primaryCardNumber === seCard.code) {
+      logger.info("Matched on primaryCardNumber", { 
+        tcgCard: tcgCard.id, 
+        seCard: seCard.id,
+        code: seCard.code 
+      });
+      return true;
+    }
   }
 
   return false;
 }
 
+// Check if a card is a Promo variant
+function isPromoCard(card: TcgCard): boolean {
+  const allNumbers = [
+    ...(card.cardNumbers || []),
+    card.fullCardNumber,
+    card.number,
+    card.primaryCardNumber
+  ].filter(Boolean);
+
+  return allNumbers.some(num => num?.includes('PR'));
+}
+
+// Map Square Enix rarity abbreviation to full word
+function mapRarity(abbreviation: string): string {
+  const rarityMap: Record<string, string> = {
+    'C': 'Common',
+    'R': 'Rare',
+    'H': 'Hero',
+    'L': 'Legend',
+    'S': 'Starter'
+  };
+  return rarityMap[abbreviation] || abbreviation;
+}
+
+// Convert string to number, return null if invalid
+function parseNumber(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const num = parseInt(value.trim());
+  return isNaN(num) ? null : num;
+}
+
 // Get fields that need to be updated
 function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): Partial<TcgCard> {
   const updates: Partial<TcgCard> = {};
+  const isPromo = isPromoCard(tcgCard);
 
-  // Only update fields that are empty or missing in tcgCard
-  if (!tcgCard.cardType && seCard.type) updates.cardType = seCard.type;
-  if (!tcgCard.category && seCard.category_1) updates.category = seCard.category_1;
-  if ((!tcgCard.elements || tcgCard.elements.length === 0) && seCard.element) {
+  // For Promo cards, force rarity to "Promo"
+  if (isPromo) {
+    if (tcgCard.rarity !== 'Promo') {
+      updates.rarity = 'Promo';
+      logger.info("Setting Promo rarity for card", {
+        id: tcgCard.id,
+        name: tcgCard.name,
+        currentRarity: tcgCard.rarity
+      });
+    }
+  }
+
+  // Compare and update fields
+  if (tcgCard.cardType !== seCard.type) {
+    updates.cardType = seCard.type;
+  }
+
+  if (tcgCard.category !== seCard.category_1) {
+    updates.category = seCard.category_1;
+  }
+
+  // Convert and compare cost (string -> number)
+  const seCost = parseNumber(seCard.cost);
+  if (seCost !== null && tcgCard.cost !== seCost) {
+    updates.cost = seCost;
+    logger.info("Updating cost", {
+      id: tcgCard.id,
+      name: tcgCard.name,
+      oldCost: tcgCard.cost,
+      newCost: seCost,
+      seCardCost: seCard.cost
+    });
+  }
+
+  // Compare arrays
+  const currentElements = tcgCard.elements || [];
+  if (JSON.stringify(currentElements.sort()) !== JSON.stringify(seCard.element.sort())) {
     updates.elements = seCard.element;
   }
-  if (!tcgCard.job && seCard.job) updates.job = seCard.job;
-  if (!tcgCard.power && seCard.power) updates.power = seCard.power;
-  if (!tcgCard.rarity && seCard.rarity) updates.rarity = seCard.rarity;
+
+  if (tcgCard.job !== seCard.job) {
+    updates.job = seCard.job;
+  }
+
+  if (tcgCard.name !== seCard.name) {
+    updates.name = seCard.name;
+  }
+
+  // Convert and compare power (string -> number)
+  const sePower = parseNumber(seCard.power);
+  if (sePower !== null && tcgCard.power !== sePower) {
+    updates.power = sePower;
+    logger.info("Updating power", {
+      id: tcgCard.id,
+      name: tcgCard.name,
+      oldPower: tcgCard.power,
+      newPower: sePower,
+      seCardPower: seCard.power
+    });
+  }
+
+  // Only update rarity for non-Promo cards
+  if (!isPromo && tcgCard.rarity !== mapRarity(seCard.rarity)) {
+    updates.rarity = mapRarity(seCard.rarity);
+  }
+
+  // Log what's being updated and why
+  if (Object.keys(updates).length > 0) {
+    logger.info("Field differences found", {
+      tcgCard: {
+        id: tcgCard.id,
+        name: tcgCard.name,
+        currentValues: {
+          cardType: tcgCard.cardType,
+          category: tcgCard.category,
+          cost: tcgCard.cost,
+          elements: tcgCard.elements,
+          job: tcgCard.job,
+          name: tcgCard.name,
+          power: tcgCard.power,
+          rarity: tcgCard.rarity
+        }
+      },
+      seCard: {
+        id: seCard.id,
+        name: seCard.name,
+        values: {
+          type: seCard.type,
+          category_1: seCard.category_1,
+          name: seCard.name,
+          cost: seCard.cost,
+          element: seCard.element,
+          job: seCard.job,
+          power: seCard.power,
+          rarity: seCard.rarity
+        }
+      },
+      updates
+    });
+  }
 
   return updates;
 }
