@@ -341,6 +341,11 @@ export class CardSyncService {
             number: this.getExtendedValue(card, "Number"),
             power: this.normalizeNumericValue(this.getExtendedValue(card, "Power")),
             rarity: this.getExtendedValue(card, "Rarity"),
+            // Add searchTerms array for Firestore search
+            searchTerms: [
+              ...this.normalizeName(card.name).toLowerCase().split(/\s+/),
+              fullCardNumber.toLowerCase()
+            ]
           };
 
           // Add main card document
