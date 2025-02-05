@@ -209,6 +209,21 @@ export class CardSyncService {
     };
   }
 
+  private generateSearchTerms(text: string): string[] {
+    const terms = new Set<string>();
+    const normalized = text.toLowerCase().trim();
+    
+    // Generate substrings for each word
+    normalized.split(/\s+/).forEach(word => {
+      // Add each progressive substring
+      for (let i = 1; i <= word.length; i++) {
+        terms.add(word.substring(0, i));
+      }
+    });
+
+    return Array.from(terms);
+  }
+
   private calculateHash(card: CardProduct): string {
     const deltaData = this.getDeltaData(card);
     return crypto
@@ -341,10 +356,12 @@ export class CardSyncService {
             number: this.getExtendedValue(card, "Number"),
             power: this.normalizeNumericValue(this.getExtendedValue(card, "Power")),
             rarity: this.getExtendedValue(card, "Rarity"),
-            // Add searchTerms array for Firestore search
+            // Add searchTerms array for typeahead search
             searchTerms: [
-              ...this.normalizeName(card.name).toLowerCase().split(/\s+/),
-              fullCardNumber.toLowerCase()
+              // Generate substrings for card name
+              ...this.generateSearchTerms(this.normalizeName(card.name)),
+              // Generate substrings for card number
+              ...this.generateSearchTerms(fullCardNumber)
             ]
           };
 
