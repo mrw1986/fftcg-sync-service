@@ -18,6 +18,7 @@ interface TcgCard {
   cardType?: string;
   category?: string;
   elements?: string[];
+  sets?: string[];
 }
 
 interface SquareEnixCard {
@@ -31,6 +32,7 @@ interface SquareEnixCard {
   power: string;
   cost: string;
   rarity: string;
+  set: string[];
 }
 
 const retry = new RetryWithBackoff();
@@ -228,6 +230,19 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): Partial<Tc
       newPower: sePower,
       seCardPower: seCard.power,
       reason: tcgCard.power === null || tcgCard.power === undefined ? "NULL value" : "Value mismatch"
+    });
+  }
+
+  // Compare and update sets array
+  if (tcgCard.sets === null || tcgCard.sets === undefined || 
+      JSON.stringify(tcgCard.sets?.sort() || []) !== JSON.stringify(seCard.set.sort())) {
+    updates.sets = seCard.set;
+    logger.info("Updating sets", {
+      id: tcgCard.id,
+      name: tcgCard.name,
+      oldSets: tcgCard.sets,
+      newSets: seCard.set,
+      reason: tcgCard.sets === null || tcgCard.sets === undefined ? "NULL value" : "Value mismatch"
     });
   }
 
