@@ -179,52 +179,55 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): Partial<Tc
     }
   }
 
-  // Compare and update fields
-  if (tcgCard.cardType !== seCard.type) {
+  // Compare and update fields, handling NULL values
+  if (tcgCard.cardType === null || tcgCard.cardType === undefined || tcgCard.cardType !== seCard.type) {
     updates.cardType = seCard.type;
   }
 
-  if (tcgCard.category !== seCard.category_1) {
+  if (tcgCard.category === null || tcgCard.category === undefined || tcgCard.category !== seCard.category_1) {
     updates.category = seCard.category_1;
   }
 
   // Convert and compare cost (string -> number)
   const seCost = parseNumber(seCard.cost);
-  if (seCost !== null && tcgCard.cost !== seCost) {
+  if (seCost !== null && (tcgCard.cost === null || tcgCard.cost === undefined || tcgCard.cost !== seCost)) {
     updates.cost = seCost;
     logger.info("Updating cost", {
       id: tcgCard.id,
       name: tcgCard.name,
       oldCost: tcgCard.cost,
       newCost: seCost,
-      seCardCost: seCard.cost
+      seCardCost: seCard.cost,
+      reason: tcgCard.cost === null || tcgCard.cost === undefined ? "NULL value" : "Value mismatch"
     });
   }
 
-  // Compare arrays
+  // Compare arrays, handling NULL values
   const currentElements = tcgCard.elements || [];
-  if (JSON.stringify(currentElements.sort()) !== JSON.stringify(seCard.element.sort())) {
+  if (tcgCard.elements === null || tcgCard.elements === undefined || 
+      JSON.stringify(currentElements.sort()) !== JSON.stringify(seCard.element.sort())) {
     updates.elements = seCard.element;
   }
 
-  if (tcgCard.job !== seCard.job) {
+  if (tcgCard.job === null || tcgCard.job === undefined || tcgCard.job !== seCard.job) {
     updates.job = seCard.job;
   }
 
-  if (tcgCard.name !== seCard.name) {
+  if (tcgCard.name === null || tcgCard.name === undefined || tcgCard.name !== seCard.name) {
     updates.name = seCard.name;
   }
 
   // Convert and compare power (string -> number)
   const sePower = parseNumber(seCard.power);
-  if (sePower !== null && tcgCard.power !== sePower) {
+  if (sePower !== null && (tcgCard.power === null || tcgCard.power === undefined || tcgCard.power !== sePower)) {
     updates.power = sePower;
     logger.info("Updating power", {
       id: tcgCard.id,
       name: tcgCard.name,
       oldPower: tcgCard.power,
       newPower: sePower,
-      seCardPower: seCard.power
+      seCardPower: seCard.power,
+      reason: tcgCard.power === null || tcgCard.power === undefined ? "NULL value" : "Value mismatch"
     });
   }
 
