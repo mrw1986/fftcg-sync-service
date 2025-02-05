@@ -5,9 +5,9 @@ import { R2_CONFIG } from "../config/r2Config";
 import { logger } from "../utils/logger";
 
 interface ImageResult {
-  fullResUrl: string;
-  highResUrl: string;
-  lowResUrl: string;
+  fullResUrl: string | null;
+  highResUrl: string | null;
+  lowResUrl: string | null;
   metadata: {
     contentType: string;
     productId: string;
@@ -27,11 +27,15 @@ export class StorageService {
   private readonly storagePath: string;
   private readonly maxRetries = 3;
   private readonly timeoutMs = 30000; // 30 seconds
-  private readonly PLACEHOLDER_URL = "https://fftcgcompanion.com/card-images/image-coming-soon.jpeg";
   private readonly validImagePatterns = [
+    // TCGCSV API patterns
     "_in_1000x1000.", // Highest priority
     "_400w.", // Medium priority
     "_200w.", // Lowest priority
+    // Square Enix patterns
+    "/cards/full/", // High res
+    "/cards/thumbs/", // Low res
+    "_eg.jpg" // Square Enix file suffix
   ];
 
   constructor() {
@@ -77,16 +81,21 @@ export class StorageService {
 
     // Check if it's TCGPlayer's missing image SVG
     if (url.includes("image-missing.svg")) {
-      logger.info(`TCGPlayer missing image URL detected: ${url}, using our placeholder`);
+      logger.info(`TCGPlayer missing image URL detected: ${url}`);
       return false;
     }
 
-    // If URL contains any of our valid patterns, it's a valid TCGPlayer image URL
-    const isValidPattern = this.validImagePatterns.some((pattern) => url.includes(pattern));
+    // Check if it's a Square Enix URL
+    if (url.includes("fftcg.cdn.sewest.net")) {
+      return url.includes("_eg.jpg") && (url.includes("/cards/full/") || url.includes("/cards/thumbs/"));
+    }
+
+    // For TCGCSV URLs, check for resolution patterns
+    const isValidPattern = this.validImagePatterns.slice(0, 3).some((pattern) => url.includes(pattern));
 
     // If URL doesn't match our patterns, consider it invalid
     if (!isValidPattern) {
-      logger.info(`Invalid image URL pattern: ${url}, using placeholder`);
+      logger.info(`No matching image pattern found for URL: ${url}`);
       return false;
     }
 
@@ -252,9 +261,9 @@ export class StorageService {
     originalUrl?: string
   ): ImageResult {
     return {
-      fullResUrl: this.PLACEHOLDER_URL,
-      highResUrl: this.PLACEHOLDER_URL,
-      lowResUrl: this.PLACEHOLDER_URL,
+      fullResUrl: null,
+      highResUrl: null,
+      lowResUrl: null,
       metadata: {
         ...baseMetadata,
         isPlaceholder: true,
@@ -318,32 +327,39 @@ export class StorageService {
 
       try {
         const baseUrl = imageUrl || "";
-        // Create URLs for different resolutions
-        const fullResTcgUrl = baseUrl.replace(/_[^.]+\./, "_in_1000x1000.");
-        const highResTcgUrl = baseUrl.replace(/_[^.]+\./, "_400w.");
-        const lowResTcgUrl = baseUrl.replace(/_[^.]+\./, "_200w.");
+        let downloadUrls: string[];
+
+        // Handle Square Enix URLs
+        if (baseUrl.includes("fftcg.cdn.sewest.net")) {
+          // Square Enix URLs are already in their final format
+          downloadUrls = [baseUrl];
+        } else {
+          // TCGCSV URLs need transformation
+          downloadUrls = [
+            baseUrl.replace(/_[^.]+\./, "_in_1000x1000."),
+            baseUrl.replace(/_[^.]+\./, "_400w."),
+            baseUrl.replace(/_[^.]+\./, "_200w.")
+          ];
+        }
 
         logger.info(`Attempting to download images for product ${productId}:`, {
-          fullRes: fullResTcgUrl,
-          highRes: highResTcgUrl,
-          lowRes: lowResTcgUrl,
+          urls: downloadUrls
         });
 
         // Try to download each resolution
-        const [fullResBuffer, highResBuffer, lowResBuffer] = await Promise.all([
-          this.downloadImage(fullResTcgUrl).catch((error) => {
-            logger.info(`Failed to download full resolution image: ${error.message}`);
-            return null;
-          }),
-          this.downloadImage(highResTcgUrl).catch((error) => {
-            logger.info(`Failed to download high resolution image: ${error.message}`);
-            return null;
-          }),
-          this.downloadImage(lowResTcgUrl).catch((error) => {
-            logger.info(`Failed to download low resolution image: ${error.message}`);
-            return null;
-          }),
-        ]);
+        const buffers = await Promise.all(
+          downloadUrls.map(url =>
+            this.downloadImage(url).catch((error) => {
+              logger.info(`Failed to download image: ${error.message}`);
+              return null;
+            })
+          )
+        );
+
+        // For Square Enix URLs, use the same buffer for all resolutions
+        const [fullResBuffer, highResBuffer, lowResBuffer] = baseUrl.includes("fftcg.cdn.sewest.net")
+          ? [buffers[0], buffers[0], buffers[0]]
+          : buffers;
 
         // Log which resolutions were successfully downloaded
         logger.info(`Download results for product ${productId}:`, {
@@ -380,9 +396,9 @@ export class StorageService {
 
         // Determine which URLs to use, falling back to the highest available resolution
         const result: ImageResult = {
-          fullResUrl: urlMap[fullResPath] || urlMap[highResPath] || urlMap[lowResPath] || this.PLACEHOLDER_URL,
-          highResUrl: urlMap[highResPath] || urlMap[fullResPath] || urlMap[lowResPath] || this.PLACEHOLDER_URL,
-          lowResUrl: urlMap[lowResPath] || urlMap[highResPath] || urlMap[fullResPath] || this.PLACEHOLDER_URL,
+          fullResUrl: urlMap[fullResPath] || urlMap[highResPath] || urlMap[lowResPath] || null,
+          highResUrl: urlMap[highResPath] || urlMap[fullResPath] || urlMap[lowResPath] || null,
+          lowResUrl: urlMap[lowResPath] || urlMap[highResPath] || urlMap[fullResPath] || null,
           metadata: {
             ...baseMetadata,
             originalUrl: imageUrl,
@@ -394,7 +410,7 @@ export class StorageService {
           fullResUrl: result.fullResUrl,
           highResUrl: result.highResUrl,
           lowResUrl: result.lowResUrl,
-          isPlaceholder: result.fullResUrl === this.PLACEHOLDER_URL,
+          isPlaceholder: !result.fullResUrl,
           originalUrl: imageUrl,
           fallbacksUsed: {
             fullRes: result.fullResUrl !== urlMap[fullResPath],

@@ -1,13 +1,17 @@
 import { db, COLLECTION } from "../config/firebase";
 import { squareEnixSync } from "./squareEnixSync";
-import { SyncResult } from "../types";
+import { SyncResult, SquareEnixCardDoc } from "../types";
 import { logger } from "../utils/logger";
 import { RetryWithBackoff } from "../utils/retry";
 import { FieldValue } from "firebase-admin/firestore";
 import { OptimizedBatchProcessor } from "./batchProcessor";
+import { storageService } from "./storageService";
+import { Cache } from "../utils/cache";
 
 export class SquareEnixStorageService {
-  private readonly CHUNK_SIZE = 500;
+  private readonly CHUNK_SIZE = 1000;
+  private readonly MAX_EXECUTION_TIME = 510; // 8.5 minutes
+  private readonly cache = new Cache<string>(15);
   private readonly retry = new RetryWithBackoff();
   private readonly batchProcessor: OptimizedBatchProcessor;
 
@@ -15,7 +19,64 @@ export class SquareEnixStorageService {
     this.batchProcessor = new OptimizedBatchProcessor(db);
   }
 
-  private async processCards(cards: any[]): Promise<{
+  private isApproachingTimeout(startTime: Date, safetyMarginSeconds = 30): boolean {
+    const executionTime = (new Date().getTime() - startTime.getTime()) / 1000;
+    return executionTime > (this.MAX_EXECUTION_TIME - safetyMarginSeconds);
+  }
+
+  private sanitizeDocumentId(code: string): string {
+    // Replace forward slashes with semicolons to maintain uniqueness
+    return code.replace(/\//g, ";");
+  }
+
+  private async processAndStoreImages(
+    card: any,
+    groupId: string
+  ): Promise<{ fullResUrl: string | null; lowResUrl: string | null }> {
+    try {
+      // Process full resolution image
+      const fullResResult = card.images?.full?.length > 0
+        ? await this.retry.execute(() =>
+            storageService.processAndStoreImage(
+              card.images.full[0],
+              card.id,
+              groupId
+            )
+          )
+        : null;
+
+      // Process thumbnail image
+      const thumbResult = card.images?.thumbs?.length > 0
+        ? await this.retry.execute(() =>
+            storageService.processAndStoreImage(
+              card.images.thumbs[0],
+              card.id,
+              groupId
+            )
+          )
+        : null;
+
+      return {
+        fullResUrl: fullResResult?.fullResUrl || null,
+        lowResUrl: thumbResult?.lowResUrl || null,
+      };
+    } catch (error) {
+      logger.error(`Failed to process images for card ${card.id}`, {
+        error: error instanceof Error ? error.message : "Unknown error",
+        cardCode: card.code,
+      });
+      return {
+        fullResUrl: null,
+        lowResUrl: null,
+      };
+    }
+  }
+
+  private async processCards(
+    cards: any[],
+    startTime: Date,
+    options: { forceUpdate?: boolean } = {}
+  ): Promise<{
     processed: number;
     updated: number;
     errors: string[];
@@ -27,31 +88,87 @@ export class SquareEnixStorageService {
     };
 
     try {
-      // Process each card in the batch
-      for (const card of cards) {
+      // Process all operations in parallel
+      await Promise.all(cards.map(async (card) => {
         try {
+          if (this.isApproachingTimeout(startTime)) {
+            logger.warn("Approaching function timeout, skipping remaining cards");
+            return;
+          }
+
           result.processed++;
 
-          // Store raw card data with auto-generated ID
-          await this.batchProcessor.addOperation((batch) => {
-            // Let Firestore auto-generate the document ID
-            const docRef = db.collection(COLLECTION.SQUARE_ENIX_CARDS).doc();
-            batch.set(docRef, {
-              ...card,
-              lastUpdated: FieldValue.serverTimestamp(),
-            });
-          });
+          // Check cache first
+          const cacheKey = `hash_${card.code}`;
+          const cachedCard = this.cache.get(cacheKey);
+          if (cachedCard && !options.forceUpdate) {
+            return;
+          }
 
+          // Process images and create document in parallel
+          const [imageUrls] = await Promise.all([
+            this.processAndStoreImages(card, "square-enix"),
+            this.batchProcessor.addOperation((batch) => {
+              const cardDoc: SquareEnixCardDoc = {
+                id: card.id,
+                code: card.code,
+                name: card.name_en,
+                type: card.type_en,
+                job: card.job_en,
+                text: card.text_en,
+                element: card.element,
+                rarity: card.rarity,
+                cost: card.cost,
+                power: card.power,
+                category_1: card.category_1,
+                category_2: card.category_2 || null,
+                multicard: card.multicard === "1",
+                ex_burst: card.ex_burst === "1",
+                set: card.set,
+                images: {
+                  thumbs: card.images.thumbs,
+                  full: card.images.full,
+                },
+                processedImages: {
+                  fullResUrl: null, // Will be updated after image processing
+                  lowResUrl: null,
+                },
+                lastUpdated: FieldValue.serverTimestamp(),
+              };
+
+              const docRef = db.collection(COLLECTION.SQUARE_ENIX_CARDS).doc(this.sanitizeDocumentId(card.code));
+              batch.set(docRef, cardDoc, { merge: true });
+            })
+          ]);
+
+          // Update image URLs if available
+          if (imageUrls.fullResUrl || imageUrls.lowResUrl) {
+            await this.batchProcessor.addOperation((batch) => {
+              const docRef = db.collection(COLLECTION.SQUARE_ENIX_CARDS).doc(this.sanitizeDocumentId(card.code));
+              batch.update(docRef, {
+                "processedImages.fullResUrl": imageUrls.fullResUrl,
+                "processedImages.lowResUrl": imageUrls.lowResUrl,
+              });
+            });
+          }
+
+          this.cache.set(cacheKey, card);
           result.updated++;
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : "Unknown error";
-          result.errors.push(`Error processing card: ${errorMessage}`);
-          logger.error("Error processing card", { error: errorMessage });
+          result.errors.push(`Error processing card ${card.code}: ${errorMessage}`);
+          logger.error(`Error processing card ${card.code}`, { error: errorMessage });
         }
-      }
+      }));
 
-      // Commit the batch
+      // Commit all batched operations
       await this.batchProcessor.commitAll();
+
+      logger.info(`Processed ${cards.length} cards`, {
+        totalProcessed: result.processed,
+        totalUpdated: result.updated,
+        errors: result.errors.length,
+      });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
       result.errors.push(`Batch processing error: ${errorMessage}`);
@@ -81,8 +198,13 @@ export class SquareEnixStorageService {
 
       // Process cards in chunks
       for (let i = 0; i < cards.length; i += this.CHUNK_SIZE) {
+        if (this.isApproachingTimeout(result.timing.startTime)) {
+          logger.warn("Approaching function timeout, stopping processing");
+          break;
+        }
+
         const cardChunk = cards.slice(i, i + this.CHUNK_SIZE);
-        const batchResults = await this.processCards(cardChunk);
+        const batchResults = await this.processCards(cardChunk, result.timing.startTime);
 
         result.itemsProcessed += batchResults.processed;
         result.itemsUpdated += batchResults.updated;

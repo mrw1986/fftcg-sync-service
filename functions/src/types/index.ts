@@ -99,9 +99,9 @@ export interface CardChanges {
   productId: number;
   name: string;
   cleanName: string;
-  fullResUrl: string;
-  highResUrl: string;
-  lowResUrl: string;
+  fullResUrl: string | null;
+  highResUrl: string | null;
+  lowResUrl: string | null;
   lastUpdated: FieldValue;
   groupId: number;
   isNonCard: boolean;
@@ -171,6 +171,10 @@ export interface SquareEnixCardDoc {
   images: {
     thumbs: string[];
     full: string[];
+  };
+  processedImages: {
+    fullResUrl: string | null;
+    lowResUrl: string | null;
   };
   lastUpdated: FieldValue;
 }

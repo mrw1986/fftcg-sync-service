@@ -19,6 +19,9 @@ interface TcgCard {
   category?: string;
   elements?: string[];
   sets?: string[];
+  fullResUrl?: string | null;
+  highResUrl?: string | null;
+  lowResUrl?: string | null;
 }
 
 interface SquareEnixCard {
@@ -33,10 +36,24 @@ interface SquareEnixCard {
   cost: string;
   rarity: string;
   set: string[];
+  processedImages?: {
+    fullResUrl: string | null;
+    lowResUrl: string | null;
+  };
 }
 
 const retry = new RetryWithBackoff();
 const batchProcessor = new OptimizedBatchProcessor(db);
+
+// Helper to sanitize document IDs (must match squareEnixStorageService.ts)
+function sanitizeDocumentId(code: string): string {
+  return code.replace(/\//g, ";");
+}
+
+// Helper to un-sanitize document IDs for comparison
+function unSanitizeDocumentId(code: string): string {
+  return code.replace(/;/g, "/");
+}
 
 // Check if a TCG card matches a Square Enix card
 function findCardNumberMatch(tcgCard: TcgCard, seCard: SquareEnixCard): boolean {
@@ -168,6 +185,31 @@ function parseNumber(value: string | null | undefined): number | null {
 function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): Partial<TcgCard> {
   const updates: Partial<TcgCard> = {};
   const isPromo = isPromoCard(tcgCard);
+
+  // Update image URLs if TCG card URLs are null and Square Enix has processed images
+  if (seCard.processedImages) {
+    if ((tcgCard.fullResUrl === null || tcgCard.highResUrl === null) && seCard.processedImages.fullResUrl) {
+      updates.fullResUrl = seCard.processedImages.fullResUrl;
+      updates.highResUrl = seCard.processedImages.fullResUrl;
+      logger.info("Updating high/full res image URLs from Square Enix", {
+        id: tcgCard.id,
+        name: tcgCard.name,
+        oldFullResUrl: tcgCard.fullResUrl,
+        oldHighResUrl: tcgCard.highResUrl,
+        newUrl: seCard.processedImages.fullResUrl
+      });
+    }
+
+    if (tcgCard.lowResUrl === null && seCard.processedImages.lowResUrl) {
+      updates.lowResUrl = seCard.processedImages.lowResUrl;
+      logger.info("Updating low res image URL from Square Enix", {
+        id: tcgCard.id,
+        name: tcgCard.name,
+        oldLowResUrl: tcgCard.lowResUrl,
+        newUrl: seCard.processedImages.lowResUrl
+      });
+    }
+  }
 
   // For Promo cards, force rarity to "Promo"
   if (isPromo) {
@@ -310,10 +352,15 @@ async function main() {
       ...doc.data()
     })) as TcgCard[];
 
-    const seCards = seCardsSnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    })) as SquareEnixCard[];
+    const seCards = seCardsSnapshot.docs.map(doc => {
+      const data = doc.data();
+      // Un-sanitize the code for comparison
+      return {
+        id: doc.id,
+        ...data,
+        code: unSanitizeDocumentId(data.code)
+      };
+    }) as SquareEnixCard[];
 
     logger.info(`Fetched ${tcgCards.length} TCG cards and ${seCards.length} Square Enix cards`);
 
