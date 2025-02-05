@@ -464,11 +464,22 @@ export class CardSyncService {
       result.timing.duration =
         (result.timing.endTime.getTime() - result.timing.startTime.getTime()) / 1000;
 
-      logger.info(`Card sync completed in ${result.timing.duration}s`, {
+      logger.info(`TCGCSV sync completed in ${result.timing.duration}s`, {
         processed: result.itemsProcessed,
         updated: result.itemsUpdated,
         errors: result.errors.length,
       });
+
+      // Run Square Enix sync after TCGCSV sync
+      try {
+        const { main: updateCards } = await import("../scripts/updateCardsWithSquareEnixData");
+        await updateCards();
+      } catch (seError) {
+        const errorMessage = seError instanceof Error ? seError.message : "Unknown error";
+        result.errors.push(`Square Enix sync failed: ${errorMessage}`);
+        logger.error("Square Enix sync failed", { error: errorMessage });
+        result.success = false;
+      }
     } catch (error) {
       result.success = false;
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
