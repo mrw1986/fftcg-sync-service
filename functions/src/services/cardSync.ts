@@ -1,4 +1,4 @@
-  // src/services/cardSync.ts
+// src/services/cardSync.ts
 import { db, COLLECTION } from "../config/firebase";
 import { tcgcsvApi } from "../utils/api";
 import { storageService } from "./storageService";
@@ -9,7 +9,6 @@ import { RetryWithBackoff } from "../utils/retry";
 import * as crypto from "crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import { OptimizedBatchProcessor } from "./batchProcessor";
-import soundex from "soundex-code";
 
 interface CardDeltaData {
   name: string;
@@ -21,17 +20,6 @@ interface CardDeltaData {
   cost: number | null;
   power: number | null;
   elements: string[];
-}
-
-interface SearchTerm {
-  p: number;  // position
-  l: number;  // length
-  s: string;  // soundex
-}
-
-interface SearchIndex {
-  name: Record<string, SearchTerm>;
-  number: Record<string, SearchTerm>;
 }
 
 interface CardDocument {
@@ -56,7 +44,6 @@ interface CardDocument {
   number: string | null;
   power: number | null;
   rarity: string | null;
-  searchIndex: SearchIndex;
 }
 
 export class CardSyncService {
@@ -120,32 +107,6 @@ export class CardSyncService {
   private normalizeName(name: string | number): string {
     const nameStr = String(name);
     return nameStr.charAt(0).toUpperCase() + nameStr.slice(1);
-  }
-
-  private generateSearchTerms(text: string): Record<string, SearchTerm> {
-    const terms: Record<string, SearchTerm> = {};
-    const normalized = text.toLowerCase().trim();
-    
-    // Split into words
-    const words = normalized.split(/\s+/);
-    
-    words.forEach((word, wordIndex) => {
-      // Generate substrings for each word
-      for (let i = 1; i <= word.length; i++) {
-        const substring = word.substring(0, i);
-        
-        // Only store the earliest position for each term
-        if (!terms[substring] || wordIndex < terms[substring].p) {
-          terms[substring] = {
-            p: wordIndex,           // position in text
-            l: word.length,         // length of full word
-            s: soundex.soundex(word)        // soundex code for fuzzy matching
-          };
-        }
-      }
-    });
-    
-    return terms;
   }
 
   private isValidNormalizedNumber(number: string): boolean {
@@ -385,7 +346,7 @@ export class CardSyncService {
       const productIds = cards.map((card) => card.productId);
       const hashMap = await this.getStoredHashes(productIds);
 
-      for (const card of cards) {
+      await Promise.all(cards.map(async (card) => {
         try {
           result.processed++;
 
@@ -402,7 +363,7 @@ export class CardSyncService {
           // Skip only if document exists AND hash matches (unless forcing update)
           if (cardSnapshot.exists && currentHash === storedHash && !options.forceUpdate) {
             logger.info(`Skipping card ${card.productId} - no changes detected`);
-            continue;
+            return;
           }
 
           logger.info(`Processing card ${card.productId} - ${!cardSnapshot.exists ? 'new card' : 'updating existing card'}`);
@@ -429,29 +390,9 @@ export class CardSyncService {
             }
           })();
 
-          const normalizedName = this.normalizeName(card.name);
-
-          // Generate search index for name and each card number
-          const searchIndex: SearchIndex = {
-            name: this.generateSearchTerms(normalizedName),
-            number: {} as Record<string, SearchTerm>
-          };
-
-          // Add search terms for each card number
-          cardNumbers.forEach((num: string, index: number) => {
-            const numberTerms = this.generateSearchTerms(num);
-            Object.entries(numberTerms).forEach(([term, termData]) => {
-              // Use the card number's position in the array as the base position
-              searchIndex.number[term] = {
-                ...termData,
-                p: index  // Override position with array index
-              };
-            });
-          });
-
           const cardDoc: CardDocument = {
             productId: card.productId,
-            name: normalizedName,
+            name: this.normalizeName(card.name),
             cleanName: this.normalizeName(card.cleanName),
             fullResUrl: imageResult.fullResUrl,
             highResUrl: imageResult.highResUrl,
@@ -459,9 +400,9 @@ export class CardSyncService {
             lastUpdated: FieldValue.serverTimestamp(),
             groupId: parseInt(groupId),
             isNonCard: this.isNonCardProduct(card),
-            cardNumbers: cardNumbers,
-            primaryCardNumber: primaryCardNumber,
-            fullCardNumber: fullCardNumber,
+            cardNumbers,
+            primaryCardNumber,
+            fullCardNumber,
             cardType: this.getExtendedValue(card, "CardType"),
             category: this.getExtendedValue(card, "Category"),
             cost: this.normalizeNumericValue(this.getExtendedValue(card, "Cost")),
@@ -470,8 +411,7 @@ export class CardSyncService {
             job: this.getExtendedValue(card, "Job"),
             number: this.getExtendedValue(card, "Number"),
             power: this.normalizeNumericValue(this.getExtendedValue(card, "Power")),
-            rarity: this.getExtendedValue(card, "Rarity"),
-            searchIndex: searchIndex
+            rarity: this.getExtendedValue(card, "Rarity")
           };
 
           // Add main card document
@@ -516,7 +456,7 @@ export class CardSyncService {
           result.errors.push(`Error processing card ${card.productId}: ${errorMessage}`);
           logger.error(`Error processing card ${card.productId}`, { error: errorMessage });
         }
-      }
+      }));
 
       await this.batchProcessor.commitAll();
     } catch (error) {
@@ -548,70 +488,47 @@ export class CardSyncService {
 
       logger.info(`Found ${groups.length} groups to process`);
 
-      // Process groups in parallel with higher concurrency
-      const CONCURRENT_GROUPS = 10; // Increased from 5 to 10
-      const CONCURRENT_CHUNKS = 10; // Process 10 chunks of cards concurrently
-      const groupChunks = [];
-      for (let i = 0; i < groups.length; i += CONCURRENT_GROUPS) {
-        groupChunks.push(groups.slice(i, i + CONCURRENT_GROUPS));
-      }
-
-      for (const groupChunk of groupChunks) {
+      for (const group of groups) {
         if (this.isApproachingTimeout(result.timing.startTime)) {
           logger.warn("Approaching function timeout, stopping processing");
           break;
         }
 
-        // Process each chunk of groups in parallel
-        await Promise.all(groupChunk.map(async (group) => {
-          result.timing.groupStartTime = new Date();
+        result.timing.groupStartTime = new Date();
 
-          try {
-            logger.info(`Processing group ${group.groupId}`);
+        try {
+          logger.info(`Processing group ${group.groupId}`);
 
-            const cards = await this.retry.execute(() =>
-              tcgcsvApi.getGroupProducts(group.groupId)
-            );
+          const cards = await this.retry.execute(() =>
+            tcgcsvApi.getGroupProducts(group.groupId)
+          );
 
-            logger.info(`Retrieved ${cards.length} cards for group ${group.groupId}`);
+          logger.info(`Retrieved ${cards.length} cards for group ${group.groupId}`);
 
-            // Process cards in parallel with higher concurrency
-            const cardChunks = [];
-            for (let i = 0; i < cards.length; i += this.CHUNK_SIZE) {
-              cardChunks.push(cards.slice(i, i + this.CHUNK_SIZE));
+          for (let i = 0; i < cards.length; i += this.CHUNK_SIZE) {
+            if (this.isApproachingTimeout(result.timing.startTime)) {
+              logger.warn("Approaching function timeout, stopping chunk processing");
+              break;
             }
 
-            // Process chunks of cards with controlled concurrency
-            for (let i = 0; i < cardChunks.length; i += CONCURRENT_CHUNKS) {
-              if (this.isApproachingTimeout(result.timing.startTime)) {
-                logger.warn("Approaching function timeout, stopping chunk processing");
-                break;
-              }
+            const cardChunk = cards.slice(i, i + this.CHUNK_SIZE);
+            const batchResults = await this.processCards(cardChunk, group.groupId, options);
 
-              const chunkSlice = cardChunks.slice(i, i + CONCURRENT_CHUNKS);
-              const chunkResults = await Promise.all(
-                chunkSlice.map(chunk => this.processCards(chunk, group.groupId, options))
-              );
-
-              // Aggregate results from parallel processing
-              chunkResults.forEach(batchResults => {
-                result.itemsProcessed += batchResults.processed;
-                result.itemsUpdated += batchResults.updated;
-                result.errors.push(...batchResults.errors);
-              });
-            }
-
-            logger.info(`Completed group ${group.groupId}`, {
-              processed: result.itemsProcessed,
-              updated: result.itemsUpdated,
-              errors: result.errors.length,
-            });
-          } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : "Unknown error";
-            result.errors.push(`Error processing group ${group.groupId}: ${errorMessage}`);
-            logger.error(`Error processing group ${group.groupId}`, { error: errorMessage });
+            result.itemsProcessed += batchResults.processed;
+            result.itemsUpdated += batchResults.updated;
+            result.errors.push(...batchResults.errors);
           }
-        }));
+
+          logger.info(`Completed group ${group.groupId}`, {
+            processed: result.itemsProcessed,
+            updated: result.itemsUpdated,
+            errors: result.errors.length,
+          });
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : "Unknown error";
+          result.errors.push(`Error processing group ${group.groupId}: ${errorMessage}`);
+          logger.error(`Error processing group ${group.groupId}`, { error: errorMessage });
+        }
       }
 
       result.timing.endTime = new Date();
