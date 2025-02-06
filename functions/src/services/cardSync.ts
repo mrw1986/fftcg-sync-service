@@ -77,6 +77,24 @@ export class CardSyncService {
   }
 
   private getElements(card: CardProduct): string[] {
+    // Check if it's a Crystal card by looking at card type or number
+    const cardType = card.extendedData.find((data) => data.name === "CardType")?.value;
+    const numberField = card.extendedData.find((data) => data.name === "Number");
+    
+    if (
+      (cardType && String(cardType).toLowerCase() === 'crystal') ||
+      (numberField?.value && String(numberField.value).toUpperCase().startsWith('C-'))
+    ) {
+      logger.info("Setting Crystal element for card", {
+        id: card.productId,
+        name: card.name,
+        type: cardType,
+        number: numberField?.value
+      });
+      return ['Crystal'];
+    }
+
+    // For non-Crystal cards, process elements normally
     const elementField = card.extendedData.find((data) => data.name === "Element");
     if (!elementField?.value) return [];
 
@@ -137,6 +155,10 @@ export class CardSyncService {
     if (number.match(/^\d{1,2}-\d{3}[A-Z]$/)) return true;
     // Check A-### format
     if (number.match(/^A-\d{3}$/)) return true;
+    // Check C-### format (Crystal cards)
+    if (number.match(/^C-\d{3}$/)) return true;
+    // Check B-### format (Bonus cards)
+    if (number.match(/^B-\d{3}$/)) return true;
     return false;
   }
 
@@ -165,9 +187,28 @@ export class CardSyncService {
 
     // Handle A-### format
     if (clean.startsWith("A")) {
-      const match = clean.match(/^A(\d{3})/);
+      const match = clean.match(/^A0*(\d{1,3})/);
       if (match) {
-        return `A-${match[1]}`;
+        const paddedNum = match[1].padStart(3, "0");
+        return `A-${paddedNum}`;
+      }
+    }
+
+    // Handle B-### format (Bonus cards)
+    if (clean.startsWith("B")) {
+      const match = clean.match(/^B0*(\d{1,3})/);
+      if (match) {
+        const paddedNum = match[1].padStart(3, "0");
+        return `B-${paddedNum}`;
+      }
+    }
+
+    // Handle C-### format (Crystal cards)
+    if (clean.startsWith("C")) {
+      const match = clean.match(/^C0*(\d{1,3})/);
+      if (match) {
+        const paddedNum = match[1].padStart(3, "0");
+        return `C-${paddedNum}`;
       }
     }
 
