@@ -12,8 +12,8 @@ export class OptimizedBatchProcessor {
 
   constructor(
     private readonly db: Firestore,
-    private maxConcurrentBatches: number = 20, // Removed readonly to allow dynamic adjustment
-    private readonly maxOperationsPerBatch: number = 450
+    private maxConcurrentBatches: number = 100, // Increased from 20 to 100 for higher concurrency
+    private readonly maxOperationsPerBatch: number = 500 // Increased from 450 to 500 (Firestore limit is 500)
   ) {
     this.initializeBatchPool();
   }

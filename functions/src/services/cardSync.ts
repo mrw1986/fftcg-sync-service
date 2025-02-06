@@ -1,4 +1,4 @@
-// src/services/cardSync.ts
+  // src/services/cardSync.ts
 import { db, COLLECTION } from "../config/firebase";
 import { tcgcsvApi } from "../utils/api";
 import { storageService } from "./storageService";
@@ -395,9 +395,17 @@ export class CardSyncService {
           const currentHash = this.calculateHash(card);
           const storedHash = hashMap.get(card.productId);
 
-          if (currentHash === storedHash && !options.forceUpdate) {
+          // Check if the card document exists
+          const cardRef = db.collection(COLLECTION.CARDS).doc(card.productId.toString());
+          const cardSnapshot = await this.retry.execute(() => cardRef.get());
+
+          // Skip only if document exists AND hash matches (unless forcing update)
+          if (cardSnapshot.exists && currentHash === storedHash && !options.forceUpdate) {
+            logger.info(`Skipping card ${card.productId} - no changes detected`);
             continue;
           }
+
+          logger.info(`Processing card ${card.productId} - ${!cardSnapshot.exists ? 'new card' : 'updating existing card'}`);
 
           // Process image handling
           const imageResult = await (async () => {
@@ -540,47 +548,70 @@ export class CardSyncService {
 
       logger.info(`Found ${groups.length} groups to process`);
 
-      for (const group of groups) {
+      // Process groups in parallel with higher concurrency
+      const CONCURRENT_GROUPS = 10; // Increased from 5 to 10
+      const CONCURRENT_CHUNKS = 10; // Process 10 chunks of cards concurrently
+      const groupChunks = [];
+      for (let i = 0; i < groups.length; i += CONCURRENT_GROUPS) {
+        groupChunks.push(groups.slice(i, i + CONCURRENT_GROUPS));
+      }
+
+      for (const groupChunk of groupChunks) {
         if (this.isApproachingTimeout(result.timing.startTime)) {
           logger.warn("Approaching function timeout, stopping processing");
           break;
         }
 
-        result.timing.groupStartTime = new Date();
+        // Process each chunk of groups in parallel
+        await Promise.all(groupChunk.map(async (group) => {
+          result.timing.groupStartTime = new Date();
 
-        try {
-          logger.info(`Processing group ${group.groupId}`);
+          try {
+            logger.info(`Processing group ${group.groupId}`);
 
-          const cards = await this.retry.execute(() =>
-            tcgcsvApi.getGroupProducts(group.groupId)
-          );
+            const cards = await this.retry.execute(() =>
+              tcgcsvApi.getGroupProducts(group.groupId)
+            );
 
-          logger.info(`Retrieved ${cards.length} cards for group ${group.groupId}`);
+            logger.info(`Retrieved ${cards.length} cards for group ${group.groupId}`);
 
-          for (let i = 0; i < cards.length; i += this.CHUNK_SIZE) {
-            if (this.isApproachingTimeout(result.timing.startTime)) {
-              logger.warn("Approaching function timeout, stopping chunk processing");
-              break;
+            // Process cards in parallel with higher concurrency
+            const cardChunks = [];
+            for (let i = 0; i < cards.length; i += this.CHUNK_SIZE) {
+              cardChunks.push(cards.slice(i, i + this.CHUNK_SIZE));
             }
 
-            const cardChunk = cards.slice(i, i + this.CHUNK_SIZE);
-            const batchResults = await this.processCards(cardChunk, group.groupId, options);
+            // Process chunks of cards with controlled concurrency
+            for (let i = 0; i < cardChunks.length; i += CONCURRENT_CHUNKS) {
+              if (this.isApproachingTimeout(result.timing.startTime)) {
+                logger.warn("Approaching function timeout, stopping chunk processing");
+                break;
+              }
 
-            result.itemsProcessed += batchResults.processed;
-            result.itemsUpdated += batchResults.updated;
-            result.errors.push(...batchResults.errors);
+              const chunkSlice = cardChunks.slice(i, i + CONCURRENT_CHUNKS);
+              const chunkResults = await Promise.all(
+                chunkSlice.map(chunk => this.processCards(chunk, group.groupId, options))
+              );
+
+              // Aggregate results from parallel processing
+              chunkResults.forEach(batchResults => {
+                result.itemsProcessed += batchResults.processed;
+                result.itemsUpdated += batchResults.updated;
+                result.errors.push(...batchResults.errors);
+              });
+            }
+
+            logger.info(`Completed group ${group.groupId}`, {
+              processed: result.itemsProcessed,
+              updated: result.itemsUpdated,
+              errors: result.errors.length,
+            });
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : "Unknown error";
+            result.errors.push(`Error processing group ${group.groupId}: ${errorMessage}`);
+            logger.error(`Error processing group ${group.groupId}`, { error: errorMessage });
           }
-
-          logger.info(`Completed group ${group.groupId}`, {
-            processed: result.itemsProcessed,
-            updated: result.itemsUpdated,
-            errors: result.errors.length,
-          });
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : "Unknown error";
-          result.errors.push(`Error processing group ${group.groupId}: ${errorMessage}`);
-          logger.error(`Error processing group ${group.groupId}`, { error: errorMessage });
-        }
+        }));
       }
 
       result.timing.endTime = new Date();
