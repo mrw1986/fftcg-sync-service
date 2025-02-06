@@ -9,6 +9,7 @@ import { RetryWithBackoff } from "../utils/retry";
 import * as crypto from "crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import { OptimizedBatchProcessor } from "./batchProcessor";
+import soundex from "soundex-code";
 
 interface CardDeltaData {
   name: string;
@@ -20,6 +21,42 @@ interface CardDeltaData {
   cost: number | null;
   power: number | null;
   elements: string[];
+}
+
+interface SearchTerm {
+  p: number;  // position
+  l: number;  // length
+  s: string;  // soundex
+}
+
+interface SearchIndex {
+  name: Record<string, SearchTerm>;
+  number: Record<string, SearchTerm>;
+}
+
+interface CardDocument {
+  productId: number;
+  name: string;
+  cleanName: string;
+  fullResUrl: string | null;
+  highResUrl: string | null;
+  lowResUrl: string | null;
+  lastUpdated: FirebaseFirestore.FieldValue;
+  groupId: number;
+  isNonCard: boolean;
+  cardNumbers: string[];
+  primaryCardNumber: string;
+  fullCardNumber: string;
+  cardType: string | null;
+  category: string | null;
+  cost: number | null;
+  description: string | null;
+  elements: string[];
+  job: string | null;
+  number: string | null;
+  power: number | null;
+  rarity: string | null;
+  searchIndex: SearchIndex;
 }
 
 export class CardSyncService {
@@ -65,6 +102,32 @@ export class CardSyncService {
   private normalizeName(name: string | number): string {
     const nameStr = String(name);
     return nameStr.charAt(0).toUpperCase() + nameStr.slice(1);
+  }
+
+  private generateSearchTerms(text: string): Record<string, SearchTerm> {
+    const terms: Record<string, SearchTerm> = {};
+    const normalized = text.toLowerCase().trim();
+    
+    // Split into words
+    const words = normalized.split(/\s+/);
+    
+    words.forEach((word, wordIndex) => {
+      // Generate substrings for each word
+      for (let i = 1; i <= word.length; i++) {
+        const substring = word.substring(0, i);
+        
+        // Only store the earliest position for each term
+        if (!terms[substring] || wordIndex < terms[substring].p) {
+          terms[substring] = {
+            p: wordIndex,           // position in text
+            l: word.length,         // length of full word
+            s: soundex.soundex(word)        // soundex code for fuzzy matching
+          };
+        }
+      }
+    });
+    
+    return terms;
   }
 
   private isValidNormalizedNumber(number: string): boolean {
@@ -209,21 +272,6 @@ export class CardSyncService {
     };
   }
 
-  private generateSearchTerms(text: string): string[] {
-    const terms = new Set<string>();
-    const normalized = text.toLowerCase().trim();
-    
-    // Generate substrings for each word
-    normalized.split(/\s+/).forEach(word => {
-      // Add each progressive substring
-      for (let i = 1; i <= word.length; i++) {
-        terms.add(word.substring(0, i));
-      }
-    });
-
-    return Array.from(terms);
-  }
-
   private calculateHash(card: CardProduct): string {
     const deltaData = this.getDeltaData(card);
     return crypto
@@ -332,9 +380,29 @@ export class CardSyncService {
             }
           })();
 
-          const cardDoc = {
+          const normalizedName = this.normalizeName(card.name);
+
+          // Generate search index for name and each card number
+          const searchIndex: SearchIndex = {
+            name: this.generateSearchTerms(normalizedName),
+            number: {} as Record<string, SearchTerm>
+          };
+
+          // Add search terms for each card number
+          cardNumbers.forEach((num: string, index: number) => {
+            const numberTerms = this.generateSearchTerms(num);
+            Object.entries(numberTerms).forEach(([term, termData]) => {
+              // Use the card number's position in the array as the base position
+              searchIndex.number[term] = {
+                ...termData,
+                p: index  // Override position with array index
+              };
+            });
+          });
+
+          const cardDoc: CardDocument = {
             productId: card.productId,
-            name: this.normalizeName(card.name),
+            name: normalizedName,
             cleanName: this.normalizeName(card.cleanName),
             fullResUrl: imageResult.fullResUrl,
             highResUrl: imageResult.highResUrl,
@@ -345,8 +413,6 @@ export class CardSyncService {
             cardNumbers: cardNumbers,
             primaryCardNumber: primaryCardNumber,
             fullCardNumber: fullCardNumber,
-
-            // Flattened extended data
             cardType: this.getExtendedValue(card, "CardType"),
             category: this.getExtendedValue(card, "Category"),
             cost: this.normalizeNumericValue(this.getExtendedValue(card, "Cost")),
@@ -356,13 +422,7 @@ export class CardSyncService {
             number: this.getExtendedValue(card, "Number"),
             power: this.normalizeNumericValue(this.getExtendedValue(card, "Power")),
             rarity: this.getExtendedValue(card, "Rarity"),
-            // Add searchTerms array for typeahead search
-            searchTerms: [
-              // Generate substrings for card name
-              ...this.generateSearchTerms(this.normalizeName(card.name)),
-              // Generate substrings for card number
-              ...this.generateSearchTerms(fullCardNumber)
-            ]
+            searchIndex: searchIndex
           };
 
           // Add main card document
