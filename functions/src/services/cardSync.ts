@@ -385,7 +385,7 @@ export class CardSyncService {
       const productIds = cards.map((card) => card.productId);
       const hashMap = await this.getStoredHashes(productIds);
 
-      await Promise.all(cards.map(async (card) => {
+      for (const card of cards) {
         try {
           result.processed++;
 
@@ -396,7 +396,7 @@ export class CardSyncService {
           const storedHash = hashMap.get(card.productId);
 
           if (currentHash === storedHash && !options.forceUpdate) {
-            return;
+            continue;
           }
 
           // Process image handling
@@ -508,7 +508,7 @@ export class CardSyncService {
           result.errors.push(`Error processing card ${card.productId}: ${errorMessage}`);
           logger.error(`Error processing card ${card.productId}`, { error: errorMessage });
         }
-      }));
+      }
 
       await this.batchProcessor.commitAll();
     } catch (error) {

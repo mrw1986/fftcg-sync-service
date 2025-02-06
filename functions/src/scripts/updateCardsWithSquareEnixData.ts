@@ -556,12 +556,7 @@ export async function main() {
       // Commit any remaining updates
       await batchProcessor.commitAll();
 
-      logger.info("Update process completed", {
-        totalCards: tcgCards.length,
-        matchesFound: matchCount,
-        cardsUpdated: updateCount
-      });
-
+      // Return result without logging (cardSync.ts will handle logging)
       return {
         success: true,
         totalCards: tcgCards.length,

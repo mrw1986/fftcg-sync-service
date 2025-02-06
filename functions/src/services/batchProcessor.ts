@@ -4,6 +4,7 @@ export class OptimizedBatchProcessor {
   private batchPool: WriteBatch[] = [];
   private operationsInBatch: Map<WriteBatch, number> = new Map();
   private activePromises: Promise<void>[] = [];
+  private committedBatches: Set<WriteBatch> = new Set(); // Track committed batches
 
   private readonly COMMIT_TIMEOUT = 60000; // 60 seconds
   private readonly MAX_RETRIES = 3;
@@ -20,6 +21,7 @@ export class OptimizedBatchProcessor {
   private initializeBatchPool(): void {
     this.batchPool = [];
     this.operationsInBatch.clear();
+    this.committedBatches.clear();
 
     for (let i = 0; i < this.maxConcurrentBatches; i++) {
       const batch = this.db.batch();
@@ -28,52 +30,74 @@ export class OptimizedBatchProcessor {
     }
   }
 
+  private createNewBatch(): WriteBatch {
+    const batch = this.db.batch();
+    this.operationsInBatch.set(batch, 0);
+    return batch;
+  }
+
   private getAvailableBatch(): WriteBatch {
+    // Remove any committed batches from the pool
+    this.batchPool = this.batchPool.filter(batch => !this.committedBatches.has(batch));
+
     // Try to find a batch with room
     for (const batch of this.batchPool) {
       const operations = this.operationsInBatch.get(batch) || 0;
-      if (operations < this.maxOperationsPerBatch) {
+      if (operations < this.maxOperationsPerBatch && !this.committedBatches.has(batch)) {
         return batch;
       }
     }
 
-    // If all batches are full, create a new one
-    const newBatch = this.db.batch();
+    // If all batches are full or we need more batches, create a new one
+    const newBatch = this.createNewBatch();
 
-    // Find the index of a full batch to replace
-    const indexToReplace = this.batchPool.findIndex((batch) =>
-      (this.operationsInBatch.get(batch) || 0) >= this.maxOperationsPerBatch
-    );
+    // Find a full batch to commit if we're at capacity
+    if (this.batchPool.length >= this.maxConcurrentBatches) {
+      const fullBatchIndex = this.batchPool.findIndex((batch) =>
+        (this.operationsInBatch.get(batch) || 0) >= this.maxOperationsPerBatch
+      );
 
-    if (indexToReplace >= 0) {
-      // Commit the full batch
-      const batchToCommit = this.batchPool[indexToReplace];
-      const commitPromise = this.commitBatch(batchToCommit);
-      this.activePromises.push(commitPromise);
-
-      // Replace it with the new batch
-      this.batchPool[indexToReplace] = newBatch;
-    } else {
-      // If no full batch found, add to pool if there's room
-      if (this.batchPool.length < this.maxConcurrentBatches) {
-        this.batchPool.push(newBatch);
+      if (fullBatchIndex >= 0) {
+        // Commit the full batch
+        const batchToCommit = this.batchPool[fullBatchIndex];
+        const commitPromise = this.commitBatch(batchToCommit);
+        this.activePromises.push(commitPromise);
+        
+        // Replace it with the new batch
+        this.batchPool[fullBatchIndex] = newBatch;
       } else {
-        // Replace the first batch
+        // Replace the first batch if no full batch found
         const batchToCommit = this.batchPool[0];
         const commitPromise = this.commitBatch(batchToCommit);
         this.activePromises.push(commitPromise);
         this.batchPool[0] = newBatch;
       }
+    } else {
+      // Add to pool if there's room
+      this.batchPool.push(newBatch);
     }
 
-    this.operationsInBatch.set(newBatch, 0);
     return newBatch;
   }
 
   async addOperation(operation: (batch: WriteBatch) => void): Promise<void> {
     const batch = this.getAvailableBatch();
-    operation(batch);
-    this.operationsInBatch.set(batch, (this.operationsInBatch.get(batch) || 0) + 1);
+    
+    // Double check the batch hasn't been committed
+    if (this.committedBatches.has(batch)) {
+      const newBatch = this.createNewBatch();
+      const index = this.batchPool.indexOf(batch);
+      if (index >= 0) {
+        this.batchPool[index] = newBatch;
+      } else {
+        this.batchPool.push(newBatch);
+      }
+      operation(newBatch);
+      this.operationsInBatch.set(newBatch, 1);
+    } else {
+      operation(batch);
+      this.operationsInBatch.set(batch, (this.operationsInBatch.get(batch) || 0) + 1);
+    }
 
     // Clean up completed promises
     const newActivePromises: Promise<void>[] = [];
@@ -116,7 +140,9 @@ export class OptimizedBatchProcessor {
         timeoutPromise
       ]);
 
-      this.operationsInBatch.delete(batch); // Remove the committed batch from tracking
+      // Mark the batch as committed and remove from tracking
+      this.committedBatches.add(batch);
+      this.operationsInBatch.delete(batch);
     } catch (error) {
       const typedError = error as { code?: string; details?: string; message?: string };
       const isRetryableError =
@@ -141,6 +167,7 @@ export class OptimizedBatchProcessor {
       // Gather all uncommitted batches
       const uncommittedBatches = this.batchPool.filter((batch) =>
         this.operationsInBatch.has(batch) &&
+        !this.committedBatches.has(batch) &&
         (this.operationsInBatch.get(batch) || 0) > 0
       );
 
