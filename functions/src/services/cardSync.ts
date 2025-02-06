@@ -543,10 +543,11 @@ export class CardSyncService {
 
       // Run Square Enix sync after TCGCSV sync
       try {
+        // Run Square Enix sync first
         const { main: updateCards } = await import("../scripts/updateCardsWithSquareEnixData");
         await updateCards();
-      } catch (seError) {
-        const errorMessage = seError instanceof Error ? seError.message : "Unknown error";
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
         result.errors.push(`Square Enix sync failed: ${errorMessage}`);
         logger.error("Square Enix sync failed", { error: errorMessage });
         result.success = false;

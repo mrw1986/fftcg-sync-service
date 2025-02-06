@@ -1,5 +1,52 @@
 {
-  "indexes": [],
+  "indexes": [
+    {
+      "collectionGroup": "cards",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "searchName",
+          "mode": "ASCENDING"
+        },
+        {
+          "fieldPath": "lastUpdated",
+          "mode": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "cards",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "searchNumber",
+          "mode": "ASCENDING"
+        },
+        {
+          "fieldPath": "lastUpdated",
+          "mode": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "cards",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "searchName",
+          "mode": "ASCENDING"
+        },
+        {
+          "fieldPath": "searchNumber",
+          "mode": "ASCENDING"
+        },
+        {
+          "fieldPath": "lastUpdated",
+          "mode": "DESCENDING"
+        }
+      ]
+    }
+  ],
   "fieldOverrides": [
     {
       "collectionGroup": "cards",

@@ -111,6 +111,16 @@ export interface SyncOptions {
   dryRun?: boolean;
 }
 
+export interface SearchTerm {
+  k: string;   // The key/term being indexed
+  w: string;   // The full word this term is from
+  p: number;   // Position in the text
+}
+
+export interface SearchMap {
+  [key: string]: SearchTerm[];
+}
+
 export interface CardChanges {
   productId: number;
   name: string;
@@ -123,6 +133,9 @@ export interface CardChanges {
   isNonCard: boolean;
   cardNumbers: string[];
   primaryCardNumber: string;
+  searchName: SearchMap;
+  searchNumber: SearchMap;
+  searchLastUpdated: FieldValue;
 }
 
 export interface PriceChanges {

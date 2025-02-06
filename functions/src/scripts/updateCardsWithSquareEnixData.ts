@@ -556,6 +556,12 @@ export async function main() {
       // Commit any remaining updates
       await batchProcessor.commitAll();
 
+      // Run search indexing after all updates are complete
+      logger.info("Starting search index update");
+      const { main: updateSearchIndex } = await import("./updateSearchIndex");
+      await updateSearchIndex();
+      logger.info("Search index update completed");
+
       // Return result without logging (cardSync.ts will handle logging)
       return {
         success: true,
