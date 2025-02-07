@@ -38,7 +38,7 @@ function normalizeCardNumber(number: string): string {
   // Log original and cleaned number
   logger.info("Normalizing number", {
     original: number,
-    cleaned: clean
+    cleaned: clean,
   });
 
   // Handle PR prefix case (PR-###)
@@ -47,7 +47,7 @@ function normalizeCardNumber(number: string): string {
     if (match) {
       const normalized = `PR-${match[1].padStart(3, "0")}`;
       logger.info("Normalized PR number", {
-        result: normalized
+        result: normalized,
       });
       return normalized;
     }
@@ -59,7 +59,7 @@ function normalizeCardNumber(number: string): string {
     if (match) {
       const normalized = `A-${match[1]}`;
       logger.info("Normalized A number", {
-        result: normalized
+        result: normalized,
       });
       return normalized;
     }
@@ -71,13 +71,13 @@ function normalizeCardNumber(number: string): string {
     const [, prefix, nums, letter] = match;
     const normalized = letter ? `${prefix}-${nums}${letter}` : `${prefix}-${nums}`;
     logger.info("Normalized numeric number", {
-      result: normalized
+      result: normalized,
     });
     return normalized;
   }
 
   logger.info("Using cleaned number", {
-    result: clean
+    result: clean,
   });
   return clean;
 }
@@ -129,26 +129,26 @@ async function main() {
 
     // Fetch a sample of cards from both collections
     const [tcgCardsSnapshot, seCardsSnapshot] = await Promise.all([
-      retry.execute(() => 
+      retry.execute(() =>
         db.collection(COLLECTION.CARDS)
           .limit(10)
           .get()
       ),
-      retry.execute(() => 
+      retry.execute(() =>
         db.collection(COLLECTION.SQUARE_ENIX_CARDS)
           .limit(20) // Fetch more to increase chance of matches
           .get()
-      )
+      ),
     ]);
 
-    const tcgCards = tcgCardsSnapshot.docs.map(doc => ({
+    const tcgCards = tcgCardsSnapshot.docs.map((doc) => ({
       id: doc.id,
-      ...doc.data()
+      ...doc.data(),
     })) as TcgCard[];
 
-    const seCards = seCardsSnapshot.docs.map(doc => ({
+    const seCards = seCardsSnapshot.docs.map((doc) => ({
       id: doc.id,
-      ...doc.data()
+      ...doc.data(),
     })) as SquareEnixCard[];
 
     logger.info(`Fetched ${tcgCards.length} TCG cards and ${seCards.length} Square Enix cards`);
@@ -161,7 +161,7 @@ async function main() {
         cardNumbers: tcgCard.cardNumbers,
         fullCardNumber: tcgCard.fullCardNumber,
         number: tcgCard.number,
-        primaryCardNumber: tcgCard.primaryCardNumber
+        primaryCardNumber: tcgCard.primaryCardNumber,
       });
 
       // Get all possible card numbers for matching
@@ -169,40 +169,40 @@ async function main() {
         ...(tcgCard.cardNumbers || []),
         tcgCard.fullCardNumber,
         tcgCard.number,
-        tcgCard.primaryCardNumber
-      ].filter(Boolean).map(num => normalizeCardNumber(num as string));
+        tcgCard.primaryCardNumber,
+      ].filter(Boolean).map((num) => normalizeCardNumber(num as string));
 
       logger.info("Card numbers to match:", {
         original: {
           cardNumbers: tcgCard.cardNumbers,
           fullCardNumber: tcgCard.fullCardNumber,
           number: tcgCard.number,
-          primaryCardNumber: tcgCard.primaryCardNumber
+          primaryCardNumber: tcgCard.primaryCardNumber,
         },
-        normalized: cardNumbers
+        normalized: cardNumbers,
       });
 
       // Find potential matches
       let foundCodeMatch = false;
-      const matches = seCards.filter(seCard => {
+      const matches = seCards.filter((seCard) => {
         // First check if the code matches any of the card numbers
         const normalizedSeCode = normalizeCardNumber(seCard.code);
-        
+
         // Try different normalization approaches for comparison
-        const codeMatches = cardNumbers.some(num => {
+        const codeMatches = cardNumbers.some((num) => {
           const exactMatch = num === normalizedSeCode;
           const noSuffixMatch = num.replace(/[A-Z]$/, "") === normalizedSeCode.replace(/[A-Z]$/, "");
           const result = exactMatch || noSuffixMatch;
-          
+
           if (result) {
             logger.info("Found code match:", {
               tcgNumber: num,
               seCode: normalizedSeCode,
-              matchType: exactMatch ? "exact" : "no-suffix"
+              matchType: exactMatch ? "exact" : "no-suffix",
             });
             foundCodeMatch = true;
           }
-          
+
           return result;
         });
 
@@ -211,18 +211,18 @@ async function main() {
 
         // Validate the match using other properties
         const isValid = validateCardMatch(tcgCard, seCard);
-        
+
         if (isValid) {
           logger.info("Match validated!", {
             tcgCard: {
               name: tcgCard.name,
-              numbers: cardNumbers
+              numbers: cardNumbers,
             },
             seCard: {
               name: seCard.name,
               code: seCard.code,
-              normalizedCode: normalizedSeCode
-            }
+              normalizedCode: normalizedSeCode,
+            },
           });
         }
 
@@ -232,7 +232,7 @@ async function main() {
       if (matches.length === 0) {
         logger.info("No matches found", {
           foundCodeMatch,
-          cardNumbers
+          cardNumbers,
         });
         continue;
       }
@@ -243,12 +243,12 @@ async function main() {
           tcgCard: {
             id: tcgCard.id,
             name: tcgCard.name,
-            cardNumbers
+            cardNumbers,
           },
           squareEnixCard: {
             id: match.id,
             code: match.code,
-            name: match.name
+            name: match.name,
           },
           fieldsToUpdate: {
             cardType: match.type || undefined,
@@ -257,14 +257,13 @@ async function main() {
             job: match.job || undefined,
             name: match.name || undefined,
             power: match.power || undefined,
-            rarity: match.rarity || undefined
-          }
+            rarity: match.rarity || undefined,
+          },
         });
       }
     }
 
     logger.info("\nTest completed successfully");
-
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     logger.error("Test failed", { error: errorMessage });

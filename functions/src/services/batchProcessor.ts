@@ -3,7 +3,7 @@ import { Firestore, WriteBatch } from "firebase-admin/firestore";
 export class OptimizedBatchProcessor {
   private batchPool: WriteBatch[] = [];
   private operationsInBatch: Map<WriteBatch, number> = new Map();
-  private activePromises: Promise<void>[] = [];  
+  private activePromises: Promise<void>[] = [];
 
   constructor(
     private readonly db: Firestore,

@@ -60,25 +60,25 @@ export class CardSyncService {
 
   private isApproachingTimeout(startTime: Date, safetyMarginSeconds = 30): boolean {
     const executionTime = (new Date().getTime() - startTime.getTime()) / 1000;
-    return executionTime > (this.MAX_EXECUTION_TIME - safetyMarginSeconds);
+    return executionTime > this.MAX_EXECUTION_TIME - safetyMarginSeconds;
   }
 
   private getElements(card: CardProduct): string[] {
     // Check if it's a Crystal card by looking at card type or number
     const cardType = card.extendedData.find((data) => data.name === "CardType")?.value;
     const numberField = card.extendedData.find((data) => data.name === "Number");
-    
+
     if (
-      (cardType && String(cardType).toLowerCase() === 'crystal') ||
-      (numberField?.value && String(numberField.value).toUpperCase().startsWith('C-'))
+      (cardType && String(cardType).toLowerCase() === "crystal") ||
+      (numberField?.value && String(numberField.value).toUpperCase().startsWith("C-"))
     ) {
       logger.info("Setting Crystal element for card", {
         id: card.productId,
         name: card.name,
         type: cardType,
-        number: numberField?.value
+        number: numberField?.value,
       });
-      return ['Crystal'];
+      return ["Crystal"];
     }
 
     // For non-Crystal cards, process elements normally
@@ -210,7 +210,7 @@ export class CardSyncService {
           return normalizedNum.replace(/\//g, ";");
         });
         // Filter out any invalid numbers before adding
-        const validNums = normalizedNums.filter(num => num !== "N/A");
+        const validNums = normalizedNums.filter((num) => num !== "N/A");
         numbers.push(...validNums);
       });
 
@@ -245,7 +245,7 @@ export class CardSyncService {
       original: originalFormat,
       normalized: uniqueNumbers,
       primary,
-      fullNumber
+      fullNumber,
     });
 
     return {
@@ -276,10 +276,7 @@ export class CardSyncService {
 
   private calculateHash(card: CardProduct): string {
     const deltaData = this.getDeltaData(card);
-    return crypto
-      .createHash("md5")
-      .update(JSON.stringify(deltaData))
-      .digest("hex");
+    return crypto.createHash("md5").update(JSON.stringify(deltaData)).digest("hex");
   }
 
   private async getStoredHashes(productIds: number[]): Promise<Map<number, string>> {
@@ -305,24 +302,22 @@ export class CardSyncService {
       chunks.push(uncachedIds.slice(i, i + 10));
     }
 
-    await Promise.all(chunks.map(async (chunk) => {
-      const refs = chunk.map((id) =>
-        db.collection(COLLECTION.CARD_HASHES).doc(id.toString())
-      );
+    await Promise.all(
+      chunks.map(async (chunk) => {
+        const refs = chunk.map((id) => db.collection(COLLECTION.CARD_HASHES).doc(id.toString()));
 
-      const snapshots = await this.retry.execute(() =>
-        db.getAll(...refs)
-      );
+        const snapshots = await this.retry.execute(() => db.getAll(...refs));
 
-      snapshots.forEach((snap, index) => {
-        const id = chunk[index];
-        const hash = snap.exists ? snap.data()?.hash : null;
-        if (hash) {
-          hashMap.set(id, hash);
-          this.cache.set(`hash_${id}`, hash);
-        }
-      });
-    }));
+        snapshots.forEach((snap, index) => {
+          const id = chunk[index];
+          const hash = snap.exists ? snap.data()?.hash : null;
+          if (hash) {
+            hashMap.set(id, hash);
+            this.cache.set(`hash_${id}`, hash);
+          }
+        });
+      })
+    );
 
     return hashMap;
   }
@@ -346,117 +341,120 @@ export class CardSyncService {
       const productIds = cards.map((card) => card.productId);
       const hashMap = await this.getStoredHashes(productIds);
 
-      await Promise.all(cards.map(async (card) => {
-        try {
-          result.processed++;
+      await Promise.all(
+        cards.map(async (card) => {
+          try {
+            result.processed++;
 
-          const { numbers: cardNumbers, primary: primaryCardNumber,
-            fullNumber: fullCardNumber } = this.getCardNumbers(card);
+            const {
+              numbers: cardNumbers,
+              primary: primaryCardNumber,
+              fullNumber: fullCardNumber,
+            } = this.getCardNumbers(card);
 
-          const currentHash = this.calculateHash(card);
-          const storedHash = hashMap.get(card.productId);
+            const currentHash = this.calculateHash(card);
+            const storedHash = hashMap.get(card.productId);
 
-          // Check if the card document exists
-          const cardRef = db.collection(COLLECTION.CARDS).doc(card.productId.toString());
-          const cardSnapshot = await this.retry.execute(() => cardRef.get());
+            // Check if the card document exists
+            const cardRef = db.collection(COLLECTION.CARDS).doc(card.productId.toString());
+            const cardSnapshot = await this.retry.execute(() => cardRef.get());
 
-          // Skip only if document exists AND hash matches (unless forcing update)
-          if (cardSnapshot.exists && currentHash === storedHash && !options.forceUpdate) {
-            logger.info(`Skipping card ${card.productId} - no changes detected`);
-            return;
-          }
-
-          logger.info(`Processing card ${card.productId} - ${!cardSnapshot.exists ? 'new card' : 'updating existing card'}`);
-
-          // Process image handling
-          const imageResult = await (async () => {
-            if (card.imageUrl) {
-              // If URL exists, process normally
-              return await this.retry.execute(() =>
-                storageService.processAndStoreImage(
-                  card.imageUrl,
-                  card.productId,
-                  groupId
-                )
-              );
-            } else {
-              // For any card without image, use null
-              return {
-                fullResUrl: null,
-                highResUrl: null,
-                lowResUrl: null,
-                metadata: {}
-              } as ImageResult;
+            // Skip only if document exists AND hash matches (unless forcing update)
+            if (cardSnapshot.exists && currentHash === storedHash && !options.forceUpdate) {
+              logger.info(`Skipping card ${card.productId} - no changes detected`);
+              return;
             }
-          })();
 
-          const cardDoc: CardDocument = {
-            productId: card.productId,
-            name: this.normalizeName(card.name),
-            cleanName: this.normalizeName(card.cleanName),
-            fullResUrl: imageResult.fullResUrl,
-            highResUrl: imageResult.highResUrl,
-            lowResUrl: imageResult.lowResUrl,
-            lastUpdated: FieldValue.serverTimestamp(),
-            groupId: parseInt(groupId),
-            isNonCard: this.isNonCardProduct(card),
-            cardNumbers,
-            primaryCardNumber,
-            fullCardNumber,
-            cardType: this.getExtendedValue(card, "CardType"),
-            category: this.getExtendedValue(card, "Category"),
-            cost: this.normalizeNumericValue(this.getExtendedValue(card, "Cost")),
-            description: this.getExtendedValue(card, "Description"),
-            elements: this.getElements(card),
-            job: this.getExtendedValue(card, "Job"),
-            number: this.getExtendedValue(card, "Number"),
-            power: this.normalizeNumericValue(this.getExtendedValue(card, "Power")),
-            rarity: this.getExtendedValue(card, "Rarity")
-          };
-
-          // Add main card document
-          await this.batchProcessor.addOperation((batch) => {
-            const cardRef = db.collection(COLLECTION.CARDS).doc(card.productId.toString());
-            batch.set(cardRef, cardDoc, { merge: true });
-          });
-
-          // Add image metadata
-          await this.batchProcessor.addOperation((batch) => {
-            const cardRef = db.collection(COLLECTION.CARDS).doc(card.productId.toString());
-            batch.set(
-              cardRef.collection("metadata").doc("image"),
-              imageResult.metadata,
-              { merge: true }
+            logger.info(
+              `Processing card ${card.productId} - ${!cardSnapshot.exists ? "new card" : "updating existing card"}`
             );
-          });
 
-          // Update hash
-          await this.batchProcessor.addOperation((batch) => {
-            const hashRef = db.collection(COLLECTION.CARD_HASHES).doc(card.productId.toString());
-            batch.set(hashRef, {
-              hash: currentHash,
-              lastUpdated: FieldValue.serverTimestamp(),
-            }, { merge: true });
-          });
+            // Process image handling
+            const imageResult = await (async () => {
+              if (card.imageUrl) {
+                // If URL exists, process normally
+                return await this.retry.execute(() =>
+                  storageService.processAndStoreImage(card.imageUrl, card.productId, groupId)
+                );
+              } else {
+                // For any card without image, use null
+                return {
+                  fullResUrl: null,
+                  highResUrl: null,
+                  lowResUrl: null,
+                  metadata: {},
+                } as ImageResult;
+              }
+            })();
 
-          // Save delta
-          await this.batchProcessor.addOperation((batch) => {
-            const deltaRef = db.collection(COLLECTION.CARD_DELTAS).doc();
-            batch.set(deltaRef, {
+            const cardDoc: CardDocument = {
               productId: card.productId,
-              changes: cardDoc,
-              timestamp: FieldValue.serverTimestamp(),
-            });
-          });
+              name: this.normalizeName(card.name),
+              cleanName: this.normalizeName(card.cleanName),
+              fullResUrl: imageResult.fullResUrl,
+              highResUrl: imageResult.highResUrl,
+              lowResUrl: imageResult.lowResUrl,
+              lastUpdated: FieldValue.serverTimestamp(),
+              groupId: parseInt(groupId),
+              isNonCard: this.isNonCardProduct(card),
+              cardNumbers,
+              primaryCardNumber,
+              fullCardNumber,
+              cardType: this.getExtendedValue(card, "CardType"),
+              category: this.getExtendedValue(card, "Category"),
+              cost: this.normalizeNumericValue(this.getExtendedValue(card, "Cost")),
+              description: this.getExtendedValue(card, "Description"),
+              elements: this.getElements(card),
+              job: this.getExtendedValue(card, "Job"),
+              number: this.getExtendedValue(card, "Number"),
+              power: this.normalizeNumericValue(this.getExtendedValue(card, "Power")),
+              rarity: this.getExtendedValue(card, "Rarity"),
+            };
 
-          this.cache.set(`hash_${card.productId}`, currentHash);
-          result.updated++;
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : "Unknown error";
-          result.errors.push(`Error processing card ${card.productId}: ${errorMessage}`);
-          logger.error(`Error processing card ${card.productId}`, { error: errorMessage });
-        }
-      }));
+            // Add main card document
+            await this.batchProcessor.addOperation((batch) => {
+              const cardRef = db.collection(COLLECTION.CARDS).doc(card.productId.toString());
+              batch.set(cardRef, cardDoc, { merge: true });
+            });
+
+            // Add image metadata
+            await this.batchProcessor.addOperation((batch) => {
+              const cardRef = db.collection(COLLECTION.CARDS).doc(card.productId.toString());
+              batch.set(cardRef.collection("metadata").doc("image"), imageResult.metadata, { merge: true });
+            });
+
+            // Update hash
+            await this.batchProcessor.addOperation((batch) => {
+              const hashRef = db.collection(COLLECTION.CARD_HASHES).doc(card.productId.toString());
+              batch.set(
+                hashRef,
+                {
+                  hash: currentHash,
+                  lastUpdated: FieldValue.serverTimestamp(),
+                },
+                { merge: true }
+              );
+            });
+
+            // Save delta
+            await this.batchProcessor.addOperation((batch) => {
+              const deltaRef = db.collection(COLLECTION.CARD_DELTAS).doc();
+              batch.set(deltaRef, {
+                productId: card.productId,
+                changes: cardDoc,
+                timestamp: FieldValue.serverTimestamp(),
+              });
+            });
+
+            this.cache.set(`hash_${card.productId}`, currentHash);
+            result.updated++;
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : "Unknown error";
+            result.errors.push(`Error processing card ${card.productId}: ${errorMessage}`);
+            logger.error(`Error processing card ${card.productId}`, { error: errorMessage });
+          }
+        })
+      );
 
       await this.batchProcessor.commitAll();
     } catch (error) {
@@ -482,9 +480,9 @@ export class CardSyncService {
     try {
       logger.info("Starting card sync", { options });
 
-      const groups = options.groupId ?
-        [{ groupId: options.groupId }] :
-        await this.retry.execute(() => tcgcsvApi.getGroups());
+      const groups = options.groupId
+        ? [{ groupId: options.groupId }]
+        : await this.retry.execute(() => tcgcsvApi.getGroups());
 
       logger.info(`Found ${groups.length} groups to process`);
 
@@ -499,9 +497,7 @@ export class CardSyncService {
         try {
           logger.info(`Processing group ${group.groupId}`);
 
-          const cards = await this.retry.execute(() =>
-            tcgcsvApi.getGroupProducts(group.groupId)
-          );
+          const cards = await this.retry.execute(() => tcgcsvApi.getGroupProducts(group.groupId));
 
           logger.info(`Retrieved ${cards.length} cards for group ${group.groupId}`);
 
@@ -532,8 +528,7 @@ export class CardSyncService {
       }
 
       result.timing.endTime = new Date();
-      result.timing.duration =
-        (result.timing.endTime.getTime() - result.timing.startTime.getTime()) / 1000;
+      result.timing.duration = (result.timing.endTime.getTime() - result.timing.startTime.getTime()) / 1000;
 
       logger.info(`TCGCSV sync completed in ${result.timing.duration}s`, {
         processed: result.itemsProcessed,
@@ -541,17 +536,7 @@ export class CardSyncService {
         errors: result.errors.length,
       });
 
-      // Run Square Enix sync after TCGCSV sync
-      try {
-        // Run Square Enix sync first
-        const { main: updateCards } = await import("../scripts/updateCardsWithSquareEnixData");
-        await updateCards();
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : "Unknown error";
-        result.errors.push(`Square Enix sync failed: ${errorMessage}`);
-        logger.error("Square Enix sync failed", { error: errorMessage });
-        result.success = false;
-      }
+      // TCGCSV sync complete - Square Enix sync and search indexing handled by syncAll.ts
     } catch (error) {
       result.success = false;
       const errorMessage = error instanceof Error ? error.message : "Unknown error";

@@ -20,10 +20,10 @@ async function main() {
     if (syncResult.errors.length > 0) {
       logger.error("Square Enix sync errors:", {
         errorCount: syncResult.errors.length,
-        errors: syncResult.errors.map(error => ({
+        errors: syncResult.errors.map((error) => ({
           error,
-          timestamp: new Date().toISOString()
-        }))
+          timestamp: new Date().toISOString(),
+        })),
       });
     }
   } catch (error) {

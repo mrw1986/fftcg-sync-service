@@ -1,6 +1,28 @@
 import { db, COLLECTION } from "../config/firebase";
 import { squareEnixSync } from "./squareEnixSync";
 import { SyncResult, SquareEnixCardDoc } from "../types";
+
+interface SquareEnixApiResponse {
+  id: string;
+  code: string;
+  name_en: string;
+  type_en: string;
+  job_en: string;
+  text_en: string;
+  element: string[];
+  rarity: string;
+  cost: string;
+  power: string;
+  category_1: string;
+  category_2?: string;
+  multicard: string;
+  ex_burst: string;
+  set: string[];
+  images: {
+    thumbs: string[];
+    full: string[];
+  };
+}
 import { logger } from "../utils/logger";
 import { RetryWithBackoff } from "../utils/retry";
 import { FieldValue } from "firebase-admin/firestore";
@@ -20,7 +42,7 @@ export class SquareEnixStorageService {
 
   private isApproachingTimeout(startTime: Date, safetyMarginSeconds = 30): boolean {
     const executionTime = (new Date().getTime() - startTime.getTime()) / 1000;
-    return executionTime > (this.MAX_EXECUTION_TIME - safetyMarginSeconds);
+    return executionTime > this.MAX_EXECUTION_TIME - safetyMarginSeconds;
   }
 
   private sanitizeDocumentId(code: string): string {
@@ -29,7 +51,7 @@ export class SquareEnixStorageService {
   }
 
   private async processCards(
-    cards: any[],
+    cards: SquareEnixApiResponse[],
     startTime: Date,
     options: { forceUpdate?: boolean } = {}
   ): Promise<{
@@ -44,65 +66,67 @@ export class SquareEnixStorageService {
     };
 
     try {
-      await Promise.all(cards.map(async (card) => {
-        try {
-          if (this.isApproachingTimeout(startTime)) {
-            logger.warn("Approaching function timeout, skipping remaining cards");
-            return;
+      await Promise.all(
+        cards.map(async (card) => {
+          try {
+            if (this.isApproachingTimeout(startTime)) {
+              logger.warn("Approaching function timeout, skipping remaining cards");
+              return;
+            }
+
+            result.processed++;
+
+            // Check cache first
+            const cacheKey = `hash_${card.code}`;
+            const cachedCard = this.cache.get(cacheKey);
+            if (cachedCard && !options.forceUpdate) {
+              return;
+            }
+
+            // Filter and transform fields
+            const cardDoc: SquareEnixCardDoc = {
+              id: parseInt(card.id),
+              code: card.code,
+              name: card.name_en,
+              type: card.type_en,
+              job: card.job_en,
+              text: card.text_en,
+              element: card.element, // Already translated by squareEnixSync
+              rarity: card.rarity,
+              cost: card.cost,
+              power: card.power,
+              category_1: card.category_1,
+              category_2: card.category_2 || null,
+              multicard: card.multicard === "1",
+              ex_burst: card.ex_burst === "1",
+              set: card.set,
+              images: {
+                thumbs: card.images.thumbs,
+                full: card.images.full,
+              },
+              processedImages: {
+                highResUrl: null,
+                lowResUrl: null,
+              },
+              productId: null, // Will be updated during matching
+              groupId: null, // Will be updated during matching
+              lastUpdated: FieldValue.serverTimestamp(),
+            };
+
+            await this.batchProcessor.addOperation((batch) => {
+              const docRef = db.collection(COLLECTION.SQUARE_ENIX_CARDS).doc(this.sanitizeDocumentId(card.code));
+              batch.set(docRef, cardDoc, { merge: true });
+            });
+
+            this.cache.set(cacheKey, JSON.stringify(card));
+            result.updated++;
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : "Unknown error";
+            result.errors.push(`Error processing card ${card.code}: ${errorMessage}`);
+            logger.error(`Error processing card ${card.code}`, { error: errorMessage });
           }
-
-          result.processed++;
-
-          // Check cache first
-          const cacheKey = `hash_${card.code}`;
-          const cachedCard = this.cache.get(cacheKey);
-          if (cachedCard && !options.forceUpdate) {
-            return;
-          }
-
-          // Filter and transform fields
-          const cardDoc: SquareEnixCardDoc = {
-            id: card.id,
-            code: card.code,
-            name: card.name_en,
-            type: card.type_en,
-            job: card.job_en,
-            text: card.text_en,
-            element: card.element, // Already translated by squareEnixSync
-            rarity: card.rarity,
-            cost: card.cost,
-            power: card.power,
-            category_1: card.category_1,
-            category_2: card.category_2 || null,
-            multicard: card.multicard === "1",
-            ex_burst: card.ex_burst === "1",
-            set: card.set,
-            images: {
-              thumbs: card.images.thumbs,
-              full: card.images.full,
-            },
-            processedImages: {
-              highResUrl: null,
-              lowResUrl: null,
-            },
-            productId: null, // Will be updated during matching
-            groupId: null, // Will be updated during matching
-            lastUpdated: FieldValue.serverTimestamp(),
-          };
-
-          await this.batchProcessor.addOperation((batch) => {
-            const docRef = db.collection(COLLECTION.SQUARE_ENIX_CARDS).doc(this.sanitizeDocumentId(card.code));
-            batch.set(docRef, cardDoc, { merge: true });
-          });
-
-          this.cache.set(cacheKey, card);
-          result.updated++;
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : "Unknown error";
-          result.errors.push(`Error processing card ${card.code}: ${errorMessage}`);
-          logger.error(`Error processing card ${card.code}`, { error: errorMessage });
-        }
-      }));
+        })
+      );
 
       // Commit all batched operations
       await this.batchProcessor.commitAll();
@@ -161,8 +185,7 @@ export class SquareEnixStorageService {
       }
 
       result.timing.endTime = new Date();
-      result.timing.duration =
-        (result.timing.endTime.getTime() - result.timing.startTime.getTime()) / 1000;
+      result.timing.duration = (result.timing.endTime.getTime() - result.timing.startTime.getTime()) / 1000;
 
       logger.info(`Square Enix sync completed in ${result.timing.duration}s`, {
         processed: result.itemsProcessed,

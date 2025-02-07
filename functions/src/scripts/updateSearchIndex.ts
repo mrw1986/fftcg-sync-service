@@ -5,9 +5,9 @@ import { FieldValue } from "firebase-admin/firestore";
 
 interface SearchMap {
   [key: string]: {
-    k: string;   // The key/term being indexed
-    w: string;   // The full word this term is from
-    p: number;   // Position in the text
+    k: string; // The key/term being indexed
+    w: string; // The full word this term is from
+    p: number; // Position in the text
   }[];
 }
 
@@ -42,16 +42,16 @@ function generateSearchMap(text: string): SearchMap {
     const terms = generateNGrams(word);
 
     // Add each term to the search map
-    terms.forEach(term => {
+    terms.forEach((term) => {
       if (!searchMap[term]) {
         searchMap[term] = [];
       }
 
       // Add term data with position information
       searchMap[term].push({
-        k: term,           // The search term
-        w: word,          // The full word
-        p: position       // Position in text
+        k: term, // The search term
+        w: word, // The full word
+        p: position, // Position in text
       });
     });
   });
@@ -64,22 +64,22 @@ function generateNumberSearchMap(numbers: string[]): SearchMap {
 
   numbers.forEach((number, position) => {
     // Clean and normalize the number
-    const cleanNumber = number.toLowerCase().replace(/[^a-z0-9]/g, '');
-    
+    const cleanNumber = number.toLowerCase().replace(/[^a-z0-9]/g, "");
+
     // Generate n-grams for the number
     const terms = generateNGrams(cleanNumber);
 
     // Add each term to the search map
-    terms.forEach(term => {
+    terms.forEach((term) => {
       if (!searchMap[term]) {
         searchMap[term] = [];
       }
 
       // Add term data with position information
       searchMap[term].push({
-        k: term,           // The search term
-        w: cleanNumber,    // The full number
-        p: position        // Position in array
+        k: term, // The search term
+        w: cleanNumber, // The full number
+        p: position, // Position in array
       });
     });
   });
@@ -93,7 +93,7 @@ async function processCardBatch(
 ): Promise<void> {
   for (const doc of cards.docs) {
     const cardData = doc.data() as CardSearchData;
-    
+
     // Skip if card data is missing required fields
     if (!cardData.name || !Array.isArray(cardData.cardNumbers)) {
       logger.warn(`Skipping card ${doc.id} - missing required fields`);
@@ -108,9 +108,9 @@ async function processCardBatch(
     await batchProcessor.addOperation((batch) => {
       const cardRef = db.collection(COLLECTION.CARDS).doc(doc.id);
       batch.update(cardRef, {
-        searchName: nameSearchMap,      // Map for name-based search
-        searchNumber: numberSearchMap,  // Map for number-based search
-        searchLastUpdated: FieldValue.serverTimestamp()
+        searchName: nameSearchMap, // Map for name-based search
+        searchNumber: numberSearchMap, // Map for number-based search
+        searchLastUpdated: FieldValue.serverTimestamp(),
       });
     });
   }
@@ -121,14 +121,16 @@ export async function main(): Promise<void> {
   const batchSize = 500;
   let lastProcessedId: string | null = null;
   let totalProcessed = 0;
-  
+
   try {
     logger.info("Starting search index update");
 
-    while (true) {
+    let hasMoreCards = true;
+    while (hasMoreCards) {
       // Query the next batch of cards
-      let query = db.collection(COLLECTION.CARDS)
-        .orderBy('__name__')  // Use document ID for ordering
+      let query = db
+        .collection(COLLECTION.CARDS)
+        .orderBy("__name__") // Use document ID for ordering
         .limit(batchSize);
 
       if (lastProcessedId) {
@@ -139,12 +141,13 @@ export async function main(): Promise<void> {
 
       // Break if no more cards to process
       if (cards.empty) {
-        break;
+        hasMoreCards = false;
+        continue;
       }
 
       // Process this batch
       await processCardBatch(cards, batchProcessor);
-      
+
       // Commit any remaining operations
       await batchProcessor.commitAll();
 

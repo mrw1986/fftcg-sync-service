@@ -21,7 +21,7 @@ export class StorageService {
     // Square Enix patterns
     "/cards/full/", // High res
     "/cards/thumbs/", // Low res
-    "_eg.jpg" // Square Enix file suffix
+    "_eg.jpg", // Square Enix file suffix
   ];
 
   constructor() {
@@ -262,8 +262,7 @@ export class StorageService {
   public async processAndStoreImage(
     imageUrl: string | undefined,
     productId: number,
-    groupId: string,
-    maintainTcgcsvStructure: boolean = false
+    groupId: string
   ): Promise<ImageResult> {
     const baseMetadata = {
       productId: productId.toString(),
@@ -332,21 +331,23 @@ export class StorageService {
           downloadUrls = [
             baseUrl.replace(/_[^.]+\./, "_in_1000x1000."),
             baseUrl.replace(/_[^.]+\./, "_400w."),
-            baseUrl.replace(/_[^.]+\./, "_200w.")
+            baseUrl.replace(/_[^.]+\./, "_200w."),
           ];
         }
 
         logger.info(`Attempting to download images for product ${productId}:`, {
-          urls: downloadUrls
+          urls: downloadUrls,
         });
 
         // Try to download each resolution
         const buffers = await Promise.all(
-          downloadUrls.map(url =>
-            url ? this.downloadImage(url).catch((error) => {
-              logger.info(`Failed to download image: ${error.message}`);
-              return null;
-            }) : Promise.resolve(null)
+          downloadUrls.map((url) =>
+            url ?
+              this.downloadImage(url).catch((error) => {
+                logger.info(`Failed to download image: ${error.message}`);
+                return null;
+              }) :
+              Promise.resolve(null)
           )
         );
 

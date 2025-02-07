@@ -2,19 +2,44 @@ import fetch from "node-fetch";
 import { logger } from "../utils/logger";
 import { RetryWithBackoff } from "../utils/retry";
 
+interface SquareEnixApiResponse {
+  count: number;
+  cards: Array<{
+    id: string;
+    code: string;
+    name_en: string;
+    type_en: string;
+    job_en: string;
+    text_en: string;
+    element: string[];
+    rarity: string;
+    cost: string;
+    power: string;
+    category_1: string;
+    category_2?: string;
+    multicard: string;
+    ex_burst: string;
+    set: string[];
+    images: {
+      thumbs: string[];
+      full: string[];
+    };
+  }>;
+}
+
 export class SquareEnixSyncService {
   private readonly retry = new RetryWithBackoff();
   private readonly baseUrl = "https://fftcg.square-enix-games.com/en";
   private sessionCookies: string | null = null;
   private readonly elementMap: Record<string, string> = {
-    '火': 'Fire',
-    '氷': 'Ice',
-    '風': 'Wind',
-    '土': 'Earth',
-    '雷': 'Lightning',
-    '水': 'Water',
-    '光': 'Light',
-    '闇': 'Dark'
+    火: "Fire",
+    氷: "Ice",
+    風: "Wind",
+    土: "Earth",
+    雷: "Lightning",
+    水: "Water",
+    光: "Light",
+    闇: "Dark",
   };
 
   private async establishSession(): Promise<void> {
@@ -25,9 +50,7 @@ export class SquareEnixSyncService {
         fetch(`${this.baseUrl}/card-browser`, {
           method: "GET",
           headers: {
-            "accept": 
-              "text/html,application/xhtml+xml,application/xml;q=0.9," + 
-              "image/webp,image/apng,*/*;q=0.8",
+            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9," + "image/webp,image/apng,*/*;q=0.8",
             "accept-encoding": "gzip, deflate, br, zstd",
             "accept-language": "en-US,en;q=0.9",
             "dnt": "1",
@@ -39,8 +62,8 @@ export class SquareEnixSyncService {
             "sec-fetch-site": "none",
             "sec-fetch-user": "?1",
             "sec-gpc": "1",
-            "user-agent": 
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " + 
+            "user-agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
               "(KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 Edg/132.0.0.0",
           },
         })
@@ -65,10 +88,10 @@ export class SquareEnixSyncService {
   }
 
   private translateElements(elements: string[]): string[] {
-    return elements.map(element => this.elementMap[element] || element);
+    return elements.map((element) => this.elementMap[element] || element);
   }
 
-  async fetchAllCards(): Promise<any[]> {
+  async fetchAllCards(): Promise<SquareEnixApiResponse["cards"]> {
     try {
       // Establish session first
       await this.establishSession();
@@ -83,7 +106,7 @@ export class SquareEnixSyncService {
             "accept-encoding": "gzip, deflate, br, zstd",
             "accept-language": "en-US,en;q=0.9",
             "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-            ...(this.sessionCookies ? { "cookie": this.sessionCookies } : {}),
+            ...(this.sessionCookies ? { cookie: this.sessionCookies } : {}),
             "dnt": "1",
             "origin": this.baseUrl,
             "referer": `${this.baseUrl}/card-browser`,
@@ -147,14 +170,14 @@ export class SquareEnixSyncService {
         }>;
       }
 
-      const data = await response.json() as unknown;
-      
+      const data = (await response.json()) as unknown;
+
       // Add more detailed validation
-      if (!data || typeof data !== 'object') {
+      if (!data || typeof data !== "object") {
         throw new Error("Invalid response format: expected object but got " + typeof data);
       }
 
-      if (!('cards' in data)) {
+      if (!("cards" in data)) {
         throw new Error("Invalid response format: 'cards' property not found in response");
       }
 
@@ -166,7 +189,7 @@ export class SquareEnixSyncService {
 
       // Validate each card has required properties
       const processedCards = apiResponse.cards.map((card, index) => {
-        if (!card || typeof card !== 'object') {
+        if (!card || typeof card !== "object") {
           throw new Error(`Invalid card at index ${index}: not an object`);
         }
 
@@ -177,7 +200,7 @@ export class SquareEnixSyncService {
 
         return {
           ...card,
-          element: this.translateElements(card.element)
+          element: this.translateElements(card.element),
         };
       });
 

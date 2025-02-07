@@ -15,7 +15,7 @@ db.settings({
     backoffMultiplier: 1.5,
     initialDelayMs: 1000,
     maxDelayMs: 60000,
-  }
+  },
 });
 
 export { db };

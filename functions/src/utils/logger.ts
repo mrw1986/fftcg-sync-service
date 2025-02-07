@@ -37,14 +37,14 @@ export class Logger {
     const logPromise = this.log("INFO", message, data);
     this.pendingLogs.push(logPromise);
     await logPromise;
-    this.pendingLogs = this.pendingLogs.filter(p => p !== logPromise);
+    this.pendingLogs = this.pendingLogs.filter((p) => p !== logPromise);
   }
 
   async error(message: string, data?: LogData | { error: unknown }): Promise<void> {
     const logPromise = this.log("ERROR", message, data);
     this.pendingLogs.push(logPromise);
     await logPromise;
-    this.pendingLogs = this.pendingLogs.filter(p => p !== logPromise);
+    this.pendingLogs = this.pendingLogs.filter((p) => p !== logPromise);
   }
 
   async logSyncStats(stats: SyncStats): Promise<void> {
@@ -77,7 +77,7 @@ export class Logger {
     const logPromise = this.log("WARN", message, data);
     this.pendingLogs.push(logPromise);
     await logPromise;
-    this.pendingLogs = this.pendingLogs.filter(p => p !== logPromise);
+    this.pendingLogs = this.pendingLogs.filter((p) => p !== logPromise);
   }
 
   async log(

@@ -26,12 +26,12 @@ async function main() {
       processed: result.itemsProcessed,
       updated: result.itemsUpdated,
       errors: result.errors.length,
-      duration: result.timing.duration
+      duration: result.timing.duration,
     });
 
     if (result.errors.length > 0) {
       logger.warn("Some errors occurred during sync:", {
-        errors: result.errors
+        errors: result.errors,
       });
     }
 

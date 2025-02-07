@@ -112,9 +112,9 @@ export interface SyncOptions {
 }
 
 export interface SearchTerm {
-  k: string;   // The key/term being indexed
-  w: string;   // The full word this term is from
-  p: number;   // Position in the text
+  k: string; // The key/term being indexed
+  w: string; // The full word this term is from
+  p: number; // Position in the text
 }
 
 export interface SearchMap {
@@ -157,27 +157,6 @@ export interface PriceChanges {
     marketPrice: number;
     midPrice: number;
     subTypeName: "Foil";
-  };
-}
-
-export interface SquareEnixDeltaData {
-  code: string;
-  name_en: string;
-  type_en: string;
-  job_en: string;
-  text_en: string;
-  element: string[];
-  rarity: string;
-  cost: string;
-  power: string;
-  category_1: string;
-  category_2: string | null;
-  multicard: string;
-  ex_burst: string;
-  set: string[];
-  images: {
-    thumbs: string[];
-    full: string[];
   };
 }
 
