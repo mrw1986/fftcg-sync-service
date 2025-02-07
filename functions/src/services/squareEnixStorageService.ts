@@ -1,6 +1,6 @@
 import { db, COLLECTION } from "../config/firebase";
 import { squareEnixSync } from "./squareEnixSync";
-import { SyncResult, SquareEnixCardDoc } from "../types";
+import { SyncResult } from "../types";
 import * as crypto from "crypto";
 import { logger } from "../utils/logger";
 import { RetryWithBackoff } from "../utils/retry";
@@ -51,12 +51,28 @@ export class SquareEnixStorageService {
   }
 
   private calculateHash(card: SquareEnixApiResponse): string {
-    // Only hash fields that affect search indexing, matching updateSearchIndex.ts
-    const data = {
-      name: card.name_en || "",
-      cardNumbers: [card.code || ""],
+    // Only hash essential card data fields, excluding element and metadata
+    const apiData = {
+      id: card.id,
+      code: card.code,
+      name: card.name_en,
+      type: card.type_en,
+      job: card.job_en,
+      text: card.text_en,
+      rarity: card.rarity,
+      cost: card.cost,
+      power: card.power,
+      category_1: card.category_1,
+      category_2: card.category_2,
+      multicard: card.multicard,
+      ex_burst: card.ex_burst,
+      set: card.set,
+      images: {
+        thumbs: card.images.thumbs,
+        full: card.images.full,
+      },
     };
-    return crypto.createHash("md5").update(JSON.stringify(data)).digest("hex");
+    return crypto.createHash("md5").update(JSON.stringify(apiData)).digest("hex");
   }
 
   private async getStoredHashes(codes: string[]): Promise<Map<string, string>> {
@@ -82,21 +98,39 @@ export class SquareEnixStorageService {
       chunks.push(uncachedCodes.slice(i, i + 10));
     }
 
-    await Promise.all(
-      chunks.map(async (chunk) => {
-        const refs = chunk.map((code) => db.collection(COLLECTION.SQUARE_ENIX_HASHES).doc(code));
-        const snapshots = await this.retry.execute(() => db.getAll(...refs));
+    // Log hash retrieval stats
+    logger.info("Loading stored hashes", {
+      totalCodes: codes.length,
+      cachedCount: hashMap.size,
+      uncachedCount: uncachedCodes.length,
+    });
 
-        snapshots.forEach((snap, index) => {
-          const code = chunk[index];
-          const hash = snap.exists ? snap.data()?.hash : null;
-          if (hash) {
-            hashMap.set(code, hash);
-            this.cache.set(`hash_${code}`, hash);
-          }
-        });
-      })
-    );
+    if (uncachedCodes.length > 0) {
+      await Promise.all(
+        chunks.map(async (chunk) => {
+          const refs = chunk.map((code) => db.collection(COLLECTION.SQUARE_ENIX_HASHES).doc(code));
+          const snapshots = await this.retry.execute(() => db.getAll(...refs));
+
+          snapshots.forEach((snap, index) => {
+            const code = chunk[index];
+            const hash = snap.exists ? snap.data()?.hash : null;
+            logger.info(`Retrieved hash for ${code}`, {
+              exists: snap.exists,
+              hash: hash || "none",
+            });
+            if (hash) {
+              hashMap.set(code, hash);
+              this.cache.set(`hash_${code}`, hash);
+            }
+          });
+        })
+      );
+
+      logger.info("Finished loading stored hashes", {
+        totalLoaded: hashMap.size,
+        sampleHashes: Array.from(hashMap.entries()).slice(0, 5),
+      });
+    }
 
     return hashMap;
   }
@@ -137,6 +171,10 @@ export class SquareEnixStorageService {
             const currentHash = this.calculateHash(card);
             const storedHash = hashMap.get(sanitizedCode);
 
+            // Get current document state
+            const docRef = db.collection(COLLECTION.SQUARE_ENIX_CARDS).doc(sanitizedCode);
+            const docSnapshot = await this.retry.execute(() => docRef.get());
+
             // Log detailed diagnostics for first 5 cards and any that change
             if (result.processed <= 5 || currentHash !== storedHash) {
               logger.info(`Card ${card.code} details`, {
@@ -150,7 +188,6 @@ export class SquareEnixStorageService {
                   type: card.type_en,
                   job: card.job_en,
                   text: card.text_en,
-                  element: card.element || [], // Elements already processed by squareEnixSync
                   rarity: card.rarity,
                   cost: card.cost,
                   power: card.power,
@@ -162,15 +199,21 @@ export class SquareEnixStorageService {
                 },
               });
 
-              // If hash changed, verify stored hash
+              // If hash changed, verify stored hash and check what changed
               if (currentHash !== storedHash) {
                 const hashDoc = await this.retry.execute(() =>
                   db.collection(COLLECTION.SQUARE_ENIX_HASHES).doc(sanitizedCode).get()
                 );
+                const existingDoc = docSnapshot.exists ? docSnapshot.data() : null;
                 logger.info(`Hash verification for ${card.code}`, {
                   inMap: storedHash,
                   inFirestore: hashDoc.exists ? hashDoc.data()?.hash : "not_found",
                   lastUpdated: hashDoc.exists ? hashDoc.data()?.lastUpdated : null,
+                  existingFields: {
+                    productId: existingDoc?.productId,
+                    groupId: existingDoc?.groupId,
+                    lastUpdated: existingDoc?.lastUpdated,
+                  },
                 });
 
                 if (frequentChanges.has(sanitizedCode)) {
@@ -185,17 +228,32 @@ export class SquareEnixStorageService {
               }
             }
 
-            // Check if card exists
-            const docRef = db.collection(COLLECTION.SQUARE_ENIX_CARDS).doc(sanitizedCode);
-            const docSnapshot = await this.retry.execute(() => docRef.get());
+            // Log hash details
+            logger.info(`Hash check for ${card.code}`, {
+              currentHash,
+              storedHash: storedHash || "none",
+              docExists: docSnapshot.exists,
+              forceUpdate: options.forceUpdate,
+            });
 
-            // Skip if document exists AND hash matches (unless forcing update)
-            if (docSnapshot.exists && currentHash === storedHash && !options.forceUpdate) {
+            // Skip if document exists AND hash exists AND hash matches (unless forcing update)
+            if (docSnapshot.exists && storedHash && currentHash === storedHash && !options.forceUpdate) {
               return;
             }
 
-            // Create card document with normalized fields
-            const cardDoc: SquareEnixCardDoc = {
+            // Log why we're updating
+            logger.info(`Updating card ${card.code} because:`, {
+              reason: !docSnapshot.exists
+                ? "doc missing"
+                : !storedHash
+                ? "hash missing"
+                : currentHash !== storedHash
+                ? "hash mismatch"
+                : "force update",
+            });
+
+            // Create card document with only Square Enix fields
+            const cardDoc = {
               id: parseInt(card.id) || 0,
               code: card.code || "",
               name: card.name_en || "",
@@ -219,22 +277,28 @@ export class SquareEnixStorageService {
                 highResUrl: null,
                 lowResUrl: null,
               },
-              productId: null,
-              groupId: null,
               lastUpdated: FieldValue.serverTimestamp(),
             };
 
+            // Log document state before update
+            logger.info(`Document state before update for ${card.code}`, {
+              before: docSnapshot.exists ? docSnapshot.data() : null,
+            });
+
             // Update card and hash in a single batch
             await this.batchProcessor.addOperation((batch) => {
+              // Use merge to preserve existing fields like productId and groupId
               batch.set(docRef, cardDoc, { merge: true });
-              batch.set(
-                db.collection(COLLECTION.SQUARE_ENIX_HASHES).doc(sanitizedCode),
-                {
-                  hash: currentHash,
-                  lastUpdated: FieldValue.serverTimestamp(),
-                },
-                { merge: true }
-              );
+
+              // Log what we're setting
+              logger.info(`Setting document for ${card.code}`, {
+                cardDoc,
+                merge: true,
+              });
+              batch.set(db.collection(COLLECTION.SQUARE_ENIX_HASHES).doc(sanitizedCode), {
+                hash: currentHash,
+                lastUpdated: FieldValue.serverTimestamp(),
+              });
             });
 
             // Update cache immediately
