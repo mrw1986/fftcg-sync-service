@@ -66,7 +66,16 @@ async function main() {
 
     // Step 3: Update cards with Square Enix data
     await logger.info("Step 3: Starting Square Enix data update", { options });
-    const updateArgs = options.forceUpdate ? ["--force"] : [];
+    const updateArgs = [];
+    // Only force update if both:
+    // 1. Original command included --force
+    // 2. Square Enix sync actually updated data
+    if (options.forceUpdate && seResult.itemsUpdated > 0) {
+      updateArgs.push("--force");
+      await logger.info("Forcing update due to Square Enix changes", {
+        seUpdates: seResult.itemsUpdated,
+      });
+    }
     if (options.groupId) {
       updateArgs.push("--group", options.groupId);
     }
