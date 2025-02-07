@@ -2,6 +2,9 @@ import { db, COLLECTION } from "../config/firebase";
 import { logger } from "../utils/logger";
 import { OptimizedBatchProcessor } from "../services/batchProcessor";
 import { FieldValue } from "firebase-admin/firestore";
+import * as crypto from "crypto";
+import { Cache } from "../utils/cache";
+import { RetryWithBackoff } from "../utils/retry";
 
 interface SearchMap {
   [key: string]: {
@@ -15,6 +18,9 @@ interface CardSearchData {
   name: string;
   cardNumbers: string[];
 }
+
+const cache = new Cache<string>(15);
+const retry = new RetryWithBackoff();
 
 function generateNGrams(text: string, minGramSize = 2): string[] {
   const normalized = text.toLowerCase().trim();
@@ -87,10 +93,64 @@ function generateNumberSearchMap(numbers: string[]): SearchMap {
   return searchMap;
 }
 
+function calculateHash(cardData: CardSearchData): string {
+  const data = {
+    name: cardData.name || "",
+    cardNumbers: cardData.cardNumbers || [],
+  };
+  return crypto.createHash("md5").update(JSON.stringify(data)).digest("hex");
+}
+
+async function getStoredHashes(cardIds: string[]): Promise<Map<string, string>> {
+  const hashMap = new Map<string, string>();
+  const uncachedIds: string[] = [];
+
+  cardIds.forEach((id) => {
+    const cacheKey = `search_hash_${id}`;
+    const cached = cache.get(cacheKey);
+    if (cached) {
+      hashMap.set(id, cached);
+    } else {
+      uncachedIds.push(id);
+    }
+  });
+
+  if (uncachedIds.length === 0) {
+    return hashMap;
+  }
+
+  const chunks = [];
+  for (let i = 0; i < uncachedIds.length; i += 10) {
+    chunks.push(uncachedIds.slice(i, i + 10));
+  }
+
+  await Promise.all(
+    chunks.map(async (chunk) => {
+      const refs = chunk.map((id) => db.collection(COLLECTION.SEARCH_HASHES).doc(id));
+      const snapshots = await retry.execute(() => db.getAll(...refs));
+
+      snapshots.forEach((snap, index) => {
+        const id = chunk[index];
+        const hash = snap.exists ? snap.data()?.hash : null;
+        if (hash) {
+          hashMap.set(id, hash);
+          cache.set(`search_hash_${id}`, hash);
+        }
+      });
+    })
+  );
+
+  return hashMap;
+}
+
 async function processCardBatch(
   cards: FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>,
   batchProcessor: OptimizedBatchProcessor
-): Promise<void> {
+): Promise<number> {
+  let updatedCount = 0;
+  const cardIds = cards.docs.map((doc) => doc.id);
+  const hashMap = await getStoredHashes(cardIds);
+
   for (const doc of cards.docs) {
     const cardData = doc.data() as CardSearchData;
 
@@ -100,20 +160,46 @@ async function processCardBatch(
       continue;
     }
 
+    // Calculate current hash
+    const currentHash = calculateHash(cardData);
+    const storedHash = hashMap.get(doc.id);
+
+    // Skip if hash matches
+    if (currentHash === storedHash) {
+      continue;
+    }
+
     // Generate search maps
     const nameSearchMap = generateSearchMap(cardData.name);
     const numberSearchMap = generateNumberSearchMap(cardData.cardNumbers);
 
-    // Update the card document with the search maps
+    // Update the card document and hash in a single batch
     await batchProcessor.addOperation((batch) => {
       const cardRef = db.collection(COLLECTION.CARDS).doc(doc.id);
       batch.update(cardRef, {
-        searchName: nameSearchMap, // Map for name-based search
-        searchNumber: numberSearchMap, // Map for number-based search
+        searchName: nameSearchMap,
+        searchNumber: numberSearchMap,
         searchLastUpdated: FieldValue.serverTimestamp(),
       });
+
+      // Update hash
+      const hashRef = db.collection(COLLECTION.SEARCH_HASHES).doc(doc.id);
+      batch.set(
+        hashRef,
+        {
+          hash: currentHash,
+          lastUpdated: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
     });
+
+    // Update cache immediately
+    cache.set(`search_hash_${doc.id}`, currentHash);
+    updatedCount++;
   }
+
+  return updatedCount;
 }
 
 export async function main(): Promise<void> {
@@ -121,6 +207,7 @@ export async function main(): Promise<void> {
   const batchSize = 500;
   let lastProcessedId: string | null = null;
   let totalProcessed = 0;
+  let totalUpdated = 0;
 
   try {
     logger.info("Starting search index update");
@@ -146,7 +233,7 @@ export async function main(): Promise<void> {
       }
 
       // Process this batch
-      await processCardBatch(cards, batchProcessor);
+      const updatedCount = await processCardBatch(cards, batchProcessor);
 
       // Commit any remaining operations
       await batchProcessor.commitAll();
@@ -154,11 +241,19 @@ export async function main(): Promise<void> {
       // Update progress tracking
       lastProcessedId = cards.docs[cards.docs.length - 1].id;
       totalProcessed += cards.docs.length;
+      totalUpdated += updatedCount;
 
-      logger.info(`Processed ${totalProcessed} cards`);
+      logger.info(`Processed batch`, {
+        batchSize: cards.docs.length,
+        totalProcessed,
+        totalUpdated,
+      });
     }
 
-    logger.info(`Search index update completed. Total cards processed: ${totalProcessed}`);
+    logger.info(`Search index update completed`, {
+      totalProcessed,
+      totalUpdated,
+    });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     logger.error("Search index update failed", { error: errorMessage });

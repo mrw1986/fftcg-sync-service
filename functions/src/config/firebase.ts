@@ -37,6 +37,7 @@ export const COLLECTION = {
   SQUARE_ENIX_CARDS: "squareEnixCards",
   SQUARE_ENIX_HASHES: "squareEnixHashes",
   SQUARE_ENIX_DELTAS: "squareEnixDeltas",
+  SEARCH_HASHES: "searchHashes",
 } as const;
 
 export const BASE_URL = "https://tcgcsv.com/tcgplayer";

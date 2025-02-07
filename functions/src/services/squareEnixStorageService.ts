@@ -1,6 +1,12 @@
 import { db, COLLECTION } from "../config/firebase";
 import { squareEnixSync } from "./squareEnixSync";
 import { SyncResult, SquareEnixCardDoc } from "../types";
+import * as crypto from "crypto";
+import { logger } from "../utils/logger";
+import { RetryWithBackoff } from "../utils/retry";
+import { FieldValue } from "firebase-admin/firestore";
+import { OptimizedBatchProcessor } from "./batchProcessor";
+import { Cache } from "../utils/cache";
 
 interface SquareEnixApiResponse {
   id: string;
@@ -23,11 +29,6 @@ interface SquareEnixApiResponse {
     full: string[];
   };
 }
-import { logger } from "../utils/logger";
-import { RetryWithBackoff } from "../utils/retry";
-import { FieldValue } from "firebase-admin/firestore";
-import { OptimizedBatchProcessor } from "./batchProcessor";
-import { Cache } from "../utils/cache";
 
 export class SquareEnixStorageService {
   private readonly CHUNK_SIZE = 1000;
@@ -46,8 +47,70 @@ export class SquareEnixStorageService {
   }
 
   private sanitizeDocumentId(code: string): string {
-    // Replace forward slashes with semicolons to maintain uniqueness
     return code.replace(/\//g, ";");
+  }
+
+  private calculateHash(card: SquareEnixApiResponse): string {
+    // Match cardSync.ts pattern exactly - simple object with direct values
+    const data = {
+      code: card.code,
+      name: card.name_en || "",
+      type: card.type_en || "",
+      job: card.job_en || "",
+      text: card.text_en || "",
+      element: card.element || [],
+      rarity: card.rarity || "",
+      cost: card.cost || "",
+      power: card.power || "",
+      category_1: card.category_1 || "",
+      category_2: card.category_2 || "",
+      multicard: card.multicard === "1",
+      ex_burst: card.ex_burst === "1",
+      set: card.set || [],
+    };
+    return crypto.createHash("md5").update(JSON.stringify(data)).digest("hex");
+  }
+
+  private async getStoredHashes(codes: string[]): Promise<Map<string, string>> {
+    const hashMap = new Map<string, string>();
+    const uncachedCodes: string[] = [];
+
+    codes.forEach((code) => {
+      const cacheKey = `hash_${code}`;
+      const cached = this.cache.get(cacheKey);
+      if (cached) {
+        hashMap.set(code, cached);
+      } else {
+        uncachedCodes.push(code);
+      }
+    });
+
+    if (uncachedCodes.length === 0) {
+      return hashMap;
+    }
+
+    const chunks = [];
+    for (let i = 0; i < uncachedCodes.length; i += 10) {
+      chunks.push(uncachedCodes.slice(i, i + 10));
+    }
+
+    await Promise.all(
+      chunks.map(async (chunk) => {
+        const refs = chunk.map((code) => db.collection(COLLECTION.SQUARE_ENIX_HASHES).doc(code));
+        const snapshots = await this.retry.execute(() => db.getAll(...refs));
+
+        snapshots.forEach((snap, index) => {
+          const code = chunk[index];
+          const hash = snap.exists ? snap.data()?.hash : null;
+          if (hash) {
+            hashMap.set(code, hash);
+            this.cache.set(`hash_${code}`, hash);
+          }
+        });
+      })
+    );
+
+    return hashMap;
   }
 
   private async processCards(
@@ -66,6 +129,10 @@ export class SquareEnixStorageService {
     };
 
     try {
+      // Get all sanitized codes
+      const codes = cards.map((card) => this.sanitizeDocumentId(card.code));
+      const hashMap = await this.getStoredHashes(codes);
+
       await Promise.all(
         cards.map(async (card) => {
           try {
@@ -76,14 +143,20 @@ export class SquareEnixStorageService {
 
             result.processed++;
 
-            // Check cache first
-            const cacheKey = `hash_${card.code}`;
-            const cachedCard = this.cache.get(cacheKey);
-            if (cachedCard && !options.forceUpdate) {
+            const sanitizedCode = this.sanitizeDocumentId(card.code);
+            const currentHash = this.calculateHash(card);
+            const storedHash = hashMap.get(sanitizedCode);
+
+            // Check if card exists
+            const docRef = db.collection(COLLECTION.SQUARE_ENIX_CARDS).doc(sanitizedCode);
+            const docSnapshot = await this.retry.execute(() => docRef.get());
+
+            // Skip if document exists AND hash matches (unless forcing update)
+            if (docSnapshot.exists && currentHash === storedHash && !options.forceUpdate) {
               return;
             }
 
-            // Filter and transform fields
+            // Create card document
             const cardDoc: SquareEnixCardDoc = {
               id: parseInt(card.id),
               code: card.code,
@@ -91,7 +164,7 @@ export class SquareEnixStorageService {
               type: card.type_en,
               job: card.job_en,
               text: card.text_en,
-              element: card.element, // Already translated by squareEnixSync
+              element: card.element,
               rarity: card.rarity,
               cost: card.cost,
               power: card.power,
@@ -108,17 +181,27 @@ export class SquareEnixStorageService {
                 highResUrl: null,
                 lowResUrl: null,
               },
-              productId: null, // Will be updated during matching
-              groupId: null, // Will be updated during matching
+              productId: null,
+              groupId: null,
               lastUpdated: FieldValue.serverTimestamp(),
             };
 
+            // Update card and hash in a single batch
             await this.batchProcessor.addOperation((batch) => {
-              const docRef = db.collection(COLLECTION.SQUARE_ENIX_CARDS).doc(this.sanitizeDocumentId(card.code));
               batch.set(docRef, cardDoc, { merge: true });
+              batch.set(
+                db.collection(COLLECTION.SQUARE_ENIX_HASHES).doc(sanitizedCode),
+                {
+                  hash: currentHash,
+                  lastUpdated: FieldValue.serverTimestamp(),
+                },
+                { merge: true }
+              );
             });
 
-            this.cache.set(cacheKey, JSON.stringify(card));
+            // Update cache immediately
+            this.cache.set(`hash_${sanitizedCode}`, currentHash);
+
             result.updated++;
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "Unknown error";
@@ -128,7 +211,6 @@ export class SquareEnixStorageService {
         })
       );
 
-      // Commit all batched operations
       await this.batchProcessor.commitAll();
 
       logger.info(`Processed ${cards.length} cards`, {
@@ -157,7 +239,9 @@ export class SquareEnixStorageService {
     };
 
     try {
-      logger.info("Starting Square Enix card sync");
+      logger.info("Starting Square Enix card sync", {
+        forceUpdate: options.forceUpdate || false,
+      });
 
       // Fetch all cards from API
       const cards = await this.retry.execute(() => squareEnixSync.fetchAllCards());
