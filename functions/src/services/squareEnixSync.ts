@@ -50,13 +50,13 @@ export class SquareEnixSyncService {
         fetch(`${this.baseUrl}/card-browser`, {
           method: "GET",
           headers: {
-            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9," + "image/webp,image/apng,*/*;q=0.8",
+            accept: "text/html,application/xhtml+xml,application/xml;q=0.9," + "image/webp,image/apng,*/*;q=0.8",
             "accept-encoding": "gzip, deflate, br, zstd",
             "accept-language": "en-US,en;q=0.9",
-            "dnt": "1",
-            "sec-ch-ua": "\"Not A(Brand\";v=\"8\", \"Chromium\";v=\"132\", \"Microsoft Edge\";v=\"132\"",
+            dnt: "1",
+            "sec-ch-ua": '"Not A(Brand";v="8", "Chromium";v="132", "Microsoft Edge";v="132"',
             "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": "\"Windows\"",
+            "sec-ch-ua-platform": '"Windows"',
             "sec-fetch-dest": "document",
             "sec-fetch-mode": "navigate",
             "sec-fetch-site": "none",
@@ -102,17 +102,17 @@ export class SquareEnixSyncService {
         fetch(`${this.baseUrl}/get-cards`, {
           method: "POST",
           headers: {
-            "accept": "*/*",
+            accept: "*/*",
             "accept-encoding": "gzip, deflate, br, zstd",
             "accept-language": "en-US,en;q=0.9",
             "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
             ...(this.sessionCookies ? { cookie: this.sessionCookies } : {}),
-            "dnt": "1",
-            "origin": this.baseUrl,
-            "referer": `${this.baseUrl}/card-browser`,
-            "sec-ch-ua": "\"Not A(Brand\";v=\"8\", \"Chromium\";v=\"132\", \"Microsoft Edge\";v=\"132\"",
+            dnt: "1",
+            origin: this.baseUrl,
+            referer: `${this.baseUrl}/card-browser`,
+            "sec-ch-ua": '"Not A(Brand";v="8", "Chromium";v="132", "Microsoft Edge";v="132"',
             "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": "\"Windows\"",
+            "sec-ch-ua-platform": '"Windows"',
             "sec-fetch-dest": "empty",
             "sec-fetch-mode": "cors",
             "sec-fetch-site": "same-origin",
@@ -193,14 +193,19 @@ export class SquareEnixSyncService {
           throw new Error(`Invalid card at index ${index}: not an object`);
         }
 
-        if (!Array.isArray(card.element)) {
-          logger.warn(`Card at index ${index} has invalid element property`, { card });
-          card.element = [];
+        // Handle Crystal cards first
+        if (card.type_en === "Crystal" || card.code.startsWith("C-")) {
+          return {
+            ...card,
+            element: ["Crystal"],
+          };
         }
 
+        // For non-Crystal cards, handle null/invalid elements
+        const elements = Array.isArray(card.element) ? card.element : [];
         return {
           ...card,
-          element: this.translateElements(card.element),
+          element: this.translateElements(elements),
         };
       });
 

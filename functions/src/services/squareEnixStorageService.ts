@@ -15,7 +15,7 @@ interface SquareEnixApiResponse {
   type_en: string;
   job_en: string;
   text_en: string;
-  element: string[];
+  element: string[] | null;
   rarity: string;
   cost: string;
   power: string;
@@ -51,22 +51,10 @@ export class SquareEnixStorageService {
   }
 
   private calculateHash(card: SquareEnixApiResponse): string {
-    // Match cardSync.ts pattern exactly - simple object with direct values
+    // Only hash fields that affect search indexing, matching updateSearchIndex.ts
     const data = {
-      code: card.code,
       name: card.name_en || "",
-      type: card.type_en || "",
-      job: card.job_en || "",
-      text: card.text_en || "",
-      element: card.element || [],
-      rarity: card.rarity || "",
-      cost: card.cost || "",
-      power: card.power || "",
-      category_1: card.category_1 || "",
-      category_2: card.category_2 || "",
-      multicard: card.multicard === "1",
-      ex_burst: card.ex_burst === "1",
-      set: card.set || [],
+      cardNumbers: [card.code || ""],
     };
     return crypto.createHash("md5").update(JSON.stringify(data)).digest("hex");
   }
@@ -133,6 +121,9 @@ export class SquareEnixStorageService {
       const codes = cards.map((card) => this.sanitizeDocumentId(card.code));
       const hashMap = await this.getStoredHashes(codes);
 
+      // Track cards that change frequently
+      const frequentChanges = new Set<string>();
+
       await Promise.all(
         cards.map(async (card) => {
           try {
@@ -142,10 +133,57 @@ export class SquareEnixStorageService {
             }
 
             result.processed++;
-
             const sanitizedCode = this.sanitizeDocumentId(card.code);
             const currentHash = this.calculateHash(card);
             const storedHash = hashMap.get(sanitizedCode);
+
+            // Log detailed diagnostics for first 5 cards and any that change
+            if (result.processed <= 5 || currentHash !== storedHash) {
+              logger.info(`Card ${card.code} details`, {
+                sanitizedCode,
+                currentHash,
+                storedHash: storedHash || "none",
+                hashChanged: currentHash !== storedHash,
+                rawData: {
+                  code: card.code,
+                  name: card.name_en,
+                  type: card.type_en,
+                  job: card.job_en,
+                  text: card.text_en,
+                  element: card.element || [], // Elements already processed by squareEnixSync
+                  rarity: card.rarity,
+                  cost: card.cost,
+                  power: card.power,
+                  category_1: card.category_1,
+                  category_2: card.category_2,
+                  multicard: card.multicard === "1",
+                  ex_burst: card.ex_burst === "1",
+                  set: card.set,
+                },
+              });
+
+              // If hash changed, verify stored hash
+              if (currentHash !== storedHash) {
+                const hashDoc = await this.retry.execute(() =>
+                  db.collection(COLLECTION.SQUARE_ENIX_HASHES).doc(sanitizedCode).get()
+                );
+                logger.info(`Hash verification for ${card.code}`, {
+                  inMap: storedHash,
+                  inFirestore: hashDoc.exists ? hashDoc.data()?.hash : "not_found",
+                  lastUpdated: hashDoc.exists ? hashDoc.data()?.lastUpdated : null,
+                });
+
+                if (frequentChanges.has(sanitizedCode)) {
+                  logger.warn(`Card ${card.code} changes frequently`, {
+                    currentHash,
+                    storedHash,
+                    element: card.element || [],
+                  });
+                } else {
+                  frequentChanges.add(sanitizedCode);
+                }
+              }
+            }
 
             // Check if card exists
             const docRef = db.collection(COLLECTION.SQUARE_ENIX_CARDS).doc(sanitizedCode);
@@ -156,26 +194,26 @@ export class SquareEnixStorageService {
               return;
             }
 
-            // Create card document
+            // Create card document with normalized fields
             const cardDoc: SquareEnixCardDoc = {
-              id: parseInt(card.id),
-              code: card.code,
-              name: card.name_en,
-              type: card.type_en,
-              job: card.job_en,
-              text: card.text_en,
-              element: card.element,
-              rarity: card.rarity,
-              cost: card.cost,
-              power: card.power,
-              category_1: card.category_1,
+              id: parseInt(card.id) || 0,
+              code: card.code || "",
+              name: card.name_en || "",
+              type: card.type_en || "",
+              job: card.job_en || "",
+              text: card.text_en || "",
+              element: card.element || [], // Elements already processed by squareEnixSync
+              rarity: card.rarity || "",
+              cost: card.cost || "",
+              power: card.power || "",
+              category_1: card.category_1 || "",
               category_2: card.category_2 || null,
               multicard: card.multicard === "1",
               ex_burst: card.ex_burst === "1",
-              set: card.set,
+              set: card.set || [],
               images: {
-                thumbs: card.images.thumbs,
-                full: card.images.full,
+                thumbs: card.images.thumbs || [],
+                full: card.images.full || [],
               },
               processedImages: {
                 highResUrl: null,
@@ -201,7 +239,6 @@ export class SquareEnixStorageService {
 
             // Update cache immediately
             this.cache.set(`hash_${sanitizedCode}`, currentHash);
-
             result.updated++;
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "Unknown error";
@@ -213,10 +250,18 @@ export class SquareEnixStorageService {
 
       await this.batchProcessor.commitAll();
 
+      // Log summary of frequently changing cards
+      if (frequentChanges.size > 0) {
+        logger.warn(`Found ${frequentChanges.size} frequently changing cards`, {
+          cards: Array.from(frequentChanges),
+        });
+      }
+
       logger.info(`Processed ${cards.length} cards`, {
         totalProcessed: result.processed,
         totalUpdated: result.updated,
         errors: result.errors.length,
+        frequentChanges: frequentChanges.size,
       });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
