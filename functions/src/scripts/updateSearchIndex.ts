@@ -1,146 +1,107 @@
 import { db, COLLECTION } from "../config/firebase";
-import { logger } from "../utils/logger";
 import { OptimizedBatchProcessor } from "../services/batchProcessor";
 import { FieldValue } from "firebase-admin/firestore";
-import * as crypto from "crypto";
-import { Cache } from "../utils/cache";
-import { RetryWithBackoff } from "../utils/retry";
 
-interface SearchMap {
-  [key: string]: {
-    k: string; // The key/term being indexed
-    w: string; // The full word this term is from
-    p: number; // Position in the text
-  }[];
-}
+function generateSearchTerms(text: string): string[] {
+  if (!text) return [];
 
-interface CardSearchData {
-  name: string;
-  cardNumbers: string[];
-}
-
-const cache = new Cache<string>(15);
-const retry = new RetryWithBackoff();
-
-function generateNGrams(text: string, minGramSize = 2): string[] {
-  const normalized = text.toLowerCase().trim();
-  const terms: string[] = [];
+  const terms = new Set<string>();
+  const cleanText = text.toLowerCase().trim();
 
   // Add full word
-  terms.push(normalized);
+  terms.add(cleanText);
 
-  // Add n-grams
-  for (let i = 0; i < normalized.length - minGramSize + 1; i++) {
-    for (let j = minGramSize; j <= normalized.length - i; j++) {
-      terms.push(normalized.slice(i, i + j));
-    }
+  // Add progressive substrings for prefix search
+  for (let i = 1; i < cleanText.length; i++) {
+    terms.add(cleanText.substring(0, i));
   }
 
-  return [...new Set(terms)];
+  // Add soundex code
+  const soundexCode = soundex(cleanText);
+  if (soundexCode) {
+    terms.add(soundexCode);
+  }
+
+  return Array.from(terms);
 }
 
-function generateSearchMap(text: string): SearchMap {
-  const searchMap: SearchMap = {};
-  const words = text.toLowerCase().trim().split(/\s+/);
+function generateNumberSearchTerms(numbers: string[]): string[] {
+  if (!numbers?.length) return [];
 
-  words.forEach((word, position) => {
-    // Generate n-grams for the word
-    const terms = generateNGrams(word);
+  const terms = new Set<string>();
 
-    // Add each term to the search map
-    terms.forEach((term) => {
-      if (!searchMap[term]) {
-        searchMap[term] = [];
-      }
+  numbers.forEach((number) => {
+    if (!number) return;
 
-      // Add term data with position information
-      searchMap[term].push({
-        k: term, // The search term
-        w: word, // The full word
-        p: position, // Position in text
-      });
-    });
-  });
-
-  return searchMap;
-}
-
-function generateNumberSearchMap(numbers: string[]): SearchMap {
-  const searchMap: SearchMap = {};
-
-  numbers.forEach((number, position) => {
     // Clean and normalize the number
-    const cleanNumber = number.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const cleanNumber = number.toLowerCase().replace(/\s+/g, "");
+    const withoutSpecial = cleanNumber.replace(/[^a-z0-9]/g, "");
 
-    // Generate n-grams for the number
-    const terms = generateNGrams(cleanNumber);
+    // Add full number
+    terms.add(cleanNumber); // Original format (e.g., "1-001H")
+    terms.add(withoutSpecial); // Without special chars (e.g., "1001H")
 
-    // Add each term to the search map
-    terms.forEach((term) => {
-      if (!searchMap[term]) {
-        searchMap[term] = [];
-      }
+    // Add progressive substrings
+    for (let i = 1; i < withoutSpecial.length; i++) {
+      terms.add(withoutSpecial.substring(0, i));
+    }
 
-      // Add term data with position information
-      searchMap[term].push({
-        k: term, // The search term
-        w: cleanNumber, // The full number
-        p: position, // Position in array
-      });
-    });
-  });
-
-  return searchMap;
-}
-
-function calculateHash(cardData: CardSearchData): string {
-  const data = {
-    name: cardData.name || "",
-    cardNumbers: cardData.cardNumbers || [],
-  };
-  return crypto.createHash("md5").update(JSON.stringify(data)).digest("hex");
-}
-
-async function getStoredHashes(cardIds: string[]): Promise<Map<string, string>> {
-  const hashMap = new Map<string, string>();
-  const uncachedIds: string[] = [];
-
-  cardIds.forEach((id) => {
-    const cacheKey = `search_hash_${id}`;
-    const cached = cache.get(cacheKey);
-    if (cached) {
-      hashMap.set(id, cached);
-    } else {
-      uncachedIds.push(id);
+    // If number contains hyphen, add parts
+    if (cleanNumber.includes("-")) {
+      const [prefix, suffix] = cleanNumber.split("-");
+      if (prefix) terms.add(prefix);
+      if (suffix) terms.add(suffix);
     }
   });
 
-  if (uncachedIds.length === 0) {
-    return hashMap;
-  }
+  return Array.from(terms);
+}
 
-  const chunks = [];
-  for (let i = 0; i < uncachedIds.length; i += 10) {
-    chunks.push(uncachedIds.slice(i, i + 10));
-  }
+function soundex(s: string): string {
+  if (!s) return "";
 
-  await Promise.all(
-    chunks.map(async (chunk) => {
-      const refs = chunk.map((id) => db.collection(COLLECTION.SEARCH_HASHES).doc(id));
-      const snapshots = await retry.execute(() => db.getAll(...refs));
+  // Convert to uppercase and get first character
+  s = s.toUpperCase();
+  const firstChar = s[0];
 
-      snapshots.forEach((snap, index) => {
-        const id = chunk[index];
-        const hash = snap.exists ? snap.data()?.hash : null;
-        if (hash) {
-          hashMap.set(id, hash);
-          cache.set(`search_hash_${id}`, hash);
-        }
-      });
-    })
-  );
+  // Map of characters to soundex codes
+  const codes: Record<string, string> = {
+    A: "",
+    E: "",
+    I: "",
+    O: "",
+    U: "",
+    B: "1",
+    F: "1",
+    P: "1",
+    V: "1",
+    C: "2",
+    G: "2",
+    J: "2",
+    K: "2",
+    Q: "2",
+    S: "2",
+    X: "2",
+    Z: "2",
+    D: "3",
+    T: "3",
+    L: "4",
+    M: "5",
+    N: "5",
+    R: "6",
+  };
 
-  return hashMap;
+  // Convert remaining characters to codes
+  const remaining = s
+    .substring(1)
+    .split("")
+    .map((c) => codes[c] || "")
+    .filter((code) => code !== "")
+    .join("");
+
+  // Build final soundex code
+  const code = firstChar + remaining;
+  return (code + "000").substring(0, 4);
 }
 
 async function processCardBatch(
@@ -148,58 +109,51 @@ async function processCardBatch(
   batchProcessor: OptimizedBatchProcessor
 ): Promise<number> {
   let updatedCount = 0;
-  const cardIds = cards.docs.map((doc) => doc.id);
-  const hashMap = await getStoredHashes(cardIds);
 
-  for (const doc of cards.docs) {
-    const cardData = doc.data() as CardSearchData;
+  try {
+    const updatePromises = cards.docs.map(async (doc) => {
+      try {
+        const cardData = doc.data();
 
-    // Skip if card data is missing required fields
-    if (!cardData.name || !Array.isArray(cardData.cardNumbers)) {
-      logger.warn(`Skipping card ${doc.id} - missing required fields`);
-      continue;
-    }
+        // Skip if card numbers are missing
+        if (!Array.isArray(cardData.cardNumbers)) return;
 
-    // Calculate current hash
-    const currentHash = calculateHash(cardData);
-    const storedHash = hashMap.get(doc.id);
+        // Skip if regular card has no name
+        if (!cardData.isNonCard && !cardData.name) return;
 
-    // Skip if hash matches
-    if (currentHash === storedHash) {
-      continue;
-    }
+        // Generate search terms
+        const nameTerms = cardData.name ? generateSearchTerms(cardData.name) : [];
+        const numberTerms = generateNumberSearchTerms(cardData.cardNumbers);
 
-    // Generate search maps
-    const nameSearchMap = generateSearchMap(cardData.name);
-    const numberSearchMap = generateNumberSearchMap(cardData.cardNumbers);
+        // For regular cards, require name search terms
+        if (!cardData.isNonCard && nameTerms.length === 0) return;
 
-    // Update the card document and hash in a single batch
-    await batchProcessor.addOperation((batch) => {
-      const cardRef = db.collection(COLLECTION.CARDS).doc(doc.id);
-      batch.update(cardRef, {
-        searchName: nameSearchMap,
-        searchNumber: numberSearchMap,
-        searchLastUpdated: FieldValue.serverTimestamp(),
-      });
+        // Combine all search terms
+        const searchTerms = [...new Set([...nameTerms, ...numberTerms])];
 
-      // Update hash
-      const hashRef = db.collection(COLLECTION.SEARCH_HASHES).doc(doc.id);
-      batch.set(
-        hashRef,
-        {
-          hash: currentHash,
-          lastUpdated: FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
+        // Update the card document
+        await batchProcessor.addOperation((batch) => {
+          const cardRef = db.collection(COLLECTION.CARDS).doc(doc.id);
+          batch.update(cardRef, {
+            searchTerms: searchTerms,
+            searchLastUpdated: FieldValue.serverTimestamp(),
+          });
+        });
+
+        updatedCount++;
+      } catch (cardError) {
+        console.error(`Error processing card ${doc.id}:`, cardError);
+      }
     });
 
-    // Update cache immediately
-    cache.set(`search_hash_${doc.id}`, currentHash);
-    updatedCount++;
-  }
+    await Promise.all(updatePromises);
+    await batchProcessor.commitAll();
 
-  return updatedCount;
+    return updatedCount;
+  } catch (error) {
+    console.error(`Error processing batch:`, error);
+    throw error;
+  }
 }
 
 export async function main(): Promise<void> {
@@ -208,62 +162,74 @@ export async function main(): Promise<void> {
   let lastProcessedId: string | null = null;
   let totalProcessed = 0;
   let totalUpdated = 0;
+  let retryCount = 0;
+  const maxRetries = 3;
 
   try {
-    logger.info("Starting search index update");
+    console.log("Starting search index update");
 
     let hasMoreCards = true;
     while (hasMoreCards) {
-      // Query the next batch of cards
-      let query = db
-        .collection(COLLECTION.CARDS)
-        .orderBy("__name__") // Use document ID for ordering
-        .limit(batchSize);
+      try {
+        // Query the next batch of cards
+        let query = db.collection(COLLECTION.CARDS).orderBy("__name__").limit(batchSize);
 
-      if (lastProcessedId) {
-        query = query.startAfter(lastProcessedId);
+        if (lastProcessedId) {
+          query = query.startAfter(lastProcessedId);
+        }
+
+        const cards = await query.get();
+
+        // Break if no more cards to process
+        if (cards.empty) {
+          hasMoreCards = false;
+          continue;
+        }
+
+        // Process this batch
+        const updatedCount = await processCardBatch(cards, batchProcessor);
+
+        // Update progress tracking
+        lastProcessedId = cards.docs[cards.docs.length - 1].id;
+        totalProcessed += cards.docs.length;
+        totalUpdated += updatedCount;
+        retryCount = 0; // Reset retry count on success
+
+        console.log("Progress:", {
+          batchSize: cards.docs.length,
+          totalProcessed,
+          totalUpdated,
+        });
+
+        // Small delay between batches
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      } catch (batchError) {
+        console.error("Batch error:", batchError);
+
+        retryCount++;
+        if (retryCount >= maxRetries) {
+          throw new Error(`Failed after ${maxRetries} retries`);
+        }
+
+        // Exponential backoff
+        const delay = Math.min(1000 * Math.pow(2, retryCount), 30000);
+        await new Promise((resolve) => setTimeout(resolve, delay));
       }
-
-      const cards = await query.get();
-
-      // Break if no more cards to process
-      if (cards.empty) {
-        hasMoreCards = false;
-        continue;
-      }
-
-      // Process this batch
-      const updatedCount = await processCardBatch(cards, batchProcessor);
-
-      // Commit any remaining operations
-      await batchProcessor.commitAll();
-
-      // Update progress tracking
-      lastProcessedId = cards.docs[cards.docs.length - 1].id;
-      totalProcessed += cards.docs.length;
-      totalUpdated += updatedCount;
-
-      logger.info(`Processed batch`, {
-        batchSize: cards.docs.length,
-        totalProcessed,
-        totalUpdated,
-      });
     }
 
-    logger.info(`Search index update completed`, {
+    console.log("Search index update completed:", {
       totalProcessed,
       totalUpdated,
     });
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    logger.error("Search index update failed", { error: errorMessage });
+    console.error("Search index update failed:", error);
     throw error;
   }
 }
 
 if (require.main === module) {
   main().catch((error) => {
-    logger.error("Script failed", { error });
+    console.error("Script failed:", error);
     process.exit(1);
   });
 }

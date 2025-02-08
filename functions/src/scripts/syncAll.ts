@@ -1,9 +1,9 @@
 // src/scripts/syncAll.ts
 import { cardSync } from "../services/cardSync";
-import { squareEnixStorage } from "../services/squareEnixStorageService";
 import { logger } from "../utils/logger";
 import { db } from "../config/firebase";
 import { main as updateCards } from "./updateCardsWithSquareEnixData";
+import { squareEnixStorage } from "../services/squareEnixStorageService";
 
 function parseArgs(args: string[]): { forceUpdate?: boolean; groupId?: string } {
   const options: { forceUpdate?: boolean; groupId?: string } = {};
@@ -64,41 +64,30 @@ async function main() {
       duration: `${seResult.timing.duration}s`,
     });
 
-    // Step 3: Update cards with Square Enix data
+    // Step 3: Update TCG cards with Square Enix data
     await logger.info("Step 3: Starting Square Enix data update", { options });
-    const updateArgs = [];
-    // Only force update if both:
-    // 1. Original command included --force
-    // 2. Square Enix sync actually updated data
-    if (options.forceUpdate && seResult.itemsUpdated > 0) {
-      updateArgs.push("--force");
-      await logger.info("Forcing update due to Square Enix changes", {
-        seUpdates: seResult.itemsUpdated,
-      });
-    }
-    if (options.groupId) {
-      updateArgs.push("--group", options.groupId);
-    }
-    process.argv = [process.argv[0], process.argv[1], ...updateArgs];
     const updateResult = await updateCards();
     if (!updateResult.success) {
-      throw new Error(updateResult.error || "Update cards process failed");
+      throw new Error(updateResult.error || "Square Enix data update failed");
     }
+    await logger.info("Step 3: Square Enix data update completed:", {
+      success: updateResult.success,
+      totalCards: updateResult.totalCards,
+      matchesFound: updateResult.matchesFound,
+      cardsUpdated: updateResult.cardsUpdated,
+      durationSeconds: updateResult.durationSeconds,
+    });
 
-    // Log completion of Step 3
-    await logger.info("Step 3: Square Enix data update completed");
-
-    // Step 4: Update search index (only after all other steps are complete)
-    await logger.info("Step 4: Starting search index update");
+    // Step 3: Update search index
+    await logger.info("Step 3: Starting search index update");
     const { main: updateSearchIndex } = await import("./updateSearchIndex");
     await updateSearchIndex();
-    await logger.info("Step 4: Search index update completed");
+    await logger.info("Step 3: Search index update completed");
 
     // Log final success
     await logger.info("Complete sync process finished successfully", {
       tcgSync: tcgResult,
-      seSync: seResult,
-      updateSync: updateResult,
+      seSync: updateResult,
     });
 
     // Ensure all logs are written and disable Firestore logging before termination

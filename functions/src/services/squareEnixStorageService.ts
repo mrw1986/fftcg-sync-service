@@ -243,13 +243,13 @@ export class SquareEnixStorageService {
 
             // Log why we're updating
             logger.info(`Updating card ${card.code} because:`, {
-              reason: !docSnapshot.exists
-                ? "doc missing"
-                : !storedHash
-                ? "hash missing"
-                : currentHash !== storedHash
-                ? "hash mismatch"
-                : "force update",
+              reason: !docSnapshot.exists ?
+                "doc missing" :
+                !storedHash ?
+                  "hash missing" :
+                  currentHash !== storedHash ?
+                    "hash mismatch" :
+                    "force update",
             });
 
             // Create card document with only Square Enix fields

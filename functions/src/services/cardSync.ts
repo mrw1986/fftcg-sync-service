@@ -480,9 +480,9 @@ export class CardSyncService {
     try {
       logger.info("Starting card sync", { options });
 
-      const groups = options.groupId
-        ? [{ groupId: options.groupId }]
-        : await this.retry.execute(() => tcgcsvApi.getGroups());
+      const groups = options.groupId ?
+        [{ groupId: options.groupId }] :
+        await this.retry.execute(() => tcgcsvApi.getGroups());
 
       logger.info(`Found ${groups.length} groups to process`);
 
