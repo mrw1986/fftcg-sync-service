@@ -215,6 +215,7 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): Partial<Tc
     name: seCard.name_en,
     power: seCard.power ? parseInt(seCard.power.trim()) || null : null,
     rarity: isPromo ? "Promo" : rarityMap[seCard.rarity as keyof typeof rarityMap] || seCard.rarity,
+    sets: seCard.set || [],
   };
 
   for (const [field, value] of Object.entries(fields)) {

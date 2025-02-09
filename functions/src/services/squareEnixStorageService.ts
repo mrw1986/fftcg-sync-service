@@ -211,14 +211,6 @@ export class SquareEnixStorageService {
               multicard: card.multicard === "1",
               ex_burst: card.ex_burst === "1",
               set: card.set || [],
-              images: {
-                thumbs: card.images.thumbs || [],
-                full: card.images.full || [],
-              },
-              processedImages: {
-                highResUrl: null,
-                lowResUrl: null,
-              },
               lastUpdated: FieldValue.serverTimestamp(),
             };
 
