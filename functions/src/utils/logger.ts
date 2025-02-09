@@ -18,8 +18,6 @@ export class Logger {
   private readonly COLLECTION = "logs";
   private firestoreEnabled = true;
   private pendingLogs: Promise<void>[] = [];
-  private readonly VERBOSE = false; // Control logging verbosity
-
   async disableFirestore(): Promise<void> {
     // Wait for all pending logs to complete
     await Promise.all(this.pendingLogs);
@@ -27,13 +25,6 @@ export class Logger {
   }
 
   async info(message: string, data?: LogData | SyncResult): Promise<void> {
-    if (!this.VERBOSE) {
-      // Only log to console for important info messages
-      if (message.includes("completed") || message.includes("started") || message.includes("failed")) {
-        console.log(`[INFO] ${message}`, data || "");
-      }
-      return;
-    }
     const logPromise = this.log("INFO", message, data);
     this.pendingLogs.push(logPromise);
     await logPromise;
@@ -60,7 +51,7 @@ export class Logger {
       errors: stats.errorCount,
     });
 
-    if (!environment.isLocal) {
+    if (environment.enableFirestoreLogs) {
       await db.collection(this.COLLECTION).add({
         type: "SYNC_STATS",
         timestamp: new Date(),
@@ -97,8 +88,8 @@ export class Logger {
     const logFn = level === "ERROR" ? console.error : level === "WARN" ? console.warn : console.log;
     logFn(`[${level}] ${message}`, metadata || "");
 
-    // Only log to Firestore if enabled and not in local development
-    if (this.firestoreEnabled && !environment.isLocal) {
+    // Only log to Firestore if enabled and Firestore logging is enabled
+    if (this.firestoreEnabled && environment.enableFirestoreLogs) {
       try {
         await db.collection(this.COLLECTION).add(entry);
       } catch (error) {

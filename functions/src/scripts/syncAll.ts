@@ -4,6 +4,7 @@ import { logger } from "../utils/logger";
 import { db } from "../config/firebase";
 import { main as updateCards } from "./updateCardsWithSquareEnixData";
 import { squareEnixStorage } from "../services/squareEnixStorageService";
+import { searchIndex } from "../services/searchIndexService";
 
 function parseArgs(args: string[]): { forceUpdate?: boolean; groupId?: string } {
   const options: { forceUpdate?: boolean; groupId?: string } = {};
@@ -50,9 +51,12 @@ async function main() {
       duration: `${tcgResult.timing.duration}s`,
     });
 
-    // Step 2: Sync cards from Square Enix API
+    // Step 2: Sync cards from Square Enix API (force update on first sync to recalculate hashes)
     await logger.info("Step 2: Starting Square Enix sync", { options });
-    const seResult = await squareEnixStorage.syncSquareEnixCards(options);
+    const seResult = await squareEnixStorage.syncSquareEnixCards({
+      ...options,
+      forceUpdate: options.forceUpdate || process.env.RECALCULATE_HASHES === "true",
+    });
     if (!seResult.success) {
       throw new Error("Square Enix sync failed");
     }
@@ -64,9 +68,11 @@ async function main() {
       duration: `${seResult.timing.duration}s`,
     });
 
-    // Step 3: Update TCG cards with Square Enix data
+    // Step 3: Update TCG cards with Square Enix data (force update if Step 2 was forced)
     await logger.info("Step 3: Starting Square Enix data update", { options });
-    const updateResult = await updateCards();
+    const updateResult = await updateCards({
+      forceUpdate: options.forceUpdate || process.env.RECALCULATE_HASHES === "true",
+    });
     if (!updateResult.success) {
       throw new Error(updateResult.error || "Square Enix data update failed");
     }
@@ -78,22 +84,34 @@ async function main() {
       durationSeconds: updateResult.durationSeconds,
     });
 
-    // Step 3: Update search index
-    await logger.info("Step 3: Starting search index update");
-    const { main: updateSearchIndex } = await import("./updateSearchIndex");
-    await updateSearchIndex();
-    await logger.info("Step 3: Search index update completed");
+    // Step 4: Update search index
+    await logger.info("Step 4: Starting search index update", { options });
+    let searchResult;
+    try {
+      searchResult = await searchIndex.updateSearchIndex();
+      if (!searchResult.totalProcessed) {
+        throw new Error("Search index update failed - no cards processed");
+      }
+      await logger.info("Step 4: Search index update completed:", {
+        totalProcessed: searchResult.totalProcessed,
+        totalUpdated: searchResult.totalUpdated,
+        success: true,
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      throw new Error(`Search index update failed: ${errorMessage}`);
+    }
 
-    // Log final success
+    // Log final success with all results
     await logger.info("Complete sync process finished successfully", {
       tcgSync: tcgResult,
-      seSync: updateResult,
+      seSync: seResult,
+      seUpdate: updateResult,
+      searchIndex: searchResult || { success: false, error: "Search index update failed" },
     });
 
-    // Ensure all logs are written and disable Firestore logging before termination
+    // Clean shutdown - only do this once
     await logger.disableFirestore();
-
-    // Clean shutdown
     await db.terminate();
     process.exit(0);
   } catch (error) {
@@ -103,7 +121,8 @@ async function main() {
     // Ensure all logs are written and disable Firestore logging before termination
     await logger.disableFirestore();
 
-    // Clean shutdown on error
+    // Clean shutdown - only do this once
+    await logger.disableFirestore();
     await db.terminate();
     process.exit(1);
   }

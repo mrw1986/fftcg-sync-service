@@ -23,7 +23,8 @@
     "sync:all": "ts-node src/scripts/syncAll.ts",
     "sync:all:force": "ts-node src/scripts/syncAll.ts --force",
     "sync:all:group": "ts-node src/scripts/syncAll.ts --group",
-    "sync:all:group:force": "ts-node src/scripts/syncAll.ts --group 1939 --force"
+    "sync:all:group:force": "ts-node src/scripts/syncAll.ts --group 1939 --force",
+    "sync:search-index": "ts-node src/scripts/updateSearchIndex.ts"
   },
   "engines": {
     "node": "22"

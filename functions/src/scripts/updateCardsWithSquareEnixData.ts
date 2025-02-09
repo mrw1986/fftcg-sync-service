@@ -5,8 +5,6 @@ import { OptimizedBatchProcessor } from "../services/batchProcessor";
 import { FieldValue } from "firebase-admin/firestore";
 import * as crypto from "crypto";
 import { storageService } from "../services/storageService";
-import { squareEnixSync } from "../services/squareEnixSync";
-
 export interface TcgCard {
   [key: string]: string | number | boolean | string[] | null | undefined;
   id: string;
@@ -71,17 +69,23 @@ const elementMap: Record<string, string> = {
 
 function calculateHash(card: SquareEnixCard): string {
   const deltaData = {
+    code: card.code,
+    name: card.name_en,
     type: card.type_en,
-    category_1: card.category_1,
-    category_2: card.category_2,
+    job: card.type_en === "Summon" ? "" : card.job_en,
+    text: card.text_en,
     element:
       card.type_en === "Crystal" || card.code.startsWith("C-")
         ? ["Crystal"]
         : card.element.map((e: string) => elementMap[e] || e),
-    job: card.type_en === "Summon" ? "" : card.job_en,
-    power: card.power,
-    cost: card.cost,
     rarity: card.rarity,
+    cost: card.cost,
+    power: card.power,
+    category_1: card.category_1,
+    category_2: card.category_2,
+    multicard: card.multicard,
+    ex_burst: card.ex_burst,
+    set: card.set,
   };
   return crypto.createHash("md5").update(JSON.stringify(deltaData)).digest("hex");
 }
@@ -210,31 +214,16 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): Partial<Tc
   return updates;
 }
 
-export async function main() {
+export async function main(options: { forceUpdate?: boolean } = {}) {
   const startTime = Date.now();
   try {
     logger.info("Starting card update process");
 
-    // First fetch fresh data from Square Enix API
-    logger.info("Fetching cards from Square Enix API");
-    const freshSeCards = await squareEnixSync.fetchAllCards();
-    logger.info(`Fetched ${freshSeCards.length} cards from Square Enix API`);
-
-    // Store fresh Square Enix cards
-    for (const card of freshSeCards) {
-      const sanitizedCode = card.code.replace(/\//g, ";");
-      batchProcessor.addOperation((batch) => {
-        batch.set(
-          db.collection(COLLECTION.SQUARE_ENIX_CARDS).doc(sanitizedCode),
-          {
-            ...card,
-            lastUpdated: FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        );
-      });
-    }
-    await batchProcessor.commitAll();
+    // Load Square Enix cards from Firestore
+    logger.info("Loading Square Enix cards from Firestore");
+    const seCardsSnapshot = await db.collection(COLLECTION.SQUARE_ENIX_CARDS).get();
+    const freshSeCards = seCardsSnapshot.docs.map((doc) => ({ ...doc.data(), code: doc.id.replace(/;/g, "/") }));
+    logger.info(`Loaded ${freshSeCards.length} cards from Square Enix collection`);
 
     // Load TCG cards
     const tcgCardsSnapshot = await retry.execute(() => db.collection(COLLECTION.CARDS).get());
@@ -251,6 +240,18 @@ export async function main() {
     let updateCount = 0;
     const updates = new Map();
 
+    // Get all hashes in one batch at the start
+    const hashRefs = Array.from(seCards.values()).map((card) =>
+      db.collection(COLLECTION.SQUARE_ENIX_HASHES).doc(card.code.replace(/\//g, ";"))
+    );
+    const hashDocs = await retry.execute(() => db.getAll(...hashRefs));
+    const hashMap = new Map(hashDocs.map((doc) => [doc.id, doc.exists ? doc.data()?.hash : null]));
+
+    logger.info("Loaded hashes", {
+      totalHashes: hashMap.size,
+      sampleHashes: Array.from(hashMap.entries()).slice(0, 5),
+    });
+
     // Process all cards
     for (const [id, tcgCard] of tcgCards) {
       const card = tcgCard as TcgCard;
@@ -258,35 +259,46 @@ export async function main() {
       if (!match) continue;
 
       matchCount++;
-      // Get field updates first to check if anything needs to change
-      const fieldUpdates = getFieldsToUpdate(card, match as SquareEnixCard);
 
-      // Check for missing images
-      if (card.highResUrl === null || card.lowResUrl === null || card.fullResUrl === null) {
-        if (card.isNonCard) {
-          // For non-card products, use placeholder immediately
-          if (card.highResUrl === null) fieldUpdates.highResUrl = PLACEHOLDER_URL;
-          if (card.fullResUrl === null) fieldUpdates.fullResUrl = PLACEHOLDER_URL;
-          if (card.lowResUrl === null) fieldUpdates.lowResUrl = PLACEHOLDER_URL;
-        } else {
-          // For regular cards, try Square Enix images first
-          const imageResults = await processImages(card, match as SquareEnixCard);
+      // Get current hash
+      const sanitizedCode = match.code.replace(/\//g, ";");
+      const currentHash = calculateHash(match as SquareEnixCard);
+      const storedHash = hashMap.get(sanitizedCode);
 
-          if (card.highResUrl === null) {
-            fieldUpdates.highResUrl = imageResults.highResUrl || PLACEHOLDER_URL;
-            fieldUpdates.fullResUrl = imageResults.highResUrl || PLACEHOLDER_URL;
-          }
-          if (card.lowResUrl === null) {
-            fieldUpdates.lowResUrl = imageResults.lowResUrl || PLACEHOLDER_URL;
+      // Only calculate updates if hash has changed or force update
+      if (currentHash !== storedHash || options.forceUpdate) {
+        const fieldUpdates = getFieldsToUpdate(card, match as SquareEnixCard);
+
+        // Check for missing images
+        if (card.highResUrl === null || card.lowResUrl === null || card.fullResUrl === null) {
+          if (card.isNonCard) {
+            // For non-card products, use placeholder immediately
+            if (card.highResUrl === null) fieldUpdates.highResUrl = PLACEHOLDER_URL;
+            if (card.fullResUrl === null) fieldUpdates.fullResUrl = PLACEHOLDER_URL;
+            if (card.lowResUrl === null) fieldUpdates.lowResUrl = PLACEHOLDER_URL;
+          } else {
+            // For regular cards, try Square Enix images first
+            const imageResults = await processImages(card, match as SquareEnixCard);
+
+            if (card.highResUrl === null) {
+              fieldUpdates.highResUrl = imageResults.highResUrl || PLACEHOLDER_URL;
+              fieldUpdates.fullResUrl = imageResults.highResUrl || PLACEHOLDER_URL;
+            }
+            if (card.lowResUrl === null) {
+              fieldUpdates.lowResUrl = imageResults.lowResUrl || PLACEHOLDER_URL;
+            }
           }
         }
-      }
 
-      // Only calculate and update hash if there are actual changes
-      if (Object.keys(fieldUpdates).length > 0) {
-        const currentHash = calculateHash(match as SquareEnixCard);
-        updates.set(id, { match, updates: fieldUpdates, hash: currentHash });
-        updateCount++;
+        if (Object.keys(fieldUpdates).length > 0) {
+          updates.set(id, { match, updates: fieldUpdates, hash: currentHash });
+          updateCount++;
+          logger.info(`Updating card ${card.id} due to hash mismatch`, {
+            currentHash,
+            storedHash: storedHash || "none",
+            sanitizedCode,
+          });
+        }
       }
     }
 
@@ -341,8 +353,10 @@ export async function main() {
       error: errorMessage,
     };
   } finally {
-    // Ensure we exit after completion
-    process.exit(0);
+    // Only exit if running directly
+    if (require.main === module) {
+      process.exit(0);
+    }
   }
 }
 
