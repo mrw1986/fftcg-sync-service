@@ -1,4 +1,5 @@
 import { db, COLLECTION } from "../config/firebase";
+import { SyncOptions } from "../types";
 import { logger } from "../utils/logger";
 import { RetryWithBackoff } from "../utils/retry";
 import { OptimizedBatchProcessor } from "../services/batchProcessor";
@@ -68,26 +69,38 @@ const elementMap: Record<string, string> = {
 };
 
 function calculateHash(card: SquareEnixCard): string {
-  const deltaData = {
+  logger.info("Raw card data:", {
     code: card.code,
-    name: card.name_en,
-    type: card.type_en,
-    job: card.type_en === "Summon" ? "" : card.job_en,
-    text: card.text_en,
+    multicard: card.multicard,
+    ex_burst: card.ex_burst,
+  });
+
+  const deltaData = {
+    code: card.code || "",
+    name: card.name_en || "",
+    type: card.type_en || "",
+    job: card.type_en === "Summon" ? "" : card.job_en || "",
+    text: card.text_en || "",
     element:
       card.type_en === "Crystal" || card.code.startsWith("C-")
         ? ["Crystal"]
-        : card.element.map((e: string) => elementMap[e] || e),
-    rarity: card.rarity,
-    cost: card.cost,
-    power: card.power,
-    category_1: card.category_1,
-    category_2: card.category_2,
-    multicard: card.multicard,
-    ex_burst: card.ex_burst,
-    set: card.set,
+        : (card.element || []).map((e: string) => elementMap[e] || e),
+    rarity: card.rarity || "",
+    cost: card.cost || "",
+    power: card.power || "",
+    category_1: card.category_1 || "",
+    category_2: card.category_2 || null,
+    multicard: card.multicard === "1",
+    ex_burst: card.ex_burst === "1",
+    set: card.set || [],
   };
-  return crypto.createHash("md5").update(JSON.stringify(deltaData)).digest("hex");
+  const jsonData = JSON.stringify(deltaData);
+  logger.info("Update Cards hash data:", {
+    code: deltaData.code,
+    data: jsonData,
+    hash: crypto.createHash("md5").update(jsonData).digest("hex"),
+  });
+  return crypto.createHash("md5").update(jsonData).digest("hex");
 }
 
 function getAllCardNumbers(card: TcgCard): string[] {
@@ -198,7 +211,7 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): Partial<Tc
     cleanName: seCard.name_en,
     cost: seCard.cost ? parseInt(seCard.cost.trim()) || null : null,
     elements,
-    job: seCard.type_en === "Summon" ? null : seCard.job_en,
+    job: seCard.type_en === "Summon" ? "" : seCard.job_en,
     name: seCard.name_en,
     power: seCard.power ? parseInt(seCard.power.trim()) || null : null,
     rarity: isPromo ? "Promo" : rarityMap[seCard.rarity as keyof typeof rarityMap] || seCard.rarity,
@@ -214,7 +227,7 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): Partial<Tc
   return updates;
 }
 
-export async function main(options: { forceUpdate?: boolean } = {}) {
+export async function main(options: SyncOptions = {}) {
   const startTime = Date.now();
   try {
     logger.info("Starting card update process");
@@ -222,11 +235,25 @@ export async function main(options: { forceUpdate?: boolean } = {}) {
     // Load Square Enix cards from Firestore
     logger.info("Loading Square Enix cards from Firestore");
     const seCardsSnapshot = await db.collection(COLLECTION.SQUARE_ENIX_CARDS).get();
-    const freshSeCards = seCardsSnapshot.docs.map((doc) => ({ ...doc.data(), code: doc.id.replace(/;/g, "/") }));
+    const freshSeCards = seCardsSnapshot.docs.map((doc) => {
+      const data = doc.data();
+      // Convert boolean fields back to strings to match API format
+      return {
+        ...data,
+        code: doc.id.replace(/;/g, "/"),
+        multicard: data.multicard ? "1" : "0",
+        ex_burst: data.ex_burst ? "1" : "0",
+      };
+    });
     logger.info(`Loaded ${freshSeCards.length} cards from Square Enix collection`);
 
     // Load TCG cards
-    const tcgCardsSnapshot = await retry.execute(() => db.collection(COLLECTION.CARDS).get());
+    const query = db.collection(COLLECTION.CARDS);
+    const limitedQuery = options.limit ? query.limit(options.limit) : query;
+    if (options.limit) {
+      logger.info(`Limiting update to first ${options.limit} cards`);
+    }
+    const tcgCardsSnapshot = await retry.execute(() => limitedQuery.get());
 
     // Create lookup maps
     const tcgCards = new Map(tcgCardsSnapshot.docs.map((doc) => [doc.id, { id: doc.id, ...doc.data() } as TcgCard]));
