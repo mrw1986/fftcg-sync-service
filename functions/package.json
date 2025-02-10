@@ -1,6 +1,7 @@
 {
   "name": "functions",
   "scripts": {
+    "sync:test": "ts-node src/scripts/syncAllTest.ts",
     "lint": "eslint --ext .js,.ts .",
     "lint:fix": "eslint --ext .js,.ts . --fix",
     "build": "rimraf lib && tsc",

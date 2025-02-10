@@ -8,6 +8,17 @@ import { FieldValue } from "firebase-admin/firestore";
 import { OptimizedBatchProcessor } from "./batchProcessor";
 import { Cache } from "../utils/cache";
 
+const elementMap: Record<string, string> = {
+  火: "Fire",
+  氷: "Ice",
+  風: "Wind",
+  土: "Earth",
+  雷: "Lightning",
+  水: "Water",
+  光: "Light",
+  闇: "Dark",
+};
+
 interface SquareEnixApiResponse {
   id: string;
   code: string;
@@ -52,23 +63,38 @@ export class SquareEnixStorageService {
 
   private calculateHash(card: SquareEnixApiResponse): string {
     // Only hash essential card data fields that affect the card's properties
-    const apiData = {
+    logger.info("Raw card data:", {
       code: card.code,
-      name: card.name_en,
-      type: card.type_en,
-      job: card.job_en,
-      text: card.text_en,
-      element: card.element,
-      rarity: card.rarity,
-      cost: card.cost,
-      power: card.power,
-      category_1: card.category_1,
-      category_2: card.category_2,
       multicard: card.multicard,
       ex_burst: card.ex_burst,
-      set: card.set,
+    });
+
+    const apiData = {
+      code: card.code || "",
+      name: card.name_en || "",
+      type: card.type_en || "",
+      job: card.type_en === "Summon" ? "" : card.job_en || "",
+      text: card.text_en || "",
+      element:
+        card.type_en === "Crystal" || card.code.startsWith("C-")
+          ? ["Crystal"]
+          : (card.element || []).map((e: string) => elementMap[e] || e),
+      rarity: card.rarity || "",
+      cost: card.cost || "",
+      power: card.power || "",
+      category_1: card.category_1 || "",
+      category_2: card.category_2 || null,
+      multicard: card.multicard === "1",
+      ex_burst: card.ex_burst === "1",
+      set: card.set || [],
     };
-    return crypto.createHash("md5").update(JSON.stringify(apiData)).digest("hex");
+    const jsonData = JSON.stringify(apiData);
+    logger.info("Square Enix Storage hash data:", {
+      code: apiData.code,
+      data: jsonData,
+      hash: crypto.createHash("md5").update(jsonData).digest("hex"),
+    });
+    return crypto.createHash("md5").update(jsonData).digest("hex");
   }
 
   private async getStoredHashes(codes: string[]): Promise<Map<string, string>> {
@@ -159,13 +185,22 @@ export class SquareEnixStorageService {
               return;
             }
 
+            logger.info(`Updating card ${card.code} because:`, {
+              docExists: docSnapshot?.exists || false,
+              hashExists: !!storedHash,
+              hashMatch: currentHash === storedHash,
+              currentHash,
+              storedHash: storedHash || "none",
+              forceUpdate: options.forceUpdate || false,
+            });
+
             // Create card document with only Square Enix fields
             const cardDoc = {
               id: parseInt(card.id) || 0,
               code: card.code || "",
               name: card.name_en || "",
               type: card.type_en || "",
-              job: card.job_en || "",
+              job: card.type_en === "Summon" ? "" : card.job_en || "",
               text: card.text_en || "",
               element: card.element || [],
               rarity: card.rarity || "",
@@ -176,14 +211,6 @@ export class SquareEnixStorageService {
               multicard: card.multicard === "1",
               ex_burst: card.ex_burst === "1",
               set: card.set || [],
-              images: {
-                thumbs: card.images.thumbs || [],
-                full: card.images.full || [],
-              },
-              processedImages: {
-                highResUrl: null,
-                lowResUrl: null,
-              },
               lastUpdated: FieldValue.serverTimestamp(),
             };
 
@@ -225,7 +252,7 @@ export class SquareEnixStorageService {
     return result;
   }
 
-  async syncSquareEnixCards(options: { forceUpdate?: boolean } = {}): Promise<SyncResult> {
+  async syncSquareEnixCards(options: { forceUpdate?: boolean; limit?: number } = {}): Promise<SyncResult> {
     const result: SyncResult = {
       success: true,
       itemsProcessed: 0,
@@ -242,7 +269,14 @@ export class SquareEnixStorageService {
       });
 
       // Fetch all cards from API
-      const cards = await this.retry.execute(() => squareEnixSync.fetchAllCards());
+      let cards = await this.retry.execute(() => squareEnixSync.fetchAllCards());
+
+      // Apply limit if specified
+      if (options.limit) {
+        logger.info(`Limiting sync to first ${options.limit} cards`);
+        cards = cards.slice(0, options.limit);
+      }
+
       logger.info(`Retrieved ${cards.length} cards from Square Enix API`);
 
       // Process cards in chunks

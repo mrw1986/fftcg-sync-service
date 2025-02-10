@@ -466,7 +466,7 @@ export class CardSyncService {
     return result;
   }
 
-  async syncCards(options: SyncOptions = {}): Promise<SyncResult> {
+  async syncCards(options: SyncOptions & { limit?: number } = {}): Promise<SyncResult> {
     const result: SyncResult = {
       success: true,
       itemsProcessed: 0,
@@ -480,9 +480,14 @@ export class CardSyncService {
     try {
       logger.info("Starting card sync", { options });
 
-      const groups = options.groupId ?
-        [{ groupId: options.groupId }] :
-        await this.retry.execute(() => tcgcsvApi.getGroups());
+      const groups = options.groupId
+        ? [{ groupId: options.groupId }]
+        : await this.retry.execute(() => tcgcsvApi.getGroups());
+
+      // Apply limit if specified
+      if (options.limit) {
+        logger.info(`Limiting sync to first ${options.limit} cards`);
+      }
 
       logger.info(`Found ${groups.length} groups to process`);
 
@@ -497,7 +502,12 @@ export class CardSyncService {
         try {
           logger.info(`Processing group ${group.groupId}`);
 
-          const cards = await this.retry.execute(() => tcgcsvApi.getGroupProducts(group.groupId));
+          let cards = await this.retry.execute(() => tcgcsvApi.getGroupProducts(group.groupId));
+
+          // Apply limit if specified
+          if (options.limit) {
+            cards = cards.slice(0, options.limit);
+          }
 
           logger.info(`Retrieved ${cards.length} cards for group ${group.groupId}`);
 

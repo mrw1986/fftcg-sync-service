@@ -78,7 +78,8 @@ export class SearchIndexService {
   }
 
   private async processCardBatch(
-    cards: FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>
+    cards: FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>,
+    options: { forceUpdate?: boolean } = {}
   ): Promise<number> {
     let updatedCount = 0;
 
@@ -114,8 +115,13 @@ export class SearchIndexService {
         const currentHash = this.calculateSearchTermsHash(searchTerms);
         const storedHash = hashMap.get(doc.id);
 
+<<<<<<< HEAD
         // Update if hash has changed or searchTerms is missing
         if (currentHash !== storedHash || !cardData.searchTerms) {
+=======
+        // Update if hash has changed or force update is enabled
+        if (options.forceUpdate || currentHash !== storedHash) {
+>>>>>>> 469b73138a20f472853a2b10d46cf1df8ebdceb6
           updates.set(doc.id, { searchTerms, hash: currentHash });
           updatedCount++;
         }
@@ -150,7 +156,9 @@ export class SearchIndexService {
     }
   }
 
-  async updateSearchIndex(): Promise<{ totalProcessed: number; totalUpdated: number }> {
+  async updateSearchIndex(
+    options: { limit?: number; forceUpdate?: boolean } = {}
+  ): Promise<{ totalProcessed: number; totalUpdated: number }> {
     let lastProcessedId: string | null = null;
     let totalProcessed = 0;
     let totalUpdated = 0;
@@ -179,7 +187,7 @@ export class SearchIndexService {
           }
 
           // Process this batch
-          const updatedCount = await this.processCardBatch(cards);
+          const updatedCount = await this.processCardBatch(cards, { forceUpdate: options.forceUpdate });
 
           // Update progress tracking
           lastProcessedId = cards.docs[cards.docs.length - 1].id;

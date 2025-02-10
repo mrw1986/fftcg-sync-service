@@ -109,6 +109,7 @@ export interface SyncOptions {
   imagesOnly?: boolean;
   silent?: boolean;
   dryRun?: boolean;
+  limit?: number;
 }
 
 export interface SearchTerm {

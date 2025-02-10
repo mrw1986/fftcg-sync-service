@@ -8,7 +8,7 @@ export class OptimizedBatchProcessor {
   constructor(
     private readonly db: Firestore,
     private readonly maxConcurrentBatches: number = 50,
-    private readonly maxOperationsPerBatch: number = 450
+    private readonly maxOperationsPerBatch: number = 500
   ) {
     this.initializeBatchPool();
   }
@@ -37,8 +37,8 @@ export class OptimizedBatchProcessor {
     const newBatch = this.db.batch();
 
     // Find the index of a full batch to replace
-    const indexToReplace = this.batchPool.findIndex((batch) =>
-      (this.operationsInBatch.get(batch) || 0) >= this.maxOperationsPerBatch
+    const indexToReplace = this.batchPool.findIndex(
+      (batch) => (this.operationsInBatch.get(batch) || 0) >= this.maxOperationsPerBatch
     );
 
     if (indexToReplace >= 0) {
@@ -77,10 +77,7 @@ export class OptimizedBatchProcessor {
     await Promise.all(
       this.activePromises.map(async (promise) => {
         try {
-          const isCompleted = await Promise.race([
-            promise.then(() => true),
-            Promise.resolve(false),
-          ]);
+          const isCompleted = await Promise.race([promise.then(() => true), Promise.resolve(false)]);
 
           if (!isCompleted) {
             newActivePromises.push(promise);
@@ -116,9 +113,8 @@ export class OptimizedBatchProcessor {
 
   async commitAll(): Promise<void> {
     // Gather all uncommitted batches
-    const uncommittedBatches = this.batchPool.filter((batch) =>
-      this.operationsInBatch.has(batch) &&
-      (this.operationsInBatch.get(batch) || 0) > 0
+    const uncommittedBatches = this.batchPool.filter(
+      (batch) => this.operationsInBatch.has(batch) && (this.operationsInBatch.get(batch) || 0) > 0
     );
 
     // Create commit promises for each uncommitted batch
