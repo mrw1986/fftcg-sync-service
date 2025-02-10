@@ -122,7 +122,8 @@ export class SearchIndexService {
   }
 
   private async processCardBatch(
-    cards: FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>
+    cards: FirebaseFirestore.QuerySnapshot<FirebaseFirestore.DocumentData>,
+    options: { forceUpdate?: boolean } = {}
   ): Promise<number> {
     let updatedCount = 0;
 
@@ -131,12 +132,6 @@ export class SearchIndexService {
       const hashRefs = cards.docs.map((doc) => db.collection(COLLECTION.SEARCH_HASHES).doc(doc.id));
       const hashDocs = await this.retry.execute(() => db.getAll(...hashRefs));
       const hashMap = new Map(hashDocs.map((doc) => [doc.id, doc.exists ? doc.data()?.hash : null]));
-
-      // Log hash information
-      logger.info("Search term hashes:", {
-        totalHashes: hashMap.size,
-        sampleHashes: Array.from(hashMap.entries()).slice(0, 5),
-      });
 
       const updates = new Map<string, { searchTerms: string[]; hash: string }>();
 
@@ -164,15 +159,10 @@ export class SearchIndexService {
         const currentHash = this.calculateSearchTermsHash(searchTerms);
         const storedHash = hashMap.get(doc.id);
 
-        // Only update if hash has changed
-        if (currentHash !== storedHash) {
+        // Update if hash has changed or force update is enabled
+        if (options.forceUpdate || currentHash !== storedHash) {
           updates.set(doc.id, { searchTerms, hash: currentHash });
           updatedCount++;
-          logger.info(`Updating search terms for card ${doc.id}`, {
-            currentHash,
-            storedHash: storedHash || "none",
-            searchTerms,
-          });
         }
       });
 
@@ -205,7 +195,9 @@ export class SearchIndexService {
     }
   }
 
-  async updateSearchIndex(options: { limit?: number } = {}): Promise<{ totalProcessed: number; totalUpdated: number }> {
+  async updateSearchIndex(
+    options: { limit?: number; forceUpdate?: boolean } = {}
+  ): Promise<{ totalProcessed: number; totalUpdated: number }> {
     let lastProcessedId: string | null = null;
     let totalProcessed = 0;
     let totalUpdated = 0;
@@ -213,27 +205,17 @@ export class SearchIndexService {
     const maxRetries = 3;
 
     try {
-      await logger.info("Starting search index update", { options });
+      await logger.info("Starting search index update");
 
       let hasMoreCards = true;
       while (hasMoreCards) {
         try {
           // Query the next batch of cards
-          let query = db.collection(COLLECTION.CARDS).orderBy("__name__");
-
-          // Apply user limit if specified, otherwise use batch size
-          const queryLimit = options.limit || this.BATCH_SIZE;
-          query = query.limit(queryLimit);
+          let query = db.collection(COLLECTION.CARDS).orderBy("__name__").limit(this.BATCH_SIZE);
 
           if (lastProcessedId) {
             query = query.startAfter(lastProcessedId);
           }
-
-          // Log query parameters
-          logger.info("Querying cards", {
-            limit: queryLimit,
-            lastProcessedId: lastProcessedId || "none",
-          });
 
           const cards = await query.get();
 
@@ -244,7 +226,7 @@ export class SearchIndexService {
           }
 
           // Process this batch
-          const updatedCount = await this.processCardBatch(cards);
+          const updatedCount = await this.processCardBatch(cards, { forceUpdate: options.forceUpdate });
 
           // Update progress tracking
           lastProcessedId = cards.docs[cards.docs.length - 1].id;
@@ -258,12 +240,6 @@ export class SearchIndexService {
             totalProcessed,
             totalUpdated,
           });
-
-          // If we have a user-specified limit and we've reached it, stop
-          if (options.limit && totalProcessed >= options.limit) {
-            hasMoreCards = false;
-            continue;
-          }
 
           // Small delay between batches
           await new Promise((resolve) => setTimeout(resolve, 100));

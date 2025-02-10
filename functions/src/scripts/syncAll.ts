@@ -1,7 +1,7 @@
 // src/scripts/syncAll.ts
 import { cardSync } from "../services/cardSync";
 import { logger } from "../utils/logger";
-import { db } from "../config/firebase";
+import { db, COLLECTION } from "../config/firebase";
 import { main as updateCards } from "./updateCardsWithSquareEnixData";
 import { squareEnixStorage } from "../services/squareEnixStorageService";
 import { searchIndex } from "../services/searchIndexService";
@@ -84,11 +84,26 @@ async function main() {
       durationSeconds: updateResult.durationSeconds,
     });
 
-    // Step 4: Update search index
+    // Step 4: Update search index (force update if previous steps were forced)
     await logger.info("Step 4: Starting search index update", { options });
     let searchResult;
     try {
-      searchResult = await searchIndex.updateSearchIndex();
+      // Add a delay to ensure previous operations have completed
+      await logger.info("Waiting for previous operations to settle...");
+      // Keep connection alive during delay by doing a simple query
+      await db.collection(COLLECTION.CARDS).limit(1).get();
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      // Verify connection is still active
+      await db.collection(COLLECTION.CARDS).limit(1).get();
+
+      await logger.info("Starting search index update with options:", {
+        forceUpdate: options.forceUpdate,
+        recalculateHashes: process.env.RECALCULATE_HASHES,
+      });
+
+      searchResult = await searchIndex.updateSearchIndex({
+        forceUpdate: options.forceUpdate || process.env.RECALCULATE_HASHES === "true",
+      });
       if (!searchResult.totalProcessed) {
         throw new Error("Search index update failed - no cards processed");
       }
