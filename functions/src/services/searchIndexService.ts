@@ -29,11 +29,7 @@ export class SearchIndexService {
       terms.add(cleanText.substring(0, i));
     }
 
-    // Add soundex code
-    const soundexCode = this.soundex(cleanText);
-    if (soundexCode) {
-      terms.add(soundexCode);
-    }
+    // We no longer use soundex codes
 
     return Array.from(terms);
   }
@@ -48,73 +44,33 @@ export class SearchIndexService {
 
       // Clean and normalize the number
       const cleanNumber = number.toLowerCase().replace(/\s+/g, "");
-      const withoutSpecial = cleanNumber.replace(/[^a-z0-9]/g, "");
 
       // Add full number
       terms.add(cleanNumber); // Original format (e.g., "1-001H")
-      terms.add(withoutSpecial); // Without special chars (e.g., "1001H")
 
-      // Add progressive substrings
-      for (let i = 1; i < withoutSpecial.length; i++) {
-        terms.add(withoutSpecial.substring(0, i));
-      }
-
-      // If number contains hyphen, add parts
+      // If number contains hyphen (e.g., "1-001H" or "20-040L")
       if (cleanNumber.includes("-")) {
         const [prefix, suffix] = cleanNumber.split("-");
-        if (prefix) terms.add(prefix);
-        if (suffix) terms.add(suffix);
+
+        // Add set number variations (e.g., "1", "20")
+        if (prefix) {
+          terms.add(prefix);
+          terms.add(`${prefix}-`);
+        }
+
+        // Add progressive card number variations
+        if (prefix && suffix) {
+          for (let i = 1; i <= suffix.length; i++) {
+            terms.add(`${prefix}-${suffix.substring(0, i)}`);
+          }
+        }
       }
+
+      // We no longer need progressive substrings of the cleaned number
+      // as we already have proper variations with hyphens
     });
 
     return Array.from(terms);
-  }
-
-  private soundex(s: string): string {
-    if (!s) return "";
-
-    // Convert to uppercase and get first character
-    s = s.toUpperCase();
-    const firstChar = s[0];
-
-    // Map of characters to soundex codes
-    const codes: Record<string, string> = {
-      A: "",
-      E: "",
-      I: "",
-      O: "",
-      U: "",
-      B: "1",
-      F: "1",
-      P: "1",
-      V: "1",
-      C: "2",
-      G: "2",
-      J: "2",
-      K: "2",
-      Q: "2",
-      S: "2",
-      X: "2",
-      Z: "2",
-      D: "3",
-      T: "3",
-      L: "4",
-      M: "5",
-      N: "5",
-      R: "6",
-    };
-
-    // Convert remaining characters to codes
-    const remaining = s
-      .substring(1)
-      .split("")
-      .map((c) => codes[c] || "")
-      .filter((code) => code !== "")
-      .join("");
-
-    // Build final soundex code
-    const code = firstChar + remaining;
-    return (code + "000").substring(0, 4);
   }
 
   private calculateSearchTermsHash(searchTerms: string[]): string {
@@ -158,8 +114,8 @@ export class SearchIndexService {
         const currentHash = this.calculateSearchTermsHash(searchTerms);
         const storedHash = hashMap.get(doc.id);
 
-        // Only update if hash has changed
-        if (currentHash !== storedHash) {
+        // Update if hash has changed or searchTerms is missing
+        if (currentHash !== storedHash || !cardData.searchTerms) {
           updates.set(doc.id, { searchTerms, hash: currentHash });
           updatedCount++;
         }
