@@ -45,29 +45,37 @@ export class SearchIndexService {
       // Clean and normalize the number
       const cleanNumber = number.toLowerCase().replace(/\s+/g, "");
 
-      // Add full number
-      terms.add(cleanNumber); // Original format (e.g., "1-001H")
+      // Add first character
+      if (cleanNumber.length > 0) {
+        terms.add(cleanNumber[0]);
+      }
 
-      // If number contains hyphen (e.g., "1-001H" or "20-040L")
+      // Handle numbers with hyphen (e.g., "13-114h" or "pr-101")
       if (cleanNumber.includes("-")) {
         const [prefix, suffix] = cleanNumber.split("-");
 
-        // Add set number variations (e.g., "1", "20")
+        // Add full prefix (e.g., "13" or "pr")
         if (prefix) {
           terms.add(prefix);
+        }
+
+        // Add prefix with hyphen (e.g., "13-" or "pr-")
+        if (prefix) {
           terms.add(`${prefix}-`);
         }
 
-        // Add progressive card number variations
+        // Add progressive parts with hyphen
         if (prefix && suffix) {
-          for (let i = 1; i <= suffix.length; i++) {
-            terms.add(`${prefix}-${suffix.substring(0, i)}`);
+          let current = "";
+          for (const char of suffix) {
+            current += char;
+            terms.add(`${prefix}-${current}`);
           }
         }
+      } else {
+        // For numbers without hyphen, just add the full number
+        terms.add(cleanNumber);
       }
-
-      // We no longer need progressive substrings of the cleaned number
-      // as we already have proper variations with hyphens
     });
 
     return Array.from(terms);
@@ -98,11 +106,11 @@ export class SearchIndexService {
         // Skip if card numbers are missing
         if (!Array.isArray(cardData.cardNumbers)) return;
 
-        // Skip if regular card has no name
-        if (!cardData.isNonCard && !cardData.name) return;
+        // Skip if regular card has no cleanName
+        if (!cardData.isNonCard && !cardData.cleanName) return;
 
         // Generate search terms
-        const nameTerms = cardData.name ? this.generateSearchTerms(cardData.name) : [];
+        const nameTerms = cardData.cleanName ? this.generateSearchTerms(cardData.cleanName) : [];
         const numberTerms = this.generateNumberSearchTerms(cardData.cardNumbers);
 
         // For regular cards, require name search terms
@@ -115,13 +123,8 @@ export class SearchIndexService {
         const currentHash = this.calculateSearchTermsHash(searchTerms);
         const storedHash = hashMap.get(doc.id);
 
-<<<<<<< HEAD
-        // Update if hash has changed or searchTerms is missing
-        if (currentHash !== storedHash || !cardData.searchTerms) {
-=======
-        // Update if hash has changed or force update is enabled
-        if (options.forceUpdate || currentHash !== storedHash) {
->>>>>>> 469b73138a20f472853a2b10d46cf1df8ebdceb6
+        // Update if hash has changed, searchTerms is missing, or force update is enabled
+        if (currentHash !== storedHash || !cardData.searchTerms || options.forceUpdate) {
           updates.set(doc.id, { searchTerms, hash: currentHash });
           updatedCount++;
         }
