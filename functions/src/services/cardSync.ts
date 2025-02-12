@@ -371,17 +371,18 @@ export class CardSyncService {
 
             // Process image handling
             const imageResult = await (async () => {
+              const PLACEHOLDER_URL = "https://fftcgcompanion.com/card-images/image-coming-soon.jpeg";
               if (card.imageUrl) {
                 // If URL exists, process normally
                 return await this.retry.execute(() =>
                   storageService.processAndStoreImage(card.imageUrl, card.productId, groupId)
                 );
               } else {
-                // For any card without image, use null
+                // For any item without image, use placeholder URL
                 return {
-                  fullResUrl: null,
-                  highResUrl: null,
-                  lowResUrl: null,
+                  fullResUrl: PLACEHOLDER_URL,
+                  highResUrl: PLACEHOLDER_URL,
+                  lowResUrl: PLACEHOLDER_URL,
                   metadata: {},
                 } as ImageResult;
               }

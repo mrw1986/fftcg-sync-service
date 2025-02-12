@@ -427,74 +427,86 @@ export async function main(options: SyncOptions = {}) {
     // Process all cards
     for (const [id, tcgCard] of tcgCards) {
       const card = tcgCard as TcgCard;
+      // Initialize updates and tracking variables
+      let fieldUpdates: Partial<TcgCard> = {};
+      let currentHash: string | null = null;
+      let storedHash: string | null = null;
+      let sanitizedCode: string | null = null;
+
+      // Find Square Enix match if exists
       const match = Array.from(seCards.values()).find((seCard) => findCardNumberMatch(card, seCard as SquareEnixCard));
-      if (!match) continue;
 
-      matchCount++;
+      if (match) {
+        matchCount++;
+        sanitizedCode = match.code.replace(/\//g, ";");
+        currentHash = calculateHash(match as SquareEnixCard);
+        storedHash = hashMap.get(sanitizedCode);
 
-      // Get current hash
-      const sanitizedCode = match.code.replace(/\//g, ";");
-      const currentHash = calculateHash(match as SquareEnixCard);
-      const storedHash = hashMap.get(sanitizedCode);
+        // Get field updates if hash changed or force update
+        if (currentHash !== storedHash || options.forceUpdate) {
+          fieldUpdates = getFieldsToUpdate(card, match as SquareEnixCard);
+        }
+      }
 
-      // Only calculate updates if hash has changed or force update
-      if (currentHash !== storedHash || options.forceUpdate) {
-        logger.info("Processing card update:", {
-          cardId: card.id,
-          currentCleanName: card.cleanName,
-          seCardName: match.name,
-          storedHash,
-          currentHash,
-        });
+      // Handle image URLs for all cards
+      const hasNullUrls = card.highResUrl === null || card.lowResUrl === null || card.fullResUrl === null;
 
-        const fieldUpdates = getFieldsToUpdate(card, match as SquareEnixCard);
-
-        logger.info("Field updates:", {
-          cardId: card.id,
-          updates: fieldUpdates,
-        });
-
-        // Handle image URLs
-        const hasSquareEnixImages =
-          !card.isNonCard && match.images?.full?.length > 0 && match.images?.thumbs?.length > 0;
-
-        // Process Square Enix images if needed and available
+      if (hasNullUrls) {
+        // Try Square Enix images first if we have a match
         let imageResults = null;
-        if (hasSquareEnixImages && (card.highResUrl === null || card.lowResUrl === null)) {
-          imageResults = await processImages(card, match as SquareEnixCard);
+        const hasSquareEnixImages =
+          match && !card.isNonCard && match.images?.full?.length > 0 && match.images?.thumbs?.length > 0;
+
+        if (hasSquareEnixImages) {
+          imageResults = await processImages(card, match);
         }
 
-        // Handle highResUrl and lowResUrl if they're null
-        if (card.highResUrl === null) {
-          fieldUpdates.highResUrl = imageResults?.highResUrl || PLACEHOLDER_URL;
-        }
-        if (card.lowResUrl === null) {
-          fieldUpdates.lowResUrl = imageResults?.lowResUrl || PLACEHOLDER_URL;
+        const hasValidImages = imageResults && imageResults.highResUrl && imageResults.lowResUrl;
+
+        // If we have valid Square Enix images, use those
+        if (hasValidImages && imageResults) {
+          fieldUpdates.highResUrl = imageResults.highResUrl;
+          fieldUpdates.lowResUrl = imageResults.lowResUrl;
         }
 
-        // Handle fullResUrl - only set to placeholder if ALL image fields are null AND no valid Square Enix images
-        if (card.highResUrl === null && card.lowResUrl === null && card.fullResUrl === null) {
-          // Only set fullResUrl to placeholder if we couldn't get Square Enix images
-          if (!hasSquareEnixImages || (imageResults && !imageResults.highResUrl)) {
-            fieldUpdates.fullResUrl = PLACEHOLDER_URL;
-          }
-        }
+        // If any URLs are still null after trying Square Enix images, use placeholder
+        if (card.highResUrl === null) fieldUpdates.highResUrl = PLACEHOLDER_URL;
+        if (card.lowResUrl === null) fieldUpdates.lowResUrl = PLACEHOLDER_URL;
+        if (card.fullResUrl === null) fieldUpdates.fullResUrl = PLACEHOLDER_URL;
 
-        if (Object.keys(fieldUpdates).length > 0) {
-          updates.set(id, { match, updates: fieldUpdates, hash: currentHash });
-          updateCount++;
-          logger.info(`Updating card ${card.id} due to hash mismatch`, {
-            currentHash,
-            storedHash: storedHash || "none",
-            sanitizedCode,
-          });
-        }
+        logger.info("Image URL updates:", {
+          cardId: card.id,
+          hasSquareEnixImages,
+          hasValidImages,
+          currentUrls: {
+            high: card.highResUrl,
+            low: card.lowResUrl,
+            full: card.fullResUrl,
+          },
+          updates: {
+            high: fieldUpdates.highResUrl,
+            low: fieldUpdates.lowResUrl,
+            full: fieldUpdates.fullResUrl,
+          },
+        });
+      }
+
+      if (Object.keys(fieldUpdates).length > 0) {
+        updates.set(id, { match, updates: fieldUpdates, hash: currentHash });
+        updateCount++;
+        logger.info(`Updating card ${card.id}`, {
+          reason: hasNullUrls ? "null URLs" : "hash mismatch",
+          currentHash,
+          storedHash: storedHash || "none",
+          sanitizedCode,
+        });
       }
     }
 
     // Batch process all updates
     if (updates.size > 0) {
       for (const [id, { match, updates: fieldUpdates, hash }] of updates) {
+        // Always update the card document if we have field updates
         if (Object.keys(fieldUpdates).length > 0) {
           batchProcessor.addOperation((batch) => {
             batch.update(db.collection(COLLECTION.CARDS).doc(id), {
@@ -504,17 +516,20 @@ export async function main(options: SyncOptions = {}) {
           });
         }
 
-        const sanitizedCode = match.code.replace(/\//g, ";");
-        batchProcessor.addOperation((batch) => {
-          batch.set(
-            db.collection(COLLECTION.SQUARE_ENIX_HASHES).doc(sanitizedCode),
-            {
-              hash,
-              lastUpdated: FieldValue.serverTimestamp(),
-            },
-            { merge: true }
-          );
-        });
+        // Only update hash if we have a Square Enix match
+        if (match && hash) {
+          const sanitizedCode = match.code.replace(/\//g, ";");
+          batchProcessor.addOperation((batch) => {
+            batch.set(
+              db.collection(COLLECTION.SQUARE_ENIX_HASHES).doc(sanitizedCode),
+              {
+                hash,
+                lastUpdated: FieldValue.serverTimestamp(),
+              },
+              { merge: true }
+            );
+          });
+        }
       }
 
       await batchProcessor.commitAll();
