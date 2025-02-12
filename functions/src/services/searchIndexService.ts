@@ -154,7 +154,7 @@ export class SearchIndexService {
       return updatedCount;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      await logger.error(`Error processing batch:`, { error: errorMessage });
+      await logger.error("Error processing batch:", { error: errorMessage });
       throw error;
     }
   }

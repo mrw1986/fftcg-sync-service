@@ -1,6 +1,11 @@
 import fetch from "node-fetch";
 import * as crypto from "crypto";
 
+const USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+  "AppleWebKit/537.36 (KHTML, like Gecko) " +
+  "Chrome/132.0.0.0 Safari/537.36";
+
 interface SquareEnixCard {
   id: string;
   code: string;
@@ -75,11 +80,10 @@ async function fetchCards(): Promise<SquareEnixCard[]> {
   const sessionResponse = await fetch(`${baseUrl}/card-browser`, {
     method: "GET",
     headers: {
-      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+      "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
       "accept-encoding": "gzip, deflate, br",
       "accept-language": "en-US,en;q=0.9",
-      "user-agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+      "user-agent": USER_AGENT,
     },
   });
 
@@ -97,13 +101,12 @@ async function fetchCards(): Promise<SquareEnixCard[]> {
   const cardsResponse = await fetch(`${baseUrl}/get-cards`, {
     method: "POST",
     headers: {
-      accept: "*/*",
+      "accept": "*/*",
       "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-      cookie: cookies,
-      origin: baseUrl,
-      referer: `${baseUrl}/card-browser`,
-      "user-agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+      "cookie": cookies,
+      "origin": baseUrl,
+      "referer": `${baseUrl}/card-browser`,
+      "user-agent": USER_AGENT,
     },
     body: JSON.stringify({
       language: "en",

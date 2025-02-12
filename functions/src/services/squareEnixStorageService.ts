@@ -76,9 +76,9 @@ export class SquareEnixStorageService {
       job: card.type_en === "Summon" ? "" : card.job_en || "",
       text: card.text_en || "",
       element:
-        card.type_en === "Crystal" || card.code.startsWith("C-")
-          ? ["Crystal"]
-          : (card.element || []).map((e: string) => elementMap[e] || e),
+        card.type_en === "Crystal" || card.code.startsWith("C-") ?
+          ["Crystal"] :
+          (card.element || []).map((e: string) => elementMap[e] || e),
       rarity: card.rarity || "",
       cost: card.cost || "",
       power: card.power || "",

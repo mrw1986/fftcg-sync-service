@@ -82,9 +82,9 @@ function calculateHash(card: SquareEnixCard): string {
     job: card.type_en === "Summon" ? "" : card.job_en || "",
     text: card.text_en || "",
     element:
-      card.type_en === "Crystal" || card.code.startsWith("C-")
-        ? ["Crystal"]
-        : (card.element || []).map((e: string) => elementMap[e] || e),
+      card.type_en === "Crystal" || card.code.startsWith("C-") ?
+        ["Crystal"] :
+        (card.element || []).map((e: string) => elementMap[e] || e),
     rarity: card.rarity || "",
     cost: card.cost || "",
     power: card.power || "",
@@ -171,19 +171,19 @@ async function processImages(
 
     // Process full resolution image (maps to highResUrl)
     const fullResResult =
-      groupId && seCard.images?.full?.length > 0
-        ? await retry.execute(() =>
-            storageService.processAndStoreImage(seCard.images.full[0], parseInt(tcgCard.id), groupId.toString())
-          )
-        : null;
+      groupId && seCard.images?.full?.length > 0 ?
+        await retry.execute(() =>
+          storageService.processAndStoreImage(seCard.images.full[0], parseInt(tcgCard.id), groupId.toString())
+        ) :
+        null;
 
     // Process thumbnail image (maps to lowResUrl)
     const thumbResult =
-      groupId && seCard.images?.thumbs?.length > 0
-        ? await retry.execute(() =>
-            storageService.processAndStoreImage(seCard.images.thumbs[0], parseInt(tcgCard.id), groupId.toString())
-          )
-        : null;
+      groupId && seCard.images?.thumbs?.length > 0 ?
+        await retry.execute(() =>
+          storageService.processAndStoreImage(seCard.images.thumbs[0], parseInt(tcgCard.id), groupId.toString())
+        ) :
+        null;
 
     return {
       highResUrl: fullResResult?.highResUrl || null,
@@ -203,9 +203,9 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): Partial<Tc
   const isPromo = isPromoCard(tcgCard);
 
   const elements =
-    seCard.type_en === "Crystal" || seCard.code.startsWith("C-")
-      ? ["Crystal"]
-      : seCard.element.map((e: string) => elementMap[e] || e);
+    seCard.type_en === "Crystal" || seCard.code.startsWith("C-") ?
+      ["Crystal"] :
+      seCard.element.map((e: string) => elementMap[e] || e);
 
   const rarityMap = {
     C: "Common",
@@ -287,12 +287,12 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): Partial<Tc
 
   // Get and normalize Square Enix numbers - split on forward slash
   const seCode = seCard.code;
-  const seNumbers = seCode.includes("/")
-    ? seCode
-        .split("/")
-        .map((num) => normalizeCardNumber(num.trim()))
-        .filter((num) => num !== "N/A")
-    : [normalizeCardNumber(seCode)].filter((num) => num !== "N/A");
+  const seNumbers = seCode.includes("/") ?
+    seCode
+      .split("/")
+      .map((num) => normalizeCardNumber(num.trim()))
+      .filter((num) => num !== "N/A") :
+    [normalizeCardNumber(seCode)].filter((num) => num !== "N/A");
 
   // Log all numbers for debugging
   logger.info("Card number details:", {
