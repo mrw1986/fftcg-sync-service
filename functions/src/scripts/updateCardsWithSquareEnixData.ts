@@ -6,6 +6,7 @@ import { OptimizedBatchProcessor } from "../services/batchProcessor";
 import { FieldValue } from "firebase-admin/firestore";
 import * as crypto from "crypto";
 import { storageService } from "../services/storageService";
+
 export interface TcgCard {
   [key: string]: string | number | boolean | string[] | null | undefined;
   id: string;
@@ -21,6 +22,7 @@ export interface TcgCard {
   cardType?: string;
   category?: string;
   category_2?: string;
+  categories?: string[];
   cleanName?: string;
   elements?: string[];
   sets?: string[];
@@ -34,7 +36,7 @@ export interface TcgCard {
 export interface SquareEnixCard {
   id: string;
   code: string;
-  name: string; // Changed from name_en to match Firestore
+  name: string;
   type_en: string;
   job_en: string;
   text_en: string;
@@ -68,23 +70,31 @@ const elementMap: Record<string, string> = {
   闇: "Dark",
 };
 
-function calculateHash(card: SquareEnixCard): string {
-  logger.info("Raw card data:", {
-    code: card.code,
-    multicard: card.multicard,
-    ex_burst: card.ex_burst,
-  });
+// Special keywords that indicate we should keep the current name
+const specialKeywords = ["Full Art", ".*Promo.*", "Road.*", "Champion.*", ".*Anniversary.*"];
 
+function isValidCardNumber(number: string): boolean {
+  return /^(?:PR-\d{3}|[1-9]\d?-\d{3}[A-Z]|[A-C]-\d{3})$/.test(number);
+}
+
+function isPromoCard(cardNumbers: string[]): boolean {
+  return cardNumbers.some((num) => /^(?:PR?|A)-\d{3}/.test(num));
+}
+
+function hasSpecialTerms(name: string): boolean {
+  return /\((.*?)\)/g.test(name) && specialKeywords.some((term) => new RegExp(term, "i").test(name));
+}
+
+function calculateHash(card: SquareEnixCard): string {
   const deltaData = {
     code: card.code || "",
-    cleanName: card.name || "",
     type: card.type_en || "",
     job: card.type_en === "Summon" ? "" : card.job_en || "",
     text: card.text_en || "",
     element:
-      card.type_en === "Crystal" || card.code.startsWith("C-") ?
-        ["Crystal"] :
-        (card.element || []).map((e: string) => elementMap[e] || e),
+      card.type_en === "Crystal" || card.code.startsWith("C-")
+        ? ["Crystal"]
+        : (card.element || []).map((e: string) => elementMap[e] || e),
     rarity: card.rarity || "",
     cost: card.cost || "",
     power: card.power || "",
@@ -93,52 +103,31 @@ function calculateHash(card: SquareEnixCard): string {
     multicard: card.multicard === "1",
     ex_burst: card.ex_burst === "1",
     set: card.set || [],
-    cardNumbers: card.code.includes("/") ? card.code.split("/") : [card.code], // Include card numbers in hash
+    cardNumbers: card.code.includes("/") ? card.code.split("/") : [card.code],
   };
-  const jsonData = JSON.stringify(deltaData);
-  logger.info("Update Cards hash data:", {
-    code: deltaData.code,
-    data: jsonData,
-    hash: crypto.createHash("md5").update(jsonData).digest("hex"),
-  });
-  return crypto.createHash("md5").update(jsonData).digest("hex");
+  return crypto.createHash("md5").update(JSON.stringify(deltaData)).digest("hex");
 }
 
 function getAllCardNumbers(card: TcgCard): string[] {
   const numbers: string[] = [];
 
-  if (card.cardNumbers) {
-    numbers.push(...card.cardNumbers);
-  }
-  if (card.fullCardNumber) {
-    numbers.push(card.fullCardNumber);
-  }
-  if (card.number) {
-    numbers.push(card.number);
-  }
-  if (card.primaryCardNumber) {
-    numbers.push(card.primaryCardNumber);
-  }
+  if (card.cardNumbers) numbers.push(...card.cardNumbers);
+  if (card.fullCardNumber) numbers.push(card.fullCardNumber);
+  if (card.number) numbers.push(card.number);
+  if (card.primaryCardNumber) numbers.push(card.primaryCardNumber);
 
   return numbers;
 }
 
-function isPromoCard(card: TcgCard): boolean {
-  return getAllCardNumbers(card).some((num) => num.includes("PR"));
-}
-
 function findCardNumberMatch(tcgCard: TcgCard, seCard: SquareEnixCard): boolean {
-  // Normalize all numbers for comparison
   function normalizeForComparison(number: string): string {
-    // Remove all separators and whitespace
     return number.replace(/[-\s.,;/]/g, "").toUpperCase();
   }
 
   const seCode = seCard.code;
-  const isPromo = isPromoCard(tcgCard);
+  const isPromo = isPromoCard(getAllCardNumbers(tcgCard));
   const cardNumbers = getAllCardNumbers(tcgCard);
 
-  // For promo cards, we need to match the base number after PR-###
   if (isPromo) {
     const getBaseNumber = (num: string): string | null => {
       const match = num.match(/PR-\d+\/(.+)/);
@@ -152,7 +141,6 @@ function findCardNumberMatch(tcgCard: TcgCard, seCard: SquareEnixCard): boolean 
     });
   }
 
-  // For non-promo cards, normalize both sides for comparison
   const normalizedSeCode = normalizeForComparison(seCode);
   return cardNumbers.some((num) => normalizeForComparison(num) === normalizedSeCode);
 }
@@ -169,21 +157,19 @@ async function processImages(
 
     const groupId = tcgCard.groupId;
 
-    // Process full resolution image (maps to highResUrl)
     const fullResResult =
-      groupId && seCard.images?.full?.length > 0 ?
-        await retry.execute(() =>
-          storageService.processAndStoreImage(seCard.images.full[0], parseInt(tcgCard.id), groupId.toString())
-        ) :
-        null;
+      groupId && seCard.images?.full?.length > 0
+        ? await retry.execute(() =>
+            storageService.processAndStoreImage(seCard.images.full[0], parseInt(tcgCard.id), groupId.toString())
+          )
+        : null;
 
-    // Process thumbnail image (maps to lowResUrl)
     const thumbResult =
-      groupId && seCard.images?.thumbs?.length > 0 ?
-        await retry.execute(() =>
-          storageService.processAndStoreImage(seCard.images.thumbs[0], parseInt(tcgCard.id), groupId.toString())
-        ) :
-        null;
+      groupId && seCard.images?.thumbs?.length > 0
+        ? await retry.execute(() =>
+            storageService.processAndStoreImage(seCard.images.thumbs[0], parseInt(tcgCard.id), groupId.toString())
+          )
+        : null;
 
     return {
       highResUrl: fullResResult?.highResUrl || null,
@@ -200,12 +186,28 @@ async function processImages(
 
 function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): Partial<TcgCard> {
   const updates: Partial<TcgCard> = {};
-  const isPromo = isPromoCard(tcgCard);
+
+  // Skip updates for non-card products
+  if (tcgCard.isNonCard) {
+    logger.info(`Skipping updates for non-card product ${tcgCard.id}`);
+    return updates;
+  }
+
+  // Process name
+  const isPromo = isPromoCard(tcgCard.cardNumbers || []);
+  const hasSpecialName = hasSpecialTerms(tcgCard.name);
+
+  // Only update name if:
+  // 1. Not a promo card
+  // 2. Current name doesn't have special terms
+  if (!isPromo && !hasSpecialName) {
+    updates.name = seCard.name;
+  }
 
   const elements =
-    seCard.type_en === "Crystal" || seCard.code.startsWith("C-") ?
-      ["Crystal"] :
-      seCard.element.map((e: string) => elementMap[e] || e);
+    seCard.type_en === "Crystal" || seCard.code.startsWith("C-")
+      ? ["Crystal"]
+      : seCard.element.map((e: string) => elementMap[e] || e);
 
   const rarityMap = {
     C: "Common",
@@ -215,159 +217,44 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): Partial<Tc
     S: "Starter",
   } as const;
 
-  // Normalize card numbers like cardSync.ts does
-  function normalizeCardNumber(number: string): string {
-    // Remove all separators and whitespace
-    const clean = number.replace(/[-\s.,;]/g, "").toUpperCase();
+  // Build categories array from category_1 and category_2
+  const categories = [seCard.category_1, seCard.category_2].filter(Boolean) as string[];
 
-    // Any number starting with P (but not PR) is invalid
-    if (clean.startsWith("P") && !clean.startsWith("PR")) {
-      logger.warn(`Invalid card number format (starts with P): ${number}`);
-      return "N/A";
-    }
+  // Only update card numbers if they're invalid
+  const hasValidNumbers = (tcgCard.cardNumbers || []).every(isValidCardNumber);
+  const usesForwardSlash = tcgCard.fullCardNumber?.includes("/");
 
-    // Handle PR prefix case (PR-###)
-    if (clean.startsWith("PR")) {
-      const match = clean.match(/^PR0*(\d{1,3})/);
-      if (!match) {
-        logger.warn(`Invalid PR card number format: ${number}`);
-        return "N/A";
-      }
-      const paddedNum = match[1].padStart(3, "0");
-      return `PR-${paddedNum}`;
-    }
+  if (!hasValidNumbers || !usesForwardSlash) {
+    updates.cardNumbers = seCard.code.includes("/")
+      ? seCard.code
+          .split("/")
+          .map((num) => num.trim())
+          .filter((num) => isValidCardNumber(num))
+      : [seCard.code].filter((num) => isValidCardNumber(num));
 
-    // Handle A-### format
-    if (clean.startsWith("A")) {
-      const match = clean.match(/^A0*(\d{1,3})/);
-      if (match) {
-        const paddedNum = match[1].padStart(3, "0");
-        return `A-${paddedNum}`;
-      }
-    }
-
-    // Handle B-### format (Bonus cards)
-    if (clean.startsWith("B")) {
-      const match = clean.match(/^B0*(\d{1,3})/);
-      if (match) {
-        const paddedNum = match[1].padStart(3, "0");
-        return `B-${paddedNum}`;
-      }
-    }
-
-    // Handle C-### format (Crystal cards)
-    if (clean.startsWith("C")) {
-      const match = clean.match(/^C0*(\d{1,3})/);
-      if (match) {
-        const paddedNum = match[1].padStart(3, "0");
-        return `C-${paddedNum}`;
-      }
-    }
-
-    // Handle numeric prefix cases (#-###X or ##-###X)
-    const match = clean.match(/^(\d{1,2})(\d{3})([A-Z])$/);
-    if (match) {
-      const [, prefix, nums, letter] = match;
-      const prefixNum = parseInt(prefix);
-      if (prefixNum < 1 || prefixNum > 99) {
-        logger.warn(`Invalid card number prefix: ${number}`);
-        return "N/A";
-      }
-      return `${prefix}-${nums}${letter}`;
-    }
-
-    logger.warn(`Unable to normalize card number: ${number}`);
-    return "N/A";
+    updates.fullCardNumber = seCard.code;
   }
-
-  // Get and normalize TCG card numbers - preserve all numbers
-  const tcgNumbers = getAllCardNumbers(tcgCard)
-    .map((num) => normalizeCardNumber(num)) // Normalize each number
-    .filter((num) => num !== "N/A"); // Remove invalid numbers
-
-  // Get and normalize Square Enix numbers - split on forward slash
-  const seCode = seCard.code;
-  const seNumbers = seCode.includes("/") ?
-    seCode
-      .split("/")
-      .map((num) => normalizeCardNumber(num.trim()))
-      .filter((num) => num !== "N/A") :
-    [normalizeCardNumber(seCode)].filter((num) => num !== "N/A");
-
-  // Log all numbers for debugging
-  logger.info("Card number details:", {
-    cardId: tcgCard.id,
-    seCode,
-    seNumbers,
-    tcgCardNumbers: tcgCard.cardNumbers,
-    tcgFullCardNumber: tcgCard.fullCardNumber,
-    tcgNumber: tcgCard.number,
-    tcgPrimaryCardNumber: tcgCard.primaryCardNumber,
-    normalizedTcgNumbers: tcgNumbers,
-  });
-
-  logger.info("Raw card numbers:", {
-    cardId: tcgCard.id,
-    rawTcgNumbers: getAllCardNumbers(tcgCard),
-    normalizedTcgNumbers: tcgNumbers,
-    rawSeCode: seCard.code,
-    normalizedSeNumbers: seNumbers,
-  });
-
-  logger.info("Processing card numbers:", {
-    cardId: tcgCard.id,
-    tcgNumbers,
-    seNumbers,
-    seOriginalCode: seCard.code,
-    currentCardNumbers: tcgCard.cardNumbers,
-    fullCardNumber: tcgCard.fullCardNumber,
-    number: tcgCard.number,
-    primaryCardNumber: tcgCard.primaryCardNumber,
-  });
 
   const fields = {
     cardType: seCard.type_en,
     category: seCard.category_1,
     category_2: seCard.category_2 || undefined,
-    cleanName: seCard.name,
+    categories,
     cost: seCard.cost ? parseInt(seCard.cost.trim()) || null : null,
     elements,
     job: seCard.type_en === "Summon" ? "" : seCard.job_en,
     power: seCard.power ? parseInt(seCard.power.trim()) || null : null,
     rarity: isPromo ? "Promo" : rarityMap[seCard.rarity as keyof typeof rarityMap] || seCard.rarity,
     set: seCard.set || [],
-    cardNumbers: [...tcgNumbers, ...seNumbers]
-      .map((num) => num.replace(/\//g, ";")) // Replace any remaining slashes with semicolons
-      .filter((num) => num !== "N/A") // Remove any invalid numbers
-      .filter((num, index, self) => self.indexOf(num) === index), // Remove duplicates while preserving order
-    isNonCard: false,
   };
 
-  logger.info("Final card numbers:", {
-    cardId: tcgCard.id,
-    finalNumbers: fields.cardNumbers,
-  });
-
-  // Always update cleanName and cardNumbers
-  updates.cleanName = fields.cleanName;
-  updates.cardNumbers = fields.cardNumbers;
-
-  // Update other fields only if they've changed
+  // Update fields that have changed
   for (const [field, value] of Object.entries(fields)) {
-    if (field === "cleanName" || field === "cardNumbers") continue; // Skip since we're always updating these
     const currentValue = tcgCard[field];
     if (currentValue === null || currentValue === undefined || JSON.stringify(currentValue) !== JSON.stringify(value)) {
       updates[field] = value;
     }
   }
-
-  logger.info("Update decision:", {
-    cardId: tcgCard.id,
-    currentCardNumbers: tcgCard.cardNumbers,
-    newCardNumbers: fields.cardNumbers,
-    willUpdate: true,
-    cardNumbersChanged: JSON.stringify(tcgCard.cardNumbers) !== JSON.stringify(fields.cardNumbers),
-  });
 
   return updates;
 }
@@ -382,7 +269,6 @@ export async function main(options: SyncOptions = {}) {
     const seCardsSnapshot = await db.collection(COLLECTION.SQUARE_ENIX_CARDS).get();
     const freshSeCards = seCardsSnapshot.docs.map((doc) => {
       const data = doc.data();
-      // Convert boolean fields back to strings to match API format
       return {
         ...data,
         code: doc.id.replace(/;/g, "/"),
@@ -419,21 +305,14 @@ export async function main(options: SyncOptions = {}) {
     const hashDocs = await retry.execute(() => db.getAll(...hashRefs));
     const hashMap = new Map(hashDocs.map((doc) => [doc.id, doc.exists ? doc.data()?.hash : null]));
 
-    logger.info("Loaded hashes", {
-      totalHashes: hashMap.size,
-      sampleHashes: Array.from(hashMap.entries()).slice(0, 5),
-    });
-
     // Process all cards
     for (const [id, tcgCard] of tcgCards) {
       const card = tcgCard as TcgCard;
-      // Initialize updates and tracking variables
       let fieldUpdates: Partial<TcgCard> = {};
       let currentHash: string | null = null;
       let storedHash: string | null = null;
       let sanitizedCode: string | null = null;
 
-      // Find Square Enix match if exists
       const match = Array.from(seCards.values()).find((seCard) => findCardNumberMatch(card, seCard as SquareEnixCard));
 
       if (match) {
@@ -442,17 +321,14 @@ export async function main(options: SyncOptions = {}) {
         currentHash = calculateHash(match as SquareEnixCard);
         storedHash = hashMap.get(sanitizedCode);
 
-        // Get field updates if hash changed or force update
         if (currentHash !== storedHash || options.forceUpdate) {
           fieldUpdates = getFieldsToUpdate(card, match as SquareEnixCard);
         }
       }
 
-      // Handle image URLs for all cards
+      // Handle image URLs
       const hasNullUrls = card.highResUrl === null || card.lowResUrl === null || card.fullResUrl === null;
-
       if (hasNullUrls) {
-        // Try Square Enix images first if we have a match
         let imageResults = null;
         const hasSquareEnixImages =
           match && !card.isNonCard && match.images?.full?.length > 0 && match.images?.thumbs?.length > 0;
@@ -461,52 +337,25 @@ export async function main(options: SyncOptions = {}) {
           imageResults = await processImages(card, match);
         }
 
-        const hasValidImages = imageResults && imageResults.highResUrl && imageResults.lowResUrl;
-
-        // If we have valid Square Enix images, use those
-        if (hasValidImages && imageResults) {
+        if (imageResults?.highResUrl && imageResults?.lowResUrl) {
           fieldUpdates.highResUrl = imageResults.highResUrl;
           fieldUpdates.lowResUrl = imageResults.lowResUrl;
         }
 
-        // If any URLs are still null after trying Square Enix images, use placeholder
         if (card.highResUrl === null) fieldUpdates.highResUrl = PLACEHOLDER_URL;
         if (card.lowResUrl === null) fieldUpdates.lowResUrl = PLACEHOLDER_URL;
         if (card.fullResUrl === null) fieldUpdates.fullResUrl = PLACEHOLDER_URL;
-
-        logger.info("Image URL updates:", {
-          cardId: card.id,
-          hasSquareEnixImages,
-          hasValidImages,
-          currentUrls: {
-            high: card.highResUrl,
-            low: card.lowResUrl,
-            full: card.fullResUrl,
-          },
-          updates: {
-            high: fieldUpdates.highResUrl,
-            low: fieldUpdates.lowResUrl,
-            full: fieldUpdates.fullResUrl,
-          },
-        });
       }
 
       if (Object.keys(fieldUpdates).length > 0) {
         updates.set(id, { match, updates: fieldUpdates, hash: currentHash });
         updateCount++;
-        logger.info(`Updating card ${card.id}`, {
-          reason: hasNullUrls ? "null URLs" : "hash mismatch",
-          currentHash,
-          storedHash: storedHash || "none",
-          sanitizedCode,
-        });
       }
     }
 
     // Batch process all updates
     if (updates.size > 0) {
       for (const [id, { match, updates: fieldUpdates, hash }] of updates) {
-        // Always update the card document if we have field updates
         if (Object.keys(fieldUpdates).length > 0) {
           batchProcessor.addOperation((batch) => {
             batch.update(db.collection(COLLECTION.CARDS).doc(id), {
@@ -516,7 +365,6 @@ export async function main(options: SyncOptions = {}) {
           });
         }
 
-        // Only update hash if we have a Square Enix match
         if (match && hash) {
           const sanitizedCode = match.code.replace(/\//g, ";");
           batchProcessor.addOperation((batch) => {
@@ -557,15 +405,9 @@ export async function main(options: SyncOptions = {}) {
       success: false,
       error: errorMessage,
     };
-  } finally {
-    // Only exit if running directly
-    if (require.main === module) {
-      process.exit(0);
-    }
   }
 }
 
-// Only run if called directly
 if (require.main === module) {
   main().catch((error) => {
     logger.error("Fatal error", { error });

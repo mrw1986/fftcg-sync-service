@@ -23,8 +23,8 @@
     "sync:update-cards:force": "ts-node src/scripts/updateCardsWithSquareEnixData.ts --force",
     "sync:all": "ts-node src/scripts/syncAll.ts",
     "sync:all:force": "ts-node src/scripts/syncAll.ts --force",
-    "sync:all:group": "ts-node src/scripts/syncAll.ts --group",
-    "sync:all:group:force": "ts-node src/scripts/syncAll.ts --group 1939 --force",
+    "sync:all:group": "ts-node src/scripts/syncAll.ts",
+    "sync:all:group:force": "ts-node src/scripts/syncAll.ts --force",
     "sync:search-index": "ts-node src/scripts/updateSearchIndex.ts"
   },
   "engines": {
@@ -42,12 +42,14 @@
     "firebase-admin": "^12.0.0",
     "firebase-functions": "^6.3.0",
     "lru-cache": "^7.14.1",
+    "minimist": "^1.2.8",
     "node-fetch": "^3.3.2",
     "soundex-code": "^2.0.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
+    "@types/minimist": "^1.2.5",
     "@typescript-eslint/eslint-plugin": "^5.12.0",
     "@typescript-eslint/parser": "^5.12.0",
     "eslint": "^8.9.0",

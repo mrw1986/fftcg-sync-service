@@ -5,35 +5,49 @@ import { db, COLLECTION } from "../config/firebase";
 import { main as updateCards } from "./updateCardsWithSquareEnixData";
 import { squareEnixStorage } from "../services/squareEnixStorageService";
 import { searchIndex } from "../services/searchIndexService";
+import minimist from "minimist";
 
-function parseArgs(args: string[]): { forceUpdate?: boolean; groupId?: string } {
+function parseArgs(): { forceUpdate?: boolean; groupId?: string } {
+  // Parse arguments with minimist
+  const argv = minimist(process.argv.slice(2), {
+    boolean: ["force"],
+    string: ["group"],
+    alias: {
+      f: "force",
+      g: "group",
+    },
+  });
+
+  // Log raw arguments for debugging
+  logger.info("Raw command line arguments:", {
+    nodeExe: process.argv[0],
+    scriptPath: process.argv[1],
+    args: process.argv.slice(2),
+    parsedArgs: argv,
+  });
+
   const options: { forceUpdate?: boolean; groupId?: string } = {};
 
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === "--force") {
-      options.forceUpdate = true;
-    } else if (arg === "--group") {
-      // Look ahead for the group ID
-      const nextArg = args[i + 1];
-      if (nextArg && !nextArg.startsWith("--")) {
-        // Ensure group ID is a valid number
-        const groupId = parseInt(nextArg);
-        if (!isNaN(groupId)) {
-          options.groupId = groupId.toString();
-          i++; // Skip the group ID in the next iteration
-        }
-      }
-    }
+  // Set forceUpdate if --force flag is present
+  if (argv.force) {
+    options.forceUpdate = true;
   }
+
+  // Check for group ID in both named and positional arguments
+  const possibleGroupId = argv.group || argv._[0]?.toString();
+  if (possibleGroupId && !isNaN(parseInt(possibleGroupId))) {
+    options.groupId = possibleGroupId;
+  }
+
+  // Log the final options
+  logger.info("Parsed options:", options);
 
   return options;
 }
 
 async function main() {
   try {
-    const args = process.argv.slice(2);
-    const options = parseArgs(args);
+    const options = parseArgs();
 
     logger.info("Starting complete sync process with options:", options);
 
@@ -51,11 +65,11 @@ async function main() {
       duration: `${tcgResult.timing.duration}s`,
     });
 
-    // Step 2: Sync cards from Square Enix API (force update on first sync to recalculate hashes)
+    // Step 2: Sync cards from Square Enix API
     await logger.info("Step 2: Starting Square Enix sync", { options });
     const seResult = await squareEnixStorage.syncSquareEnixCards({
       ...options,
-      forceUpdate: options.forceUpdate || process.env.RECALCULATE_HASHES === "true",
+      forceUpdate: options.forceUpdate,
     });
     if (!seResult.success) {
       throw new Error("Square Enix sync failed");
@@ -68,10 +82,11 @@ async function main() {
       duration: `${seResult.timing.duration}s`,
     });
 
-    // Step 3: Update TCG cards with Square Enix data (force update if Step 2 was forced)
+    // Step 3: Update TCG cards with Square Enix data
     await logger.info("Step 3: Starting Square Enix data update", { options });
     const updateResult = await updateCards({
-      forceUpdate: options.forceUpdate || process.env.RECALCULATE_HASHES === "true",
+      ...options,
+      forceUpdate: options.forceUpdate,
     });
     if (!updateResult.success) {
       throw new Error(updateResult.error || "Square Enix data update failed");
@@ -84,7 +99,7 @@ async function main() {
       durationSeconds: updateResult.durationSeconds,
     });
 
-    // Step 4: Update search index (force update if previous steps were forced)
+    // Step 4: Update search index
     await logger.info("Step 4: Starting search index update", { options });
     let searchResult;
     try {
@@ -98,11 +113,11 @@ async function main() {
 
       await logger.info("Starting search index update with options:", {
         forceUpdate: options.forceUpdate,
-        recalculateHashes: process.env.RECALCULATE_HASHES,
       });
 
       searchResult = await searchIndex.updateSearchIndex({
-        forceUpdate: options.forceUpdate || process.env.RECALCULATE_HASHES === "true",
+        ...options,
+        forceUpdate: options.forceUpdate,
       });
       if (!searchResult.totalProcessed) {
         throw new Error("Search index update failed - no cards processed");

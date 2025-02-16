@@ -37,6 +37,7 @@ interface CardDocument {
   fullCardNumber: string;
   cardType: string | null;
   category: string | null;
+  categories: string[];
   cost: number | null;
   description: string | null;
   elements: string[];
@@ -104,9 +105,22 @@ export class CardSyncService {
     return isNaN(num) ? null : num;
   }
 
-  private normalizeName(name: string | number): string {
-    const nameStr = String(name);
-    return nameStr.charAt(0).toUpperCase() + nameStr.slice(1);
+  private cleanCardName(name: string): string {
+    // First remove card numbers at the end
+    const withoutCardNumber = name
+      .replace(/\s*[-–—]\s*(?:PR-\d{3}(?:\/\d{1,2}-\d{3}[A-Z])?|\d{1,2}-\d{3}[A-Z]|[A-C]-\d{3})\s*$/, "")
+      .trim();
+
+    // Then remove ALL parentheses content
+    const cleanedName = withoutCardNumber.replace(/\s*\([^)]+\)/g, "").trim();
+
+    logger.info("Cleaning card name:", {
+      original: name,
+      withoutCardNumber,
+      final: cleanedName,
+    });
+
+    return cleanedName;
   }
 
   private isValidNormalizedNumber(number: string): boolean {
@@ -127,21 +141,15 @@ export class CardSyncService {
     // Remove all separators and whitespace
     const clean = number.replace(/[-\s.,;]/g, "").toUpperCase();
 
-    // Any number starting with P (but not PR) is invalid
-    if (clean.startsWith("P") && !clean.startsWith("PR")) {
-      logger.warn(`Invalid card number format (starts with P): ${number}`);
-      return "N/A";
-    }
-
-    // Handle PR prefix case (PR-###)
-    if (clean.startsWith("PR")) {
-      // Match PR followed by digits, handling leading zeros
-      const match = clean.match(/^PR0*(\d{1,3})/);
+    // Handle P/PR prefix case
+    if (clean.startsWith("P")) {
+      // Match P/PR followed by digits, handling leading zeros
+      const match = clean.match(/^P(?:R)?0*(\d{1,3})/);
       if (!match) {
-        logger.warn(`Invalid PR card number format: ${number}`);
+        logger.warn(`Invalid P/PR card number format: ${number}`);
         return "N/A";
       }
-      // Pad to 3 digits
+      // Pad to 3 digits and always use PR- prefix
       const paddedNum = match[1].padStart(3, "0");
       return `PR-${paddedNum}`;
     }
@@ -203,12 +211,7 @@ export class CardSyncService {
         originalFormat = valueStr;
         // Split on any separator and normalize each number
         const vals = valueStr.split(/[,;/]/).map((n: string) => n.trim());
-        const normalizedNums = vals.map((num: string) => {
-          // First normalize the number format
-          const normalizedNum = this.normalizeCardNumber(num);
-          // Then replace any remaining slashes with semicolons
-          return normalizedNum.replace(/\//g, ";");
-        });
+        const normalizedNums = vals.map((num: string) => this.normalizeCardNumber(num));
         // Filter out any invalid numbers before adding
         const validNums = normalizedNums.filter((num) => num !== "N/A");
         numbers.push(...validNums);
@@ -238,8 +241,8 @@ export class CardSyncService {
       }
     }
 
-    // For fullNumber, use semicolon as a safe separator that won't conflict with Firestore paths
-    const fullNumber = uniqueNumbers.length > 0 ? uniqueNumbers.join(";") : "N/A";
+    // For fullNumber, use forward slash as separator
+    const fullNumber = uniqueNumbers.length > 0 ? uniqueNumbers.join("/") : "N/A";
 
     logger.info("Processed card numbers:", {
       original: originalFormat,
@@ -390,8 +393,8 @@ export class CardSyncService {
 
             const cardDoc: CardDocument = {
               productId: card.productId,
-              name: this.normalizeName(card.name),
-              cleanName: this.normalizeName(card.cleanName),
+              name: card.name, // Keep original name, will be processed in Step 3
+              cleanName: this.cleanCardName(card.name),
               fullResUrl: imageResult.fullResUrl,
               highResUrl: imageResult.highResUrl,
               lowResUrl: imageResult.lowResUrl,
@@ -403,6 +406,7 @@ export class CardSyncService {
               fullCardNumber,
               cardType: this.getExtendedValue(card, "CardType"),
               category: this.getExtendedValue(card, "Category"),
+              categories: [], // Initialize empty array, will be populated by Square Enix sync
               cost: this.normalizeNumericValue(this.getExtendedValue(card, "Cost")),
               description: this.getExtendedValue(card, "Description"),
               elements: this.getElements(card),
@@ -481,9 +485,9 @@ export class CardSyncService {
     try {
       logger.info("Starting card sync", { options });
 
-      const groups = options.groupId ?
-        [{ groupId: options.groupId }] :
-        await this.retry.execute(() => tcgcsvApi.getGroups());
+      const groups = options.groupId
+        ? [{ groupId: options.groupId }]
+        : await this.retry.execute(() => tcgcsvApi.getGroups());
 
       // Apply limit if specified
       if (options.limit) {
