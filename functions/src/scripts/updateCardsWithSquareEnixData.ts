@@ -1,3 +1,4 @@
+// src/scripts/updateCardsWithSquareEnixData.ts
 import { db, COLLECTION } from "../config/firebase";
 import { SyncOptions } from "../types";
 import { logger } from "../utils/logger";
@@ -184,6 +185,14 @@ async function processImages(
   }
 }
 
+function processCategory(category: string): string[] {
+  if (!category) return [];
+  // Split on the HTML entity for middot
+  const parts = category.split(/\s*&middot;\s*/);
+  // Return first part and any additional parts that aren't just a number (like "VII")
+  return [parts[0]].concat(parts.slice(1).filter((part) => !/^\s*[IVX]+\s*$/.test(part)));
+}
+
 function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): Partial<TcgCard> {
   const updates: Partial<TcgCard> = {};
 
@@ -218,7 +227,10 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): Partial<Tc
   } as const;
 
   // Build categories array from category_1 and category_2
-  const categories = [seCard.category_1, seCard.category_2].filter(Boolean) as string[];
+  const categories = [
+    ...processCategory(seCard.category_1),
+    ...(seCard.category_2 ? processCategory(seCard.category_2) : []),
+  ];
 
   // Only update card numbers if they're invalid
   const hasValidNumbers = (tcgCard.cardNumbers || []).every(isValidCardNumber);
