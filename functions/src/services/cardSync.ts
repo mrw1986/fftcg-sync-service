@@ -141,29 +141,58 @@ export class CardSyncService {
       "Anniversary",
       "Prerelease Promo",
       "Alternate Art Promo",
+      "Full Art Reprint",
     ];
 
-    // Remove element indicators in parentheses
-    const withoutElement = withoutCardNumber
-      .replace(/\s*\((Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\)\s*$/i, "")
-      .trim();
+    // Check if this is a Crystal Token
+    const isCrystalToken = withoutCardNumber.includes("Crystal Token");
 
-    // Then handle parentheses content
-    const parenthesesContent = withoutElement.match(/\((.*?)\)/);
-    if (parenthesesContent) {
-      const content = parenthesesContent[1];
-      // Special case: If content contains "Buy A Box Promo", always use just that
-      if (content.includes("Buy A Box Promo")) {
-        return withoutElement.replace(/\(.*Buy A Box Promo.*\)/, "(Buy A Box Promo)");
-      }
-      // If content contains any special keywords, keep the parentheses
-      if (specialKeywords.some((keyword) => content.includes(keyword))) {
-        return withoutElement;
+    // Process all parentheses content
+    const parts = withoutCardNumber.split(/\s*\((.*?)\)\s*/);
+    const processedParts: string[] = [parts[0]]; // Start with the base name
+
+    // Process each parentheses content
+    for (let i = 1; i < parts.length; i += 2) {
+      const content = parts[i];
+      if (content) {
+        // Check for month year pattern (e.g., "March 2024")
+        const monthYearPattern =
+          /^(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}$/;
+        if (monthYearPattern.test(content)) {
+          processedParts.push(`(${content})`);
+          continue;
+        }
+
+        // Special case: If content contains "Buy A Box Promo", always use just that
+        if (content.includes("Buy A Box Promo")) {
+          processedParts.push("(Buy A Box Promo)");
+          continue;
+        }
+
+        // For Crystal Tokens, handle elements and special keywords separately
+        if (isCrystalToken) {
+          // Check if it's an element
+          if (/^(Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)$/i.test(content)) {
+            processedParts.push(`(${content})`);
+            continue;
+          }
+          // Check for special keywords
+          if (specialKeywords.some((keyword) => content.includes(keyword))) {
+            processedParts.push(`(${content})`);
+            continue;
+          }
+        }
+
+        // If content contains any special keywords, keep it
+        if (specialKeywords.some((keyword) => content.includes(keyword))) {
+          processedParts.push(`(${content})`);
+          continue;
+        }
       }
     }
 
-    // Remove all remaining parentheses content
-    return withoutElement.replace(/\s*\([^)]+\)/g, "").trim();
+    // Join all parts with spaces
+    return processedParts.join(" ").trim();
   }
 
   private isValidNormalizedNumber(number: string): boolean {
