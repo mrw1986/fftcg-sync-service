@@ -6,7 +6,6 @@ import { logger } from "../utils/logger";
 import { RetryWithBackoff } from "../utils/retry";
 import { FieldValue } from "firebase-admin/firestore";
 import { OptimizedBatchProcessor } from "./batchProcessor";
-import { Cache } from "../utils/cache";
 
 const elementMap: Record<string, string> = {
   火: "Fire",
@@ -44,7 +43,6 @@ interface SquareEnixApiResponse {
 export class SquareEnixStorageService {
   private readonly CHUNK_SIZE = 1000;
   private readonly MAX_EXECUTION_TIME = 510; // 8.5 minutes
-  private readonly cache = new Cache<string>(15);
   private readonly retry = new RetryWithBackoff();
   private readonly batchProcessor: OptimizedBatchProcessor;
 
@@ -69,16 +67,22 @@ export class SquareEnixStorageService {
       ex_burst: card.ex_burst,
     });
 
+    // Normalize element array
+    const normalizedElement =
+      card.type_en === "Crystal" || card.code.startsWith("C-")
+        ? ["Crystal"]
+        : (card.element || [])
+            .map((e: string) => elementMap[e] || e)
+            .filter((e: string) => e)
+            .sort();
+
+    // Normalize set array
+    const normalizedSet = (card.set || []).filter((s: string) => s).sort();
+
+    // Only include fields that affect the card's properties
     const apiData = {
       code: card.code || "",
-      name: card.name_en || "",
-      type: card.type_en || "",
-      job: card.type_en === "Summon" ? "" : card.job_en || "",
-      text: card.text_en || "",
-      element:
-        card.type_en === "Crystal" || card.code.startsWith("C-") ?
-          ["Crystal"] :
-          (card.element || []).map((e: string) => elementMap[e] || e),
+      element: normalizedElement,
       rarity: card.rarity || "",
       cost: card.cost || "",
       power: card.power || "",
@@ -86,7 +90,11 @@ export class SquareEnixStorageService {
       category_2: card.category_2 || null,
       multicard: card.multicard === "1",
       ex_burst: card.ex_burst === "1",
-      set: card.set || [],
+      set: normalizedSet,
+      cardNumbers: (card.code.includes("/") ? card.code.split("/") : [card.code])
+        .map((num) => num.trim())
+        .filter((num) => num)
+        .sort(),
     };
     const jsonData = JSON.stringify(apiData);
     logger.info("Square Enix Storage hash data:", {
@@ -95,50 +103,6 @@ export class SquareEnixStorageService {
       hash: crypto.createHash("md5").update(jsonData).digest("hex"),
     });
     return crypto.createHash("md5").update(jsonData).digest("hex");
-  }
-
-  private async getStoredHashes(codes: string[]): Promise<Map<string, string>> {
-    const hashMap = new Map<string, string>();
-    const uncachedCodes: string[] = [];
-
-    codes.forEach((code) => {
-      const cacheKey = `hash_${code}`;
-      const cached = this.cache.get(cacheKey);
-      if (cached) {
-        hashMap.set(code, cached);
-      } else {
-        uncachedCodes.push(code);
-      }
-    });
-
-    if (uncachedCodes.length === 0) {
-      return hashMap;
-    }
-
-    const chunks = [];
-    for (let i = 0; i < uncachedCodes.length; i += 10) {
-      chunks.push(uncachedCodes.slice(i, i + 10));
-    }
-
-    if (uncachedCodes.length > 0) {
-      await Promise.all(
-        chunks.map(async (chunk) => {
-          const refs = chunk.map((code) => db.collection(COLLECTION.SQUARE_ENIX_HASHES).doc(code));
-          const snapshots = await this.retry.execute(() => db.getAll(...refs));
-
-          snapshots.forEach((snap, index) => {
-            const code = chunk[index];
-            const hash = snap.exists ? snap.data()?.hash : null;
-            if (hash) {
-              hashMap.set(code, hash);
-              this.cache.set(`hash_${code}`, hash);
-            }
-          });
-        })
-      );
-    }
-
-    return hashMap;
   }
 
   private async processCards(
@@ -157,11 +121,8 @@ export class SquareEnixStorageService {
     };
 
     try {
-      // Get all sanitized codes and hashes in one batch
-      const codes = cards.map((card) => this.sanitizeDocumentId(card.code));
-      const hashMap = await this.getStoredHashes(codes);
-
       // Get all existing documents in one batch
+      const codes = cards.map((card) => this.sanitizeDocumentId(card.code));
       const docRefs = codes.map((code) => db.collection(COLLECTION.SQUARE_ENIX_CARDS).doc(code));
       const docSnapshots = await this.retry.execute(() => db.getAll(...docRefs));
       const docMap = new Map(docSnapshots.map((doc) => [doc.id, doc]));
@@ -176,23 +137,45 @@ export class SquareEnixStorageService {
 
             result.processed++;
             const sanitizedCode = this.sanitizeDocumentId(card.code);
-            const currentHash = this.calculateHash(card);
-            const storedHash = hashMap.get(sanitizedCode);
             const docSnapshot = docMap.get(sanitizedCode);
+            const incomingHash = this.calculateHash(card);
 
-            // Skip if document exists AND hash exists AND hash matches (unless forcing update)
-            if (docSnapshot?.exists && storedHash && currentHash === storedHash && !options.forceUpdate) {
-              return;
+            // Calculate hash for existing document if it exists
+            let existingHash = null;
+            if (docSnapshot?.exists) {
+              const docData = docSnapshot.data() || {};
+              existingHash = this.calculateHash({
+                id: "",
+                code: docData.code || "",
+                name_en: "",
+                type_en: "",
+                job_en: "",
+                text_en: "",
+                element: docData.element || [],
+                rarity: docData.rarity || "",
+                cost: docData.cost || "",
+                power: docData.power || "",
+                category_1: docData.category_1 || "",
+                category_2: docData.category_2 || null,
+                multicard: docData.multicard ? "1" : "0",
+                ex_burst: docData.ex_burst ? "1" : "0",
+                set: docData.set || [],
+                images: { thumbs: [], full: [] },
+              });
             }
 
-            logger.info(`Updating card ${card.code} because:`, {
+            logger.info(`Processing card ${card.code}:`, {
               docExists: docSnapshot?.exists || false,
-              hashExists: !!storedHash,
-              hashMatch: currentHash === storedHash,
-              currentHash,
-              storedHash: storedHash || "none",
+              hashMatch: incomingHash === existingHash,
+              incomingHash,
+              existingHash: existingHash || "none",
               forceUpdate: options.forceUpdate || false,
             });
+
+            // Skip if document exists and hashes match (unless forcing update)
+            if (docSnapshot?.exists && incomingHash === existingHash && !options.forceUpdate) {
+              return;
+            }
 
             // Create card document with only Square Enix fields
             const cardDoc = {
@@ -220,13 +203,11 @@ export class SquareEnixStorageService {
               batch.set(docRef, cardDoc, { merge: true });
 
               batch.set(db.collection(COLLECTION.SQUARE_ENIX_HASHES).doc(sanitizedCode), {
-                hash: currentHash,
+                hash: incomingHash,
                 lastUpdated: FieldValue.serverTimestamp(),
               });
             });
 
-            // Update cache immediately
-            this.cache.set(`hash_${sanitizedCode}`, currentHash);
             result.updated++;
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "Unknown error";

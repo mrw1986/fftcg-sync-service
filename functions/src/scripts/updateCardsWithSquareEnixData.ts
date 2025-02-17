@@ -87,15 +87,28 @@ function hasSpecialTerms(name: string): boolean {
 }
 
 function calculateHash(card: SquareEnixCard): string {
+  // Normalize element array
+  const normalizedElement =
+    card.type_en === "Crystal" || card.code.startsWith("C-")
+      ? ["Crystal"]
+      : (card.element || [])
+          .map((e: string) => elementMap[e] || e)
+          .filter((e: string) => e)
+          .sort();
+
+  // Normalize set array
+  const normalizedSet = (card.set || []).filter((s: string) => s).sort();
+
+  // Normalize card numbers
+  const normalizedCardNumbers = (card.code.includes("/") ? card.code.split("/") : [card.code])
+    .map((num) => num.trim())
+    .filter((num) => num)
+    .sort();
+
+  // Only include fields that affect the card's properties
   const deltaData = {
     code: card.code || "",
-    type: card.type_en || "",
-    job: card.type_en === "Summon" ? "" : card.job_en || "",
-    text: card.text_en || "",
-    element:
-      card.type_en === "Crystal" || card.code.startsWith("C-")
-        ? ["Crystal"]
-        : (card.element || []).map((e: string) => elementMap[e] || e),
+    element: normalizedElement,
     rarity: card.rarity || "",
     cost: card.cost || "",
     power: card.power || "",
@@ -103,10 +116,17 @@ function calculateHash(card: SquareEnixCard): string {
     category_2: card.category_2 || null,
     multicard: card.multicard === "1",
     ex_burst: card.ex_burst === "1",
-    set: card.set || [],
-    cardNumbers: card.code.includes("/") ? card.code.split("/") : [card.code],
+    set: normalizedSet,
+    cardNumbers: normalizedCardNumbers,
   };
-  return crypto.createHash("md5").update(JSON.stringify(deltaData)).digest("hex");
+
+  const jsonData = JSON.stringify(deltaData);
+  logger.info("Card hash data:", {
+    code: deltaData.code,
+    data: jsonData,
+    hash: crypto.createHash("md5").update(jsonData).digest("hex"),
+  });
+  return crypto.createHash("md5").update(jsonData).digest("hex");
 }
 
 function getAllCardNumbers(card: TcgCard): string[] {
@@ -193,6 +213,13 @@ function processCategory(category: string): string[] {
   return [parts[0]].concat(parts.slice(1).filter((part) => !/^\s*[IVX]+\s*$/.test(part)));
 }
 
+function arraysEqual(a: any[], b: any[]): boolean {
+  if (a.length !== b.length) return false;
+  const sortedA = [...a].sort();
+  const sortedB = [...b].sort();
+  return JSON.stringify(sortedA) === JSON.stringify(sortedB);
+}
+
 function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): Partial<TcgCard> {
   const updates: Partial<TcgCard> = {};
 
@@ -263,7 +290,13 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): Partial<Tc
   // Update fields that have changed
   for (const [field, value] of Object.entries(fields)) {
     const currentValue = tcgCard[field];
-    if (currentValue === null || currentValue === undefined || JSON.stringify(currentValue) !== JSON.stringify(value)) {
+    if (currentValue === null || currentValue === undefined) {
+      updates[field] = value;
+    } else if (Array.isArray(currentValue) && Array.isArray(value)) {
+      if (!arraysEqual(currentValue, value)) {
+        updates[field] = value;
+      }
+    } else if (JSON.stringify(currentValue) !== JSON.stringify(value)) {
       updates[field] = value;
     }
   }
@@ -333,7 +366,16 @@ export async function main(options: SyncOptions = {}) {
         currentHash = calculateHash(match as SquareEnixCard);
         storedHash = hashMap.get(sanitizedCode);
 
-        if (currentHash !== storedHash || options.forceUpdate) {
+        logger.info(`Processing card ${card.id}:`, {
+          hashExists: !!storedHash,
+          hashMatch: currentHash === storedHash,
+          currentHash,
+          storedHash: storedHash || "none",
+          forceUpdate: options.forceUpdate || false,
+        });
+
+        // Only update if hash doesn't match or force update
+        if (!storedHash || currentHash !== storedHash || options.forceUpdate) {
           fieldUpdates = getFieldsToUpdate(card, match as SquareEnixCard);
         }
       }
