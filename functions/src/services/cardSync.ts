@@ -111,16 +111,59 @@ export class CardSyncService {
       .replace(/\s*[-–—]\s*(?:PR-\d{3}(?:\/\d{1,2}-\d{3}[A-Z])?|\d{1,2}-\d{3}[A-Z]|[A-C]-\d{3})\s*$/, "")
       .trim();
 
-    // Then remove ALL parentheses content
+    // Preserve special type indicators (EX, LB)
+    const hasSpecialType = /\b(EX|LB)\b/.test(withoutCardNumber);
+    const specialType = hasSpecialType ? withoutCardNumber.match(/\b(EX|LB)\b/)?.[0] : null;
+
+    // Remove all parentheses content
     const cleanedName = withoutCardNumber.replace(/\s*\([^)]+\)/g, "").trim();
 
-    logger.info("Cleaning card name:", {
-      original: name,
-      withoutCardNumber,
-      final: cleanedName,
-    });
+    // Add back special type if it existed
+    if (specialType) {
+      return cleanedName.includes(specialType) ? cleanedName : `${cleanedName} ${specialType}`;
+    }
 
     return cleanedName;
+  }
+
+  private cleanDisplayName(name: string): string {
+    // First remove card numbers at the end
+    const withoutCardNumber = name
+      .replace(/\s*[-–—]\s*(?:PR-\d{3}(?:\/\d{1,2}-\d{3}[A-Z])?|\d{1,2}-\d{3}[A-Z]|[A-C]-\d{3})\s*$/, "")
+      .trim();
+
+    // Special keywords that indicate we should keep the content
+    const specialKeywords = [
+      "Full Art",
+      "Promo",
+      "Road to World Championship",
+      "Champion",
+      "Anniversary",
+      "Prerelease Promo",
+      "Alternate Art Promo",
+    ];
+
+    // Remove element indicators in parentheses
+    const withoutElement = withoutCardNumber
+      .replace(/\s*\((Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\)\s*$/i, "")
+      .trim();
+
+    // Then handle parentheses content
+    const parenthesesContent = withoutElement.match(/\((.*?)\)/);
+    if (parenthesesContent) {
+      const content = parenthesesContent[1];
+      // Special case: If content contains "Buy A Box Promo", always use just that
+      if (content.includes("Buy A Box Promo")) {
+        return withoutElement.replace(/\(.*Buy A Box Promo.*\)/, "(Buy A Box Promo)");
+      }
+      // If content contains any special keywords, keep the parentheses
+      if (specialKeywords.some((keyword) => content.includes(keyword))) {
+        return withoutElement;
+      }
+    }
+
+    // Remove all remaining parentheses content
+    return withoutElement.replace(/\s*\([^)]+\)/g, "").trim();
   }
 
   private isValidNormalizedNumber(number: string): boolean {
@@ -393,7 +436,7 @@ export class CardSyncService {
 
             const cardDoc: CardDocument = {
               productId: card.productId,
-              name: card.name, // Keep original name, will be processed in Step 3
+              name: this.cleanDisplayName(card.name),
               cleanName: this.cleanCardName(card.name),
               fullResUrl: imageResult.fullResUrl,
               highResUrl: imageResult.highResUrl,
