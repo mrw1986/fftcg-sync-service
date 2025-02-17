@@ -55,8 +55,11 @@ export class SquareEnixStorageService {
     return executionTime > this.MAX_EXECUTION_TIME - safetyMarginSeconds;
   }
 
-  private sanitizeDocumentId(code: string): string {
-    return code.replace(/\//g, ";");
+  private sanitizeDocumentId(card: SquareEnixApiResponse): string {
+    // Include set in the ID to handle duplicate card numbers
+    const set = card.set?.[0] || "Unknown";
+    const sanitizedSet = set.replace(/[^a-zA-Z0-9]/g, "");
+    return `${card.code.replace(/\//g, ";")}_${sanitizedSet}`;
   }
 
   private calculateHash(card: SquareEnixApiResponse): string {
@@ -65,16 +68,14 @@ export class SquareEnixStorageService {
       code: card.code,
       multicard: card.multicard,
       ex_burst: card.ex_burst,
+      set: card.set,
     });
 
     // Normalize element array
     const normalizedElement =
       card.type_en === "Crystal" || card.code.startsWith("C-")
         ? ["Crystal"]
-        : (card.element || [])
-            .map((e: string) => elementMap[e] || e)
-            .filter((e: string) => e)
-            .sort();
+        : (card.element || []).filter((e: string) => e).sort();
 
     // Normalize set array
     const normalizedSet = (card.set || []).filter((s: string) => s).sort();
@@ -88,8 +89,8 @@ export class SquareEnixStorageService {
       power: card.power || "",
       category_1: card.category_1 || "",
       category_2: card.category_2 || null,
-      multicard: card.multicard === "1",
-      ex_burst: card.ex_burst === "1",
+      multicard: card.multicard,
+      ex_burst: card.ex_burst,
       set: normalizedSet,
       cardNumbers: (card.code.includes("/") ? card.code.split("/") : [card.code])
         .map((num) => num.trim())
@@ -121,11 +122,16 @@ export class SquareEnixStorageService {
     };
 
     try {
-      // Get all existing documents in one batch
-      const codes = cards.map((card) => this.sanitizeDocumentId(card.code));
+      // Get all existing documents and hashes in one batch
+      const codes = cards.map((card) => this.sanitizeDocumentId(card));
       const docRefs = codes.map((code) => db.collection(COLLECTION.SQUARE_ENIX_CARDS).doc(code));
-      const docSnapshots = await this.retry.execute(() => db.getAll(...docRefs));
+      const hashRefs = codes.map((code) => db.collection(COLLECTION.SQUARE_ENIX_HASHES).doc(code));
+      const [docSnapshots, hashSnapshots] = await Promise.all([
+        this.retry.execute(() => db.getAll(...docRefs)),
+        this.retry.execute(() => db.getAll(...hashRefs)),
+      ]);
       const docMap = new Map(docSnapshots.map((doc) => [doc.id, doc]));
+      const hashMap = new Map(hashSnapshots.map((doc) => [doc.id, doc.exists ? doc.data()?.hash : null]));
 
       await Promise.all(
         cards.map(async (card) => {
@@ -136,33 +142,12 @@ export class SquareEnixStorageService {
             }
 
             result.processed++;
-            const sanitizedCode = this.sanitizeDocumentId(card.code);
+            const sanitizedCode = this.sanitizeDocumentId(card);
             const docSnapshot = docMap.get(sanitizedCode);
             const incomingHash = this.calculateHash(card);
 
-            // Calculate hash for existing document if it exists
-            let existingHash = null;
-            if (docSnapshot?.exists) {
-              const docData = docSnapshot.data() || {};
-              existingHash = this.calculateHash({
-                id: "",
-                code: docData.code || "",
-                name_en: "",
-                type_en: "",
-                job_en: "",
-                text_en: "",
-                element: docData.element || [],
-                rarity: docData.rarity || "",
-                cost: docData.cost || "",
-                power: docData.power || "",
-                category_1: docData.category_1 || "",
-                category_2: docData.category_2 || null,
-                multicard: docData.multicard ? "1" : "0",
-                ex_burst: docData.ex_burst ? "1" : "0",
-                set: docData.set || [],
-                images: { thumbs: [], full: [] },
-              });
-            }
+            // Get stored hash from map
+            const existingHash = hashMap.get(sanitizedCode);
 
             logger.info(`Processing card ${card.code}:`, {
               docExists: docSnapshot?.exists || false,
@@ -180,19 +165,22 @@ export class SquareEnixStorageService {
             // Create card document with only Square Enix fields
             const cardDoc = {
               id: parseInt(card.id) || 0,
-              code: card.code || "",
+              code: card.code.replace(/;/g, "/") || "", // Store unsanitized code in document
               name: card.name_en || "",
               type: card.type_en || "",
               job: card.type_en === "Summon" ? "" : card.job_en || "",
               text: card.text_en || "",
-              element: card.element || [],
+              element:
+                card.type_en === "Crystal" || card.code.startsWith("C-")
+                  ? ["Crystal"]
+                  : (card.element || []).map((e) => elementMap[e] || e),
               rarity: card.rarity || "",
               cost: card.cost || "",
               power: card.power || "",
               category_1: card.category_1 || "",
               category_2: card.category_2 || null,
-              multicard: card.multicard === "1",
-              ex_burst: card.ex_burst === "1",
+              multicard: card.multicard,
+              ex_burst: card.ex_burst,
               set: card.set || [],
               lastUpdated: FieldValue.serverTimestamp(),
             };

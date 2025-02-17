@@ -26,7 +26,7 @@ export interface TcgCard {
   categories?: string[];
   cleanName?: string;
   elements?: string[];
-  sets?: string[];
+  set?: string[];
   fullResUrl?: string | null;
   highResUrl?: string | null;
   lowResUrl?: string | null;
@@ -47,8 +47,8 @@ export interface SquareEnixCard {
   power: string;
   category_1: string;
   category_2?: string;
-  multicard: string;
-  ex_burst: string;
+  multicard: boolean;
+  ex_burst: boolean;
   set: string[];
   images: {
     thumbs: string[];
@@ -114,8 +114,8 @@ function calculateHash(card: SquareEnixCard): string {
     power: card.power || "",
     category_1: card.category_1 || "",
     category_2: card.category_2 || null,
-    multicard: card.multicard === "1",
-    ex_burst: card.ex_burst === "1",
+    multicard: card.multicard,
+    ex_burst: card.ex_burst,
     set: normalizedSet,
     cardNumbers: normalizedCardNumbers,
   };
@@ -130,14 +130,14 @@ function calculateHash(card: SquareEnixCard): string {
 }
 
 function getAllCardNumbers(card: TcgCard): string[] {
-  const numbers: string[] = [];
+  const numbers = new Set<string>();
 
-  if (card.cardNumbers) numbers.push(...card.cardNumbers);
-  if (card.fullCardNumber) numbers.push(card.fullCardNumber);
-  if (card.number) numbers.push(card.number);
-  if (card.primaryCardNumber) numbers.push(card.primaryCardNumber);
+  if (card.cardNumbers) card.cardNumbers.forEach((num) => numbers.add(num));
+  if (card.fullCardNumber) numbers.add(card.fullCardNumber);
+  if (card.number) numbers.add(card.number);
+  if (card.primaryCardNumber) numbers.add(card.primaryCardNumber);
 
-  return numbers;
+  return Array.from(numbers);
 }
 
 function findCardNumberMatch(tcgCard: TcgCard, seCard: SquareEnixCard): boolean {
@@ -284,7 +284,7 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): Partial<Tc
     job: seCard.type_en === "Summon" ? "" : seCard.job_en,
     power: seCard.power ? parseInt(seCard.power.trim()) || null : null,
     rarity: isPromo ? "Promo" : rarityMap[seCard.rarity as keyof typeof rarityMap] || seCard.rarity,
-    set: seCard.set || [],
+    set: seCard.set || [], // Always update set from Square Enix data
   };
 
   // Update fields that have changed
@@ -316,9 +316,7 @@ export async function main(options: SyncOptions = {}) {
       const data = doc.data();
       return {
         ...data,
-        code: doc.id.replace(/;/g, "/"),
-        multicard: data.multicard ? "1" : "0",
-        ex_burst: data.ex_burst ? "1" : "0",
+        code: doc.id.split("_")[0].replace(/;/g, "/"), // Extract card number from document ID
       };
     });
     logger.info(`Loaded ${freshSeCards.length} cards from Square Enix collection`);
@@ -331,13 +329,11 @@ export async function main(options: SyncOptions = {}) {
     }
     const tcgCardsSnapshot = await retry.execute(() => limitedQuery.get());
 
-    // Create lookup maps
+    // Create TCG cards map and Square Enix cards array
     const tcgCards = new Map(tcgCardsSnapshot.docs.map((doc) => [doc.id, { id: doc.id, ...doc.data() } as TcgCard]));
-    const seCards = new Map(
-      freshSeCards.map((card) => [card.code, { ...card, id: card.code.replace(/\//g, ";") } as SquareEnixCard])
-    );
+    const seCards = freshSeCards.map((card) => ({ ...card } as SquareEnixCard));
 
-    logger.info(`Loaded ${tcgCards.size} TCG cards and ${seCards.size} Square Enix cards`);
+    logger.info(`Loaded ${tcgCards.size} TCG cards and ${seCards.length} Square Enix cards`);
 
     let matchCount = 0;
     let updateCount = 0;
@@ -358,7 +354,35 @@ export async function main(options: SyncOptions = {}) {
       let storedHash: string | null = null;
       let sanitizedCode: string | null = null;
 
-      const match = Array.from(seCards.values()).find((seCard) => findCardNumberMatch(card, seCard as SquareEnixCard));
+      // Log TCG card info once
+      logger.info("Processing TCG card:", {
+        cardId: card.id,
+        cardNumbers: getAllCardNumbers(card),
+        cardSet: card.set,
+      });
+
+      // Find matching Square Enix card by number and set
+      const match = seCards.find((seCard) => {
+        const numberMatches = findCardNumberMatch(card, seCard);
+        if (!numberMatches) return false;
+
+        // If TCG card has no set, accept any Square Enix card and update set later
+        const setMatches = !card.set ? true : arraysEqual(card.set, seCard.set || []);
+        if (numberMatches) {
+          logger.info("Found number match:", {
+            cardId: card.id,
+            seCardCode: seCard.code,
+            seCardSet: seCard.set,
+            tcgCardSet: card.set,
+            setMatches,
+          });
+        }
+        return numberMatches && setMatches;
+      });
+
+      if (!match) {
+        logger.info("No match found for card:", { cardId: card.id });
+      }
 
       if (match) {
         matchCount++;

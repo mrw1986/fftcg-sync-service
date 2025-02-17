@@ -22,6 +22,7 @@
     "sync:update-cards": "ts-node src/scripts/updateCardsWithSquareEnixData.ts",
     "sync:update-cards:force": "ts-node src/scripts/updateCardsWithSquareEnixData.ts --force",
     "sync:all": "ts-node src/scripts/syncAll.ts",
+    "cleanup:sets": "ts-node src/scripts/cleanupSetsField.ts",
     "sync:all:force": "ts-node src/scripts/syncAll.ts --force",
     "sync:all:group": "ts-node src/scripts/syncAll.ts",
     "sync:all:group:force": "ts-node src/scripts/syncAll.ts --force",
