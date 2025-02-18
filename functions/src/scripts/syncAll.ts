@@ -49,7 +49,8 @@ async function main() {
   try {
     const options = parseArgs();
 
-    logger.info("Starting complete sync process with options:", options);
+    await logger.startSync();
+    await logger.info("Starting complete sync process with options:", options);
 
     // Step 1: Sync cards from TCGCSV API
     logger.info("Step 1: Starting TCGCSV sync", { options });

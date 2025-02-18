@@ -73,9 +73,9 @@ export class SquareEnixStorageService {
 
     // Normalize element array
     const normalizedElement =
-      card.type_en === "Crystal" || card.code.startsWith("C-")
-        ? ["Crystal"]
-        : (card.element || []).filter((e: string) => e).sort();
+      card.type_en === "Crystal" || card.code.startsWith("C-") ?
+        ["Crystal"] :
+        (card.element || []).filter((e: string) => e).sort();
 
     // Normalize set array
     const normalizedSet = (card.set || []).filter((s: string) => s).sort();
@@ -171,9 +171,9 @@ export class SquareEnixStorageService {
               job: card.type_en === "Summon" ? "" : card.job_en || "",
               text: card.text_en || "",
               element:
-                card.type_en === "Crystal" || card.code.startsWith("C-")
-                  ? ["Crystal"]
-                  : (card.element || []).map((e) => elementMap[e] || e),
+                card.type_en === "Crystal" || card.code.startsWith("C-") ?
+                  ["Crystal"] :
+                  (card.element || []).map((e) => elementMap[e] || e),
               rarity: card.rarity || "",
               cost: card.cost || "",
               power: card.power || "",

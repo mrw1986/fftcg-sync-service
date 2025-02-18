@@ -30,12 +30,12 @@ const elementMap: Record<string, string> = {
 function calculateHash(card: SquareEnixCard): string {
   // Normalize element array
   const normalizedElement =
-    card.type_en === "Crystal" || card.code.startsWith("C-")
-      ? ["Crystal"]
-      : (card.element || [])
-          .map((e: string) => elementMap[e] || e)
-          .filter((e: string) => e)
-          .sort();
+    card.type_en === "Crystal" || card.code.startsWith("C-") ?
+      ["Crystal"] :
+      (card.element || [])
+        .map((e: string) => elementMap[e] || e)
+        .filter((e: string) => e)
+        .sort();
 
   // Normalize set array
   const normalizedSet = (card.set || []).filter((s: string) => s).sort();

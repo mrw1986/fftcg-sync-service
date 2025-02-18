@@ -69,7 +69,7 @@ export class CardSyncService {
 
   private getSetFromUrl(url: string, cardName: string): string {
     // Get the first word of the card name (ignoring any parentheses)
-    const firstWord = cardName.split(/[\s\(]/)[0].toLowerCase();
+    const firstWord = cardName.split(/[\s(]/)[0].toLowerCase();
 
     // Find where the first word of the card name appears in the URL
     const urlParts = url.toLowerCase().split(firstWord)[0];
@@ -96,9 +96,9 @@ export class CardSyncService {
         .map((word, index) => {
           const lowerWord = word.toLowerCase();
           // Always capitalize first word, otherwise keep common words lowercase
-          return index === 0 || !commonWords.includes(lowerWord)
-            ? word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
-            : lowerWord;
+          return index === 0 || !commonWords.includes(lowerWord) ?
+            word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() :
+            lowerWord;
         })
         .join(" ");
     }
@@ -523,7 +523,8 @@ export class CardSyncService {
               fullCardNumber,
               cardType: this.getExtendedValue(card, "CardType"),
               category: this.getExtendedValue(card, "Category"),
-              categories: [this.getExtendedValue(card, "Category")].filter((c): c is string => c !== null), // Initialize with TCGCSV category
+              categories: [this.getExtendedValue(card, "Category")].filter((c): c is string => c !== null),
+              // Initialize with TCGCSV category
               cost: this.normalizeNumericValue(this.getExtendedValue(card, "Cost")),
               description: this.getExtendedValue(card, "Description"),
               elements: this.getElements(card),
@@ -559,14 +560,18 @@ export class CardSyncService {
               );
             });
 
-            // Save delta
+            // Save delta using productId as document ID
             await this.batchProcessor.addOperation((batch) => {
-              const deltaRef = db.collection(COLLECTION.CARD_DELTAS).doc();
-              batch.set(deltaRef, {
-                productId: card.productId,
-                changes: cardDoc,
-                timestamp: FieldValue.serverTimestamp(),
-              });
+              const deltaRef = db.collection(COLLECTION.CARD_DELTAS).doc(card.productId.toString());
+              batch.set(
+                deltaRef,
+                {
+                  productId: card.productId,
+                  changes: cardDoc,
+                  lastUpdated: FieldValue.serverTimestamp(),
+                },
+                { merge: true }
+              );
             });
 
             this.cache.set(`hash_${card.productId}`, currentHash);
@@ -603,9 +608,9 @@ export class CardSyncService {
     try {
       logger.info("Starting card sync", { options });
 
-      const groups = options.groupId
-        ? [{ groupId: options.groupId }]
-        : await this.retry.execute(() => tcgcsvApi.getGroups());
+      const groups = options.groupId ?
+        [{ groupId: options.groupId }] :
+        await this.retry.execute(() => tcgcsvApi.getGroups());
 
       // Apply limit if specified
       if (options.limit) {
