@@ -20,6 +20,8 @@ interface CardDeltaData {
   cost: number | null;
   power: number | null;
   elements: string[];
+  set: string[]; // Added set field
+  category: string | null;
 }
 
 interface CardDocument {
@@ -45,6 +47,7 @@ interface CardDocument {
   number: string | null;
   power: number | null;
   rarity: string | null;
+  set: string[]; // Added set field
 }
 
 export class CardSyncService {
@@ -62,6 +65,43 @@ export class CardSyncService {
   private isApproachingTimeout(startTime: Date, safetyMarginSeconds = 30): boolean {
     const executionTime = (new Date().getTime() - startTime.getTime()) / 1000;
     return executionTime > this.MAX_EXECUTION_TIME - safetyMarginSeconds;
+  }
+
+  private getSetFromUrl(url: string, cardName: string): string {
+    // Get the first word of the card name (ignoring any parentheses)
+    const firstWord = cardName.split(/[\s\(]/)[0].toLowerCase();
+
+    // Find where the first word of the card name appears in the URL
+    const urlParts = url.toLowerCase().split(firstWord)[0];
+
+    // Extract set name from the remaining URL part
+    const match = urlParts.match(/\/final-fantasy-tcg-(.+?)$/);
+    if (!match) {
+      logger.warn(`Could not extract set from URL: ${url}`);
+      return "Unknown";
+    }
+
+    const setName = match[1].replace(/-$/, ""); // Remove trailing hyphen if present
+
+    // Normalize set names
+    if (setName.startsWith("opus-")) {
+      // Convert opus-i to Opus I, opus-ii to Opus II, etc.
+      const opusNumber = setName.replace("opus-", "").toUpperCase();
+      return `Opus ${opusNumber}`;
+    } else {
+      // Capitalize each word except for common prepositions/articles
+      const commonWords = ["of", "the", "in", "at", "by", "for", "with", "to"];
+      return setName
+        .split("-")
+        .map((word, index) => {
+          const lowerWord = word.toLowerCase();
+          // Always capitalize first word, otherwise keep common words lowercase
+          return index === 0 || !commonWords.includes(lowerWord)
+            ? word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+            : lowerWord;
+        })
+        .join(" ");
+    }
   }
 
   private getElements(card: CardProduct): string[] {
@@ -336,6 +376,7 @@ export class CardSyncService {
   }
 
   private getDeltaData(card: CardProduct): CardDeltaData {
+    const set = card.url ? [this.getSetFromUrl(card.url, card.name)] : ["Unknown"];
     return {
       name: card.name,
       cleanName: card.cleanName,
@@ -346,6 +387,8 @@ export class CardSyncService {
       cost: this.normalizeNumericValue(this.getExtendedValue(card, "Cost")),
       power: this.normalizeNumericValue(this.getExtendedValue(card, "Power")),
       elements: this.getElements(card),
+      set, // Added set from URL
+      category: this.getExtendedValue(card, "Category"), // Add category to hash calculation
     };
   }
 
@@ -463,6 +506,8 @@ export class CardSyncService {
               }
             })();
 
+            const set = card.url ? [this.getSetFromUrl(card.url, card.name)] : ["Unknown"];
+
             const cardDoc: CardDocument = {
               productId: card.productId,
               name: this.cleanDisplayName(card.name),
@@ -478,7 +523,7 @@ export class CardSyncService {
               fullCardNumber,
               cardType: this.getExtendedValue(card, "CardType"),
               category: this.getExtendedValue(card, "Category"),
-              categories: [], // Initialize empty array, will be populated by Square Enix sync
+              categories: [this.getExtendedValue(card, "Category")].filter((c): c is string => c !== null), // Initialize with TCGCSV category
               cost: this.normalizeNumericValue(this.getExtendedValue(card, "Cost")),
               description: this.getExtendedValue(card, "Description"),
               elements: this.getElements(card),
@@ -486,6 +531,7 @@ export class CardSyncService {
               number: this.getExtendedValue(card, "Number"),
               power: this.normalizeNumericValue(this.getExtendedValue(card, "Power")),
               rarity: this.getExtendedValue(card, "Rarity"),
+              set, // Added set from URL
             };
 
             // Add main card document

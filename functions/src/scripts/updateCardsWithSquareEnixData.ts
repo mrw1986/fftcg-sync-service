@@ -105,6 +105,12 @@ function calculateHash(card: SquareEnixCard): string {
     .filter((num) => num)
     .sort();
 
+  // Build categories array for hash calculation
+  const categories = [
+    ...processCategory(card.category_1),
+    ...(card.category_2 ? processCategory(card.category_2) : []),
+  ];
+
   // Only include fields that affect the card's properties
   const deltaData = {
     code: card.code || "",
@@ -114,6 +120,7 @@ function calculateHash(card: SquareEnixCard): string {
     power: card.power || "",
     category_1: card.category_1 || "",
     category_2: card.category_2 || null,
+    categories, // Include processed categories in hash calculation
     multicard: card.multicard,
     ex_burst: card.ex_burst,
     set: normalizedSet,
@@ -253,11 +260,13 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): Partial<Tc
     S: "Starter",
   } as const;
 
-  // Build categories array from category_1 and category_2
-  const categories = [
+  // Build categories array by merging existing categories with Square Enix categories
+  const seCategories = [
     ...processCategory(seCard.category_1),
     ...(seCard.category_2 ? processCategory(seCard.category_2) : []),
   ];
+  const existingCategories = tcgCard.categories || [];
+  const categories = [...new Set([...existingCategories, ...seCategories])];
 
   // Only update card numbers if they're invalid
   const hasValidNumbers = (tcgCard.cardNumbers || []).every(isValidCardNumber);
