@@ -5,26 +5,22 @@
 - [x] Initial project setup
 - [x] Basic card syncing functionality
 - [x] Square Enix data integration
-- [ ] Card name and number processing improvements
-- [ ] Search functionality enhancements
+- [x] Card name and number processing improvements
+- [x] Search functionality enhancements
 
 ## Current Features
 
 - Card syncing from TCGCSV API
 - Square Enix data integration
 - Image processing and storage
-- Search indexing
-
-## In Progress
-
-- [ ] Card name processing
-  - [ ] Special parentheses content preservation
-  - [ ] Crystal card handling
-  - [ ] Name normalization improvements
-- [ ] Card number handling
-  - [ ] Multi-number card support
-  - [ ] Proper separator usage
-  - [ ] Number format validation
+- Search indexing with prefix search
+- Proper category handling
+- Multi-number card support
+- Special name handling
+- Crystal card handling
+- Batch processing optimization
+- Rate limiting and retry logic
+- Error handling and logging
 
 ## Completed Tasks
 
@@ -32,10 +28,26 @@
 - [x] Square Enix data integration
 - [x] Image processing pipeline
 - [x] Search index implementation
+  - [x] Progressive substring search
+  - [x] Number-specific search terms
+  - [x] Hash-based change detection
 - [x] Batch processing optimization
 - [x] Rate limiting implementation
 - [x] Error handling improvements
 - [x] Logging enhancements
+- [x] Category handling improvements
+  - [x] Raw category preservation
+  - [x] Removed unnecessary processing
+  - [x] Fixed array format issues
+- [x] Card name processing
+  - [x] Special parentheses content preservation
+  - [x] Crystal card handling
+  - [x] Name normalization improvements
+- [x] Card number handling
+  - [x] Multi-number card support
+  - [x] Proper separator usage
+  - [x] Number format validation
+  - [x] Promo card special handling
 
 ## Future Considerations
 
@@ -43,3 +55,7 @@
 - Enhanced error recovery
 - Improved validation for card data
 - Extended search capabilities
+- Automated testing implementation
+- Documentation improvements
+- Real-time sync capabilities
+- API endpoint development

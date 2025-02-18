@@ -8,16 +8,23 @@
    - Fetches card data
    - Processes basic card information
    - Handles image URLs
+   - Manages special card names
+   - Validates card numbers
+   - Handles promo cards
 
 2. Square Enix Integration (squareEnixSync.ts)
    - Enriches card data
    - Provides additional card details
    - Manages data versioning
+   - Handles categories properly
+   - Maintains data consistency
 
 3. Search Indexing (searchIndexService.ts)
    - Maintains search index
-   - Updates on card changes
-   - Optimizes search performance
+   - Progressive substring search
+   - Number-specific search terms
+   - Hash-based change detection
+   - Batch processing optimization
 
 ## Data Flow
 
@@ -25,16 +32,19 @@
    - TCGCSV API → Card Sync Service
    - Square Enix Data → Square Enix Sync
    - Combined Data → Firestore
+   - Hash-based change detection
 
 2. Image Processing
    - Source URLs → R2 Storage
    - Multiple resolutions
    - Metadata tracking
+   - Optimized storage
 
 3. Search Index Updates
    - Card Changes → Search Index
    - Batch Processing
    - Real-time Updates
+   - Progressive search terms
 
 ## External Dependencies
 
@@ -45,36 +55,89 @@
 
 ## Recent Significant Changes
 
-1. Name Processing Updates
-   - Special parentheses handling
-   - Crystal card exclusion
-   - Improved logging
+1. Search Improvements
+   - Progressive substring search
+   - Number-specific terms
+   - Optimized indexing
+   - Batch processing
 
-2. Card Number Improvements
+2. Name Processing Updates
+   - Special content preservation
+   - Crystal card handling
+   - Improved normalization
+   - Promo card handling
+
+3. Card Number Improvements
    - Multi-number support
    - Separator standardization
    - Format validation
+   - Promo number handling
 
-## Current Issues
+4. Category Handling
+   - Raw category preservation
+   - Proper array format
+   - Square Enix integration
+   - Consistent data structure
 
-1. Name Processing
-   - Special content not being preserved (e.g., "Rufus (Road to Worlds 2024)" → "Rufus")
-   - Crystal cards being unnecessarily processed
-   - Inconsistent parentheses handling
+## Current Focus
 
-2. Card Numbers
-   - Combined numbers not splitting correctly (e.g., "PR-050;1-080H" in cardNumbers array)
-   - Inconsistent separator usage (semicolons vs forward slashes)
-   - Format validation issues
+1. Performance Optimization
+   - Batch processing efficiency
+   - Memory usage optimization
+   - Query optimization
+   - Rate limiting improvements
+   - Caching strategies
+
+2. Testing Implementation
+   - Unit test development
+   - Integration testing
+   - Error scenario coverage
+   - Load testing
+   - Performance benchmarking
+
+3. Documentation
+   - API documentation
+   - Architecture details
+   - Deployment guides
+   - Performance tuning
+   - Error handling guides
 
 ## User Feedback Integration
 
-- Name preservation requirements identified
-  - Special content like "Road to Worlds 2024" must be kept
-  - Crystal card names should remain unchanged
-  - Parentheses content needs proper validation
+- Name preservation requirements met
+  - Special content preserved
+  - Crystal cards handled correctly
+  - Promo cards managed properly
 
-- Card Number Format Standardization
-  - cardNumbers array should contain individual numbers
-  - fullCardNumber should use forward slashes
-  - Consistent separator usage across all fields
+- Card number format standardization complete
+  - Multi-number support implemented
+  - Proper separator usage
+  - Format validation in place
+
+- Category handling requirements satisfied
+  - Raw data preserved
+  - Proper structure maintained
+  - Square Enix integration complete
+
+- Search functionality enhanced
+  - Progressive search implemented
+  - Number search optimized
+  - Batch processing improved
+
+## Future Development
+
+1. Performance Enhancements
+   - Query optimization
+   - Caching improvements
+   - Memory usage optimization
+
+2. Testing Infrastructure
+   - Automated testing pipeline
+   - Performance testing suite
+   - Error scenario coverage
+
+3. Feature Extensions
+   - Real-time sync capabilities
+   - Enhanced search features
+   - API endpoint development
+   - Mobile optimization
