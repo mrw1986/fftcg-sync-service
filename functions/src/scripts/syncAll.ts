@@ -5,6 +5,7 @@ import { db, COLLECTION } from "../config/firebase";
 import { main as updateCards } from "./updateCardsWithSquareEnixData";
 import { squareEnixStorage } from "../services/squareEnixStorageService";
 import { searchIndex } from "../services/searchIndexService";
+import { groupSync } from "../services/groupSync";
 import minimist from "minimist";
 
 function parseArgs(): { forceUpdate?: boolean; groupId?: string } {
@@ -52,13 +53,27 @@ async function main() {
     await logger.startSync();
     await logger.info("Starting complete sync process with options:", options);
 
-    // Step 1: Sync cards from TCGCSV API
-    logger.info("Step 1: Starting TCGCSV sync", { options });
+    // Step 1: Sync groups from TCGCSV API
+    logger.info("Step 1: Starting group sync", { options });
+    const groupResult = await groupSync.syncGroups(options);
+    if (!groupResult.success) {
+      throw new Error("Group sync failed");
+    }
+    await logger.info("Step 1: Group sync completed:", {
+      success: groupResult.success,
+      processed: groupResult.itemsProcessed,
+      updated: groupResult.itemsUpdated,
+      errors: groupResult.errors.length,
+      duration: `${groupResult.timing.duration}s`,
+    });
+
+    // Step 2: Sync cards from TCGCSV API
+    logger.info("Step 2: Starting TCGCSV sync", { options });
     const tcgResult = await cardSync.syncCards(options);
     if (!tcgResult.success) {
       throw new Error("TCGCSV sync failed");
     }
-    await logger.info("Step 1: TCGCSV sync completed:", {
+    await logger.info("Step 2: TCGCSV sync completed:", {
       success: tcgResult.success,
       processed: tcgResult.itemsProcessed,
       updated: tcgResult.itemsUpdated,
@@ -66,8 +81,8 @@ async function main() {
       duration: `${tcgResult.timing.duration}s`,
     });
 
-    // Step 2: Sync cards from Square Enix API
-    await logger.info("Step 2: Starting Square Enix sync", { options });
+    // Step 3: Sync cards from Square Enix API
+    await logger.info("Step 3: Starting Square Enix sync", { options });
     const seResult = await squareEnixStorage.syncSquareEnixCards({
       ...options,
       forceUpdate: options.forceUpdate,
@@ -75,7 +90,7 @@ async function main() {
     if (!seResult.success) {
       throw new Error("Square Enix sync failed");
     }
-    await logger.info("Step 2: Square Enix sync completed:", {
+    await logger.info("Step 3: Square Enix sync completed:", {
       success: seResult.success,
       processed: seResult.itemsProcessed,
       updated: seResult.itemsUpdated,
@@ -83,8 +98,8 @@ async function main() {
       duration: `${seResult.timing.duration}s`,
     });
 
-    // Step 3: Update TCG cards with Square Enix data
-    await logger.info("Step 3: Starting Square Enix data update", { options });
+    // Step 4: Update TCG cards with Square Enix data
+    await logger.info("Step 4: Starting Square Enix data update", { options });
     const updateResult = await updateCards({
       ...options,
       forceUpdate: options.forceUpdate,
@@ -92,7 +107,7 @@ async function main() {
     if (!updateResult.success) {
       throw new Error(updateResult.error || "Square Enix data update failed");
     }
-    await logger.info("Step 3: Square Enix data update completed:", {
+    await logger.info("Step 4: Square Enix data update completed:", {
       success: updateResult.success,
       totalCards: updateResult.totalCards,
       matchesFound: updateResult.matchesFound,
@@ -100,8 +115,8 @@ async function main() {
       durationSeconds: updateResult.durationSeconds,
     });
 
-    // Step 4: Update search index
-    await logger.info("Step 4: Starting search index update", { options });
+    // Step 5: Update search index
+    await logger.info("Step 5: Starting search index update", { options });
     let searchResult;
     try {
       // Add a delay to ensure previous operations have completed
@@ -123,7 +138,7 @@ async function main() {
       if (!searchResult.totalProcessed) {
         throw new Error("Search index update failed - no cards processed");
       }
-      await logger.info("Step 4: Search index update completed:", {
+      await logger.info("Step 5: Search index update completed:", {
         totalProcessed: searchResult.totalProcessed,
         totalUpdated: searchResult.totalUpdated,
         success: true,
@@ -135,6 +150,7 @@ async function main() {
 
     // Log final success with all results
     await logger.info("Complete sync process finished successfully", {
+      groupSync: groupResult,
       tcgSync: tcgResult,
       seSync: seResult,
       seUpdate: updateResult,

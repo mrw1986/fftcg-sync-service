@@ -67,43 +67,6 @@ export class CardSyncService {
     return executionTime > this.MAX_EXECUTION_TIME - safetyMarginSeconds;
   }
 
-  private getSetFromUrl(url: string, cardName: string): string {
-    // Get the first word of the card name (ignoring any parentheses)
-    const firstWord = cardName.split(/[\s(]/)[0].toLowerCase();
-
-    // Find where the first word of the card name appears in the URL
-    const urlParts = url.toLowerCase().split(firstWord)[0];
-
-    // Extract set name from the remaining URL part
-    const match = urlParts.match(/\/final-fantasy-tcg-(.+?)$/);
-    if (!match) {
-      logger.warn(`Could not extract set from URL: ${url}`);
-      return "Unknown";
-    }
-
-    const setName = match[1].replace(/-$/, ""); // Remove trailing hyphen if present
-
-    // Normalize set names
-    if (setName.startsWith("opus-")) {
-      // Convert opus-i to Opus I, opus-ii to Opus II, etc.
-      const opusNumber = setName.replace("opus-", "").toUpperCase();
-      return `Opus ${opusNumber}`;
-    } else {
-      // Capitalize each word except for common prepositions/articles
-      const commonWords = ["of", "the", "in", "at", "by", "for", "with", "to"];
-      return setName
-        .split("-")
-        .map((word, index) => {
-          const lowerWord = word.toLowerCase();
-          // Always capitalize first word, otherwise keep common words lowercase
-          return index === 0 || !commonWords.includes(lowerWord) ?
-            word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() :
-            lowerWord;
-        })
-        .join(" ");
-    }
-  }
-
   private getElements(card: CardProduct): string[] {
     // Check if it's a Crystal card by looking at card type or number
     const cardType = card.extendedData.find((data) => data.name === "CardType")?.value;
@@ -145,18 +108,42 @@ export class CardSyncService {
     return isNaN(num) ? null : num;
   }
 
+  private processCategories(categoryStr: string | null): { category: string | null; categories: string[] } {
+    if (!categoryStr) return { category: null, categories: [] };
+
+    // Split by either semicolon or middot
+    const cats = categoryStr
+      .split(/[;\u00B7]/)
+      .map((c) => c.trim())
+      .filter(Boolean);
+    if (cats.length === 0) return { category: null, categories: [] };
+
+    // Ensure DFF is first if present
+    const dffIndex = cats.findIndex((c) => c === "DFF");
+    if (dffIndex > 0) {
+      const dff = cats.splice(dffIndex, 1)[0];
+      cats.unshift(dff);
+    }
+
+    // Join with middot for category string
+    const category = cats.join("\u00B7");
+
+    return { category, categories: cats };
+  }
+
   private cleanCardName(name: string): string {
-    // First remove card numbers at the end
-    const withoutCardNumber = name
+    // First remove card numbers at the end and any numbers after a hyphen
+    const withoutNumbers = name
       .replace(/\s*[-–—]\s*(?:PR-\d{3}(?:\/\d{1,2}-\d{3}[A-Z])?|\d{1,2}-\d{3}[A-Z]|[A-C]-\d{3})\s*$/, "")
+      .replace(/\s*[-–—]\s*[A-Z]?-?\d+.*$/, "")
       .trim();
 
     // Preserve special type indicators (EX, LB)
-    const hasSpecialType = /\b(EX|LB)\b/.test(withoutCardNumber);
-    const specialType = hasSpecialType ? withoutCardNumber.match(/\b(EX|LB)\b/)?.[0] : null;
+    const hasSpecialType = /\b(EX|LB)\b/.test(withoutNumbers);
+    const specialType = hasSpecialType ? withoutNumbers.match(/\b(EX|LB)\b/)?.[0] : null;
 
     // Remove all parentheses content
-    const cleanedName = withoutCardNumber.replace(/\s*\([^)]+\)/g, "").trim();
+    const cleanedName = withoutNumbers.replace(/\s*\([^)]+\)/g, "").trim();
 
     // Add back special type if it existed
     if (specialType) {
@@ -167,9 +154,10 @@ export class CardSyncService {
   }
 
   private cleanDisplayName(name: string): string {
-    // First remove card numbers at the end
-    const withoutCardNumber = name
+    // First remove card numbers at the end and any numbers after a hyphen
+    const withoutNumbers = name
       .replace(/\s*[-–—]\s*(?:PR-\d{3}(?:\/\d{1,2}-\d{3}[A-Z])?|\d{1,2}-\d{3}[A-Z]|[A-C]-\d{3})\s*$/, "")
+      .replace(/\s*[-–—]\s*[A-Z]?-?\d+.*(?=\s*\(|$)/, "")
       .trim();
 
     // Special keywords that indicate we should keep the content
@@ -185,16 +173,21 @@ export class CardSyncService {
     ];
 
     // Check if this is a Crystal Token
-    const isCrystalToken = withoutCardNumber.includes("Crystal Token");
+    const isCrystalToken = withoutNumbers.includes("Crystal Token");
 
     // Process all parentheses content
-    const parts = withoutCardNumber.split(/\s*\((.*?)\)\s*/);
+    const parts = withoutNumbers.split(/\s*\((.*?)\)\s*/);
     const processedParts: string[] = [parts[0]]; // Start with the base name
 
     // Process each parentheses content
     for (let i = 1; i < parts.length; i += 2) {
       const content = parts[i];
       if (content) {
+        // Remove "(Common)" and "(Rare)" suffixes
+        if (/^(?:Common|Rare)$/.test(content)) {
+          continue;
+        }
+
         // Check for month year pattern (e.g., "March 2024")
         const monthYearPattern =
           /^(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}$/;
@@ -228,11 +221,43 @@ export class CardSyncService {
           processedParts.push(`(${content})`);
           continue;
         }
+
+        // Check if content contains a year (e.g., "2024")
+        if (/\b\d{4}\b/.test(content)) {
+          processedParts.push(`(${content})`);
+          continue;
+        }
       }
     }
 
     // Join all parts with spaces
     return processedParts.join(" ").trim();
+  }
+
+  private processDescription(description: string | null): string | null {
+    if (!description) return null;
+
+    // 1. Capitalize "ex burst" to "EX BURST"
+    let processed = description.replace(/\bex burst\b/gi, "EX BURST");
+
+    // 2. Remove duplicate "Dull" that are not within <b> tags or [] brackets
+    // First, temporarily replace protected "Dull" instances
+    processed = processed.replace(/<b>Dull<\/b>|\[Dull\]/g, "###PROTECTED_DULL###");
+
+    // Then remove unprotected "Dull" instances
+    processed = processed.replace(/\bDull\b/g, "");
+
+    // Finally, restore protected "Dull" instances
+    processed = processed.replace(/###PROTECTED_DULL###/g, function (match, offset, string) {
+      // Check if this was originally a <b> tag or bracket
+      const originalText = description.slice(offset, offset + 20); // Look ahead enough to catch either format
+      if (originalText.startsWith("<b>Dull</b>")) {
+        return "<b>Dull</b>";
+      }
+      return "[Dull]";
+    });
+
+    return processed;
   }
 
   private isValidNormalizedNumber(number: string): boolean {
@@ -376,7 +401,7 @@ export class CardSyncService {
   }
 
   private getDeltaData(card: CardProduct): CardDeltaData {
-    const set = card.url ? [this.getSetFromUrl(card.url, card.name)] : ["Unknown"];
+    const set = ["Unknown"]; // Default to Unknown, will be updated with group name
     return {
       name: card.name,
       cleanName: card.cleanName,
@@ -387,8 +412,8 @@ export class CardSyncService {
       cost: this.normalizeNumericValue(this.getExtendedValue(card, "Cost")),
       power: this.normalizeNumericValue(this.getExtendedValue(card, "Power")),
       elements: this.getElements(card),
-      set, // Added set from URL
-      category: this.getExtendedValue(card, "Category"), // Add category to hash calculation
+      set,
+      category: this.getExtendedValue(card, "Category"),
     };
   }
 
@@ -442,7 +467,7 @@ export class CardSyncService {
 
   private async processCards(
     cards: CardProduct[],
-    groupId: string,
+    groupId: number,
     options: { forceUpdate?: boolean } = {}
   ): Promise<{
     processed: number;
@@ -458,6 +483,12 @@ export class CardSyncService {
     try {
       const productIds = cards.map((card) => card.productId);
       const hashMap = await this.getStoredHashes(productIds);
+
+      // Get the group name from Firestore
+      const groupRef = db.collection(COLLECTION.GROUPS).doc(groupId.toString());
+      const groupDoc = await this.retry.execute(() => groupRef.get());
+      const groupName = groupDoc.exists ? groupDoc.data()?.name : null;
+      const set = groupName ? [groupName] : [];
 
       await Promise.all(
         cards.map(async (card) => {
@@ -493,7 +524,7 @@ export class CardSyncService {
               if (card.imageUrl) {
                 // If URL exists, process normally
                 return await this.retry.execute(() =>
-                  storageService.processAndStoreImage(card.imageUrl, card.productId, groupId)
+                  storageService.processAndStoreImage(card.imageUrl, card.productId, groupId.toString())
                 );
               } else {
                 // For any item without image, use placeholder URL
@@ -506,7 +537,13 @@ export class CardSyncService {
               }
             })();
 
-            const set = card.url ? [this.getSetFromUrl(card.url, card.name)] : ["Unknown"];
+            // Get description and process it
+            const rawDescription = this.getExtendedValue(card, "Description");
+            const processedDescription = this.processDescription(rawDescription);
+
+            // Process categories
+            const rawCategory = this.getExtendedValue(card, "Category");
+            const { category, categories } = this.processCategories(rawCategory);
 
             const cardDoc: CardDocument = {
               productId: card.productId,
@@ -516,23 +553,22 @@ export class CardSyncService {
               highResUrl: imageResult.highResUrl,
               lowResUrl: imageResult.lowResUrl,
               lastUpdated: FieldValue.serverTimestamp(),
-              groupId: parseInt(groupId),
+              groupId,
               isNonCard: this.isNonCardProduct(card),
               cardNumbers,
               primaryCardNumber,
               fullCardNumber,
               cardType: this.getExtendedValue(card, "CardType"),
-              category: this.getExtendedValue(card, "Category"),
-              categories: [this.getExtendedValue(card, "Category")].filter((c): c is string => c !== null),
-              // Initialize with TCGCSV category
+              category,
+              categories,
               cost: this.normalizeNumericValue(this.getExtendedValue(card, "Cost")),
-              description: this.getExtendedValue(card, "Description"),
+              description: processedDescription,
               elements: this.getElements(card),
               job: this.getExtendedValue(card, "Job"),
               number: this.getExtendedValue(card, "Number"),
               power: this.normalizeNumericValue(this.getExtendedValue(card, "Power")),
               rarity: this.getExtendedValue(card, "Rarity"),
-              set, // Added set from URL
+              set,
             };
 
             // Add main card document
@@ -608,9 +644,9 @@ export class CardSyncService {
     try {
       logger.info("Starting card sync", { options });
 
-      const groups = options.groupId ?
-        [{ groupId: options.groupId }] :
-        await this.retry.execute(() => tcgcsvApi.getGroups());
+      const groups = options.groupId
+        ? [{ groupId: options.groupId }]
+        : await this.retry.execute(() => tcgcsvApi.getGroups());
 
       // Apply limit if specified
       if (options.limit) {
@@ -646,7 +682,7 @@ export class CardSyncService {
             }
 
             const cardChunk = cards.slice(i, i + this.CHUNK_SIZE);
-            const batchResults = await this.processCards(cardChunk, group.groupId, options);
+            const batchResults = await this.processCards(cardChunk, parseInt(group.groupId), options);
 
             result.itemsProcessed += batchResults.processed;
             result.itemsUpdated += batchResults.updated;
