@@ -38,6 +38,8 @@ export const COLLECTION = {
   SQUARE_ENIX_HASHES: "squareEnixHashes",
   SQUARE_ENIX_DELTAS: "squareEnixDeltas",
   SEARCH_HASHES: "searchHashes",
+  FILTERS: "filters",
+  FILTER_HASHES: "filterHashes",
 } as const;
 
 export const BASE_URL = "https://tcgcsv.com/tcgplayer";

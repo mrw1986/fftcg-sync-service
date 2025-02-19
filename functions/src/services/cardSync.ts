@@ -34,9 +34,9 @@ interface CardDocument {
   lastUpdated: FirebaseFirestore.FieldValue;
   groupId: number;
   isNonCard: boolean;
-  cardNumbers: string[];
-  primaryCardNumber: string;
-  fullCardNumber: string;
+  cardNumbers: string[] | null;
+  primaryCardNumber: string | null;
+  fullCardNumber: string | null;
   cardType: string | null;
   category: string | null;
   categories: string[];
@@ -71,11 +71,11 @@ export class CardSyncService {
     // Check if it's a Crystal card by looking at card type or number
     const cardType = card.extendedData.find((data) => data.name === "CardType")?.value;
     const numberField = card.extendedData.find((data) => data.name === "Number");
-
-    if (
+    const isCrystal =
       (cardType && String(cardType).toLowerCase() === "crystal") ||
-      (numberField?.value && String(numberField.value).toUpperCase().startsWith("C-"))
-    ) {
+      (numberField?.value && String(numberField.value).toUpperCase().startsWith("C-"));
+
+    if (isCrystal) {
       logger.info("Setting Crystal element for card", {
         id: card.productId,
         name: card.name,
@@ -111,8 +111,11 @@ export class CardSyncService {
   private processCategories(categoryStr: string | null): { category: string | null; categories: string[] } {
     if (!categoryStr) return { category: null, categories: [] };
 
+    // Replace HTML entity with actual middot
+    const normalizedStr = categoryStr.replace(/&middot;/g, "\u00B7");
+
     // Split by either semicolon or middot
-    const cats = categoryStr
+    const cats = normalizedStr
       .split(/[;\u00B7]/)
       .map((c) => c.trim())
       .filter(Boolean);
@@ -274,7 +277,7 @@ export class CardSyncService {
     return false;
   }
 
-  private normalizeCardNumber(number: string): string {
+  private normalizeCardNumber(number: string): string | null {
     // Remove all separators and whitespace
     const clean = number.replace(/[-\s.,;]/g, "").toUpperCase();
 
@@ -284,7 +287,7 @@ export class CardSyncService {
       const match = clean.match(/^P(?:R)?0*(\d{1,3})/);
       if (!match) {
         logger.warn(`Invalid P/PR card number format: ${number}`);
-        return "N/A";
+        return null;
       }
       // Pad to 3 digits and always use PR- prefix
       const paddedNum = match[1].padStart(3, "0");
@@ -326,17 +329,21 @@ export class CardSyncService {
       const prefixNum = parseInt(prefix);
       if (prefixNum < 1 || prefixNum > 99) {
         logger.warn(`Invalid card number prefix: ${number}`);
-        return "N/A";
+        return null;
       }
       return `${prefix}-${nums}${letter}`;
     }
 
-    // If the format doesn't match our expected patterns, log a warning and return N/A
+    // If the format doesn't match our expected patterns, log a warning and return null
     logger.warn(`Unable to normalize card number: ${number}`);
-    return "N/A";
+    return null;
   }
 
-  private getCardNumbers(card: CardProduct): { numbers: string[]; primary: string; fullNumber: string } {
+  private getCardNumbers(card: CardProduct): {
+    numbers: string[] | null;
+    primary: string | null;
+    fullNumber: string | null;
+  } {
     const numbers: string[] = [];
     let originalFormat = "";
 
@@ -349,22 +356,25 @@ export class CardSyncService {
         // Split on any separator and normalize each number
         const vals = valueStr.split(/[,;/]/).map((n: string) => n.trim());
         const normalizedNums = vals.map((num: string) => this.normalizeCardNumber(num));
-        // Filter out any invalid numbers before adding
-        const validNums = normalizedNums.filter((num) => num !== "N/A");
+        // Filter out any null values
+        const validNums = normalizedNums.filter((num): num is string => num !== null);
         numbers.push(...validNums);
       });
 
-    // If no valid numbers found, use N/A
+    // If no valid numbers found, return null values
     if (numbers.length === 0) {
-      numbers.push("N/A");
-      originalFormat = "N/A";
+      return {
+        numbers: null,
+        primary: null,
+        fullNumber: null,
+      };
     }
 
     // Remove duplicates while preserving order
     const uniqueNumbers = [...new Set(numbers)];
 
     // Find a valid primary card number
-    let primary = "N/A";
+    let primary: string | null = null;
 
     // First try the rightmost number
     const rightmost = uniqueNumbers[uniqueNumbers.length - 1];
@@ -379,7 +389,7 @@ export class CardSyncService {
     }
 
     // For fullNumber, use forward slash as separator
-    const fullNumber = uniqueNumbers.length > 0 ? uniqueNumbers.join("/") : "N/A";
+    const fullNumber = uniqueNumbers.length > 0 ? uniqueNumbers.join("/") : null;
 
     logger.info("Processed card numbers:", {
       original: originalFormat,
@@ -402,11 +412,14 @@ export class CardSyncService {
 
   private getDeltaData(card: CardProduct): CardDeltaData {
     const set = ["Unknown"]; // Default to Unknown, will be updated with group name
+    const numberField = card.extendedData.find((data) => data.name === "Number");
+    const isCrystal = numberField?.value && String(numberField.value).toUpperCase().startsWith("C-");
+
     return {
       name: card.name,
       cleanName: card.cleanName,
       modifiedOn: card.modifiedOn,
-      cardType: this.getExtendedValue(card, "CardType"),
+      cardType: isCrystal ? "Crystal" : this.getExtendedValue(card, "CardType"),
       number: this.getExtendedValue(card, "Number"),
       rarity: this.getExtendedValue(card, "Rarity"),
       cost: this.normalizeNumericValue(this.getExtendedValue(card, "Cost")),
@@ -545,6 +558,10 @@ export class CardSyncService {
             const rawCategory = this.getExtendedValue(card, "Category");
             const { category, categories } = this.processCategories(rawCategory);
 
+            // Check if it's a Crystal card
+            const numberField = card.extendedData.find((data) => data.name === "Number");
+            const isCrystal = numberField?.value && String(numberField.value).toUpperCase().startsWith("C-");
+
             const cardDoc: CardDocument = {
               productId: card.productId,
               name: this.cleanDisplayName(card.name),
@@ -558,7 +575,7 @@ export class CardSyncService {
               cardNumbers,
               primaryCardNumber,
               fullCardNumber,
-              cardType: this.getExtendedValue(card, "CardType"),
+              cardType: isCrystal ? "Crystal" : this.getExtendedValue(card, "CardType"),
               category,
               categories,
               cost: this.normalizeNumericValue(this.getExtendedValue(card, "Cost")),

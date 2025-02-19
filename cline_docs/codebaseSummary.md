@@ -4,22 +4,31 @@
 
 ### Card Sync Pipeline
 
-1. TCGCSV API Integration (cardSync.ts)
+1. Group Sync (groupSync.ts)
+   - First step in sync process
+   - Manages set names
+   - Handles group data
+   - Ensures data consistency
+
+2. TCGCSV API Integration (cardSync.ts)
    - Fetches card data
    - Processes basic card information
-   - Handles image URLs
-   - Manages special card names
+   - Enhanced name processing
+   - Improved category handling
+   - Description text formatting
+   - Group-based set names
    - Validates card numbers
    - Handles promo cards
 
-2. Square Enix Integration (squareEnixSync.ts)
+3. Square Enix Integration (squareEnixSync.ts)
    - Enriches card data
    - Provides additional card details
    - Manages data versioning
    - Handles categories properly
    - Maintains data consistency
+   - Updates cost/power values
 
-3. Search Indexing (searchIndexService.ts)
+4. Search Indexing (searchIndexService.ts)
    - Maintains search index
    - Progressive substring search
    - Number-specific search terms
@@ -28,19 +37,24 @@
 
 ## Data Flow
 
-1. Card Data Ingestion
+1. Group Data Ingestion
+   - TCGCSV API → Group Sync Service
+   - Group Data → Firestore
+   - Set Names → Card Processing
+
+2. Card Data Ingestion
    - TCGCSV API → Card Sync Service
    - Square Enix Data → Square Enix Sync
    - Combined Data → Firestore
    - Hash-based change detection
 
-2. Image Processing
+3. Image Processing
    - Source URLs → R2 Storage
    - Multiple resolutions
    - Metadata tracking
    - Optimized storage
 
-3. Search Index Updates
+4. Search Index Updates
    - Card Changes → Search Index
    - Batch Processing
    - Real-time Updates
@@ -55,47 +69,57 @@
 
 ## Recent Significant Changes
 
-1. Search Improvements
-   - Progressive substring search
-   - Number-specific terms
-   - Optimized indexing
-   - Batch processing
+1. Square Enix Data Integration
+   - Cost/power value updates
+   - Category handling improvements
+   - Duplicate category prevention
+   - Consistent middot handling
 
-2. Name Processing Updates
-   - Special content preservation
+2. Group Integration
+   - Group sync as first step
+   - Set name handling from groups
+   - Proper group ID handling
+   - Data consistency improvements
+
+3. Name Processing Updates
+   - Enhanced special content preservation
+   - Improved card number removal
+   - Date preservation in names
    - Crystal card handling
-   - Improved normalization
-   - Promo card handling
+   - Proper handling of special keywords
 
-3. Card Number Improvements
-   - Multi-number support
-   - Separator standardization
-   - Format validation
-   - Promo number handling
-
-4. Category Handling
+4. Category Handling Improvements
+   - DFF category prioritization
+   - Middot separator implementation
+   - Array ordering
+   - Format consistency
    - Raw category preservation
-   - Proper array format
-   - Square Enix integration
-   - Consistent data structure
+   - Duplicate category prevention
 
 ## Current Focus
 
-1. Performance Optimization
+1. Data Accuracy
+   - Cost/power value synchronization
+   - Category deduplication
+   - Middot handling consistency
+   - Data validation improvements
+   - Edge case handling
+
+2. Performance Optimization
    - Batch processing efficiency
    - Memory usage optimization
    - Query optimization
    - Rate limiting improvements
    - Caching strategies
 
-2. Testing Implementation
+3. Testing Implementation
    - Unit test development
    - Integration testing
    - Error scenario coverage
    - Load testing
    - Performance benchmarking
 
-3. Documentation
+4. Documentation
    - API documentation
    - Architecture details
    - Deployment guides
@@ -108,21 +132,28 @@
   - Special content preserved
   - Crystal cards handled correctly
   - Promo cards managed properly
-
-- Card number format standardization complete
-  - Multi-number support implemented
-  - Proper separator usage
-  - Format validation in place
+  - Dates preserved in names
+  - Card numbers properly removed
 
 - Category handling requirements satisfied
+  - DFF prioritization implemented
+  - Middot separator added
+  - Array ordering maintained
+  - Format consistency ensured
   - Raw data preserved
-  - Proper structure maintained
-  - Square Enix integration complete
+  - Duplicates prevented
 
-- Search functionality enhanced
-  - Progressive search implemented
-  - Number search optimized
-  - Batch processing improved
+- Group integration complete
+  - Set names from groups
+  - Proper ID handling
+  - Data consistency maintained
+  - Sync order optimized
+
+- Description formatting improved
+  - "EX BURST" capitalization
+  - Duplicate "Dull" removal
+  - Tag preservation
+  - Format consistency
 
 ## Future Development
 
@@ -130,14 +161,17 @@
    - Query optimization
    - Caching improvements
    - Memory usage optimization
+   - Batch processing refinements
 
 2. Testing Infrastructure
    - Automated testing pipeline
    - Performance testing suite
    - Error scenario coverage
+   - Integration test framework
 
 3. Feature Extensions
    - Real-time sync capabilities
    - Enhanced search features
    - API endpoint development
    - Mobile optimization
+   - Data validation improvements

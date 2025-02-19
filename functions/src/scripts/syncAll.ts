@@ -6,6 +6,7 @@ import { main as updateCards } from "./updateCardsWithSquareEnixData";
 import { squareEnixStorage } from "../services/squareEnixStorageService";
 import { searchIndex } from "../services/searchIndexService";
 import { groupSync } from "../services/groupSync";
+import { filterAggregation } from "../services/filterAggregationService";
 import minimist from "minimist";
 
 function parseArgs(): { forceUpdate?: boolean; groupId?: string } {
@@ -148,6 +149,40 @@ async function main() {
       throw new Error(`Search index update failed: ${errorMessage}`);
     }
 
+    // Step 6: Update filters
+    await logger.info("Step 6: Starting filter aggregation", { options });
+    let filterResult;
+    try {
+      // Add a delay to ensure previous operations have completed
+      await logger.info("Waiting for previous operations to settle...");
+      // Keep connection alive during delay by doing a simple query
+      await db.collection(COLLECTION.CARDS).limit(1).get();
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      // Verify connection is still active
+      await db.collection(COLLECTION.CARDS).limit(1).get();
+
+      await logger.info("Starting filter aggregation with options:", {
+        forceUpdate: options.forceUpdate,
+      });
+
+      filterResult = await filterAggregation.updateFilters({
+        ...options,
+        forceUpdate: options.forceUpdate,
+      });
+      if (!filterResult.success) {
+        throw new Error("Filter aggregation failed");
+      }
+      await logger.info("Step 6: Filter aggregation completed:", {
+        processed: filterResult.itemsProcessed,
+        updated: filterResult.itemsUpdated,
+        errors: filterResult.errors.length,
+        duration: `${filterResult.timing.duration}s`,
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      throw new Error(`Filter aggregation failed: ${errorMessage}`);
+    }
+
     // Log final success with all results
     await logger.info("Complete sync process finished successfully", {
       groupSync: groupResult,
@@ -155,6 +190,7 @@ async function main() {
       seSync: seResult,
       seUpdate: updateResult,
       searchIndex: searchResult || { success: false, error: "Search index update failed" },
+      filterAggregation: filterResult || { success: false, error: "Filter aggregation failed" },
     });
 
     // Clean shutdown - only do this once

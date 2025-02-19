@@ -27,8 +27,8 @@ interface SquareEnixApiResponse {
   text_en: string;
   element: string[] | null;
   rarity: string;
-  cost: string;
-  power: string;
+  cost: string | null;
+  power: string | null;
   category_1: string;
   category_2?: string;
   multicard: string;
@@ -73,9 +73,9 @@ export class SquareEnixStorageService {
 
     // Normalize element array
     const normalizedElement =
-      card.type_en === "Crystal" || card.code.startsWith("C-") ?
-        ["Crystal"] :
-        (card.element || []).filter((e: string) => e).sort();
+      card.type_en === "Crystal" || card.code.startsWith("C-")
+        ? ["Crystal"]
+        : (card.element || []).filter((e: string) => e).sort();
 
     // Normalize set array
     const normalizedSet = (card.set || []).filter((s: string) => s).sort();
@@ -85,8 +85,8 @@ export class SquareEnixStorageService {
       code: card.code || "",
       element: normalizedElement,
       rarity: card.rarity || "",
-      cost: card.cost || "",
-      power: card.power || "",
+      cost: card.cost ? parseInt(card.cost.trim()) || null : null,
+      power: card.power ? parseInt(card.power.trim()) || null : null,
       category_1: card.category_1 || "",
       category_2: card.category_2 || null,
       multicard: card.multicard,
@@ -171,12 +171,12 @@ export class SquareEnixStorageService {
               job: card.type_en === "Summon" ? "" : card.job_en || "",
               text: card.text_en || "",
               element:
-                card.type_en === "Crystal" || card.code.startsWith("C-") ?
-                  ["Crystal"] :
-                  (card.element || []).map((e) => elementMap[e] || e),
+                card.type_en === "Crystal" || card.code.startsWith("C-")
+                  ? ["Crystal"]
+                  : (card.element || []).map((e) => elementMap[e] || e),
               rarity: card.rarity || "",
-              cost: card.cost || "",
-              power: card.power || "",
+              cost: card.cost ? parseInt(card.cost.trim()) || null : null,
+              power: card.power ? parseInt(card.power.trim()) || null : null,
               category_1: card.category_1 || "",
               category_2: card.category_2 || null,
               multicard: card.multicard,

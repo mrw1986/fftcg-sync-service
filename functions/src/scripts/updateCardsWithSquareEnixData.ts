@@ -11,17 +11,16 @@ import { storageService } from "../services/storageService";
 export interface TcgCard {
   id: string;
   name: string;
-  cardNumbers?: string[];
-  fullCardNumber?: string;
-  number?: string;
-  primaryCardNumber?: string;
-  power?: number;
-  cost?: number;
+  cardNumbers?: string[] | null;
+  fullCardNumber?: string | null;
+  number?: string | null;
+  primaryCardNumber?: string | null;
+  power: number | null;
+  cost: number | null;
   job?: string;
   rarity?: string;
   cardType?: string;
   category?: string;
-  category_2?: string;
   categories?: string[];
   cleanName?: string;
   elements?: string[];
@@ -43,8 +42,8 @@ export interface SquareEnixCard {
   text_en: string;
   element: string[];
   rarity: string;
-  cost: string;
-  power: string;
+  cost: number | null;
+  power: number | null;
   category_1: string;
   category_2?: string;
   multicard: boolean;
@@ -69,8 +68,8 @@ interface HashData {
   code: string;
   element: string[];
   rarity: string;
-  cost: string;
-  power: string;
+  cost: number | null;
+  power: number | null;
   category_1: string;
   category_2: string | null;
   categories: string[];
@@ -115,7 +114,10 @@ function isValidCardNumber(number: string): boolean {
   return /^(?:PR-\d{3}|[1-9]\d?-\d{3}[A-Z]|[A-C]-\d{3})$/.test(number);
 }
 
-function isPromoCard(cardNumbers: string[]): boolean {
+function isPromoCard(cardNumbers: string[] | null): boolean {
+  if (!cardNumbers) {
+    return false;
+  }
   return cardNumbers.some((num) => /^(?:PR?|A)-\d{3}/.test(num));
 }
 
@@ -126,12 +128,12 @@ function hasSpecialTerms(name: string): boolean {
 function calculateHash(card: SquareEnixCard): string {
   // Normalize element array
   const normalizedElement =
-    card.type_en === "Crystal" || card.code.startsWith("C-") ?
-      ["Crystal"] :
-      (card.element || [])
-        .map((e: string) => elementMap[e] || e)
-        .filter((e: string) => e)
-        .sort();
+    card.type_en === "Crystal" || card.code.startsWith("C-")
+      ? ["Crystal"]
+      : (card.element || [])
+          .map((e: string) => elementMap[e] || e)
+          .filter((e: string) => e)
+          .sort();
 
   // Normalize set array
   const normalizedSet = (card.set || []).filter(Boolean).sort();
@@ -153,8 +155,8 @@ function calculateHash(card: SquareEnixCard): string {
     code: card.code || "",
     element: normalizedElement,
     rarity: card.rarity || "",
-    cost: card.cost || "",
-    power: card.power || "",
+    cost: card.cost ? parseInt(String(card.cost)) || null : null,
+    power: card.power ? parseInt(String(card.power)) || null : null,
     category_1: card.category_1 || "",
     category_2: card.category_2 || null,
     categories, // Include processed categories in hash calculation
@@ -173,7 +175,11 @@ function calculateHash(card: SquareEnixCard): string {
   return crypto.createHash("md5").update(jsonData).digest("hex");
 }
 
-function getAllCardNumbers(card: TcgCard): string[] {
+function getAllCardNumbers(card: TcgCard): string[] | null {
+  if (card.isNonCard) {
+    return null;
+  }
+
   const numbers = new Set<string>();
 
   if (card.cardNumbers) card.cardNumbers.forEach((num) => numbers.add(num));
@@ -181,7 +187,7 @@ function getAllCardNumbers(card: TcgCard): string[] {
   if (card.number) numbers.add(card.number);
   if (card.primaryCardNumber) numbers.add(card.primaryCardNumber);
 
-  return Array.from(numbers);
+  return numbers.size > 0 ? Array.from(numbers) : null;
 }
 
 function findCardNumberMatch(tcgCard: TcgCard, seCard: SquareEnixCard): boolean {
@@ -190,9 +196,12 @@ function findCardNumberMatch(tcgCard: TcgCard, seCard: SquareEnixCard): boolean 
   }
 
   const seCode = seCard.code;
-  const isPromo = isPromoCard(getAllCardNumbers(tcgCard));
-  const cardNumbers = getAllCardNumbers(tcgCard);
+  const numbers = getAllCardNumbers(tcgCard);
+  if (!numbers) {
+    return false;
+  }
 
+  const isPromo = isPromoCard(numbers);
   if (isPromo) {
     const getBaseNumber = (num: string): string | null => {
       const match = num.match(/PR-\d+\/(.+)/);
@@ -200,14 +209,14 @@ function findCardNumberMatch(tcgCard: TcgCard, seCard: SquareEnixCard): boolean 
     };
 
     const normalizedSeCode = normalizeForComparison(seCode);
-    return cardNumbers.some((num) => {
+    return numbers.some((num) => {
       const baseNum = getBaseNumber(num);
       return baseNum === normalizedSeCode;
     });
   }
 
   const normalizedSeCode = normalizeForComparison(seCode);
-  return cardNumbers.some((num) => normalizeForComparison(num) === normalizedSeCode);
+  return numbers.some((num) => normalizeForComparison(num) === normalizedSeCode);
 }
 
 async function processImages(tcgCard: TcgCard, seCard: SquareEnixCard): Promise<ImageProcessResult> {
@@ -220,18 +229,18 @@ async function processImages(tcgCard: TcgCard, seCard: SquareEnixCard): Promise<
     const groupId = tcgCard.groupId;
 
     const fullResResult =
-      groupId && seCard.images?.full?.length > 0 ?
-        await retry.execute(() =>
-          storageService.processAndStoreImage(seCard.images.full[0], parseInt(tcgCard.id), groupId.toString())
-        ) :
-        null;
+      groupId && seCard.images?.full?.length > 0
+        ? await retry.execute(() =>
+            storageService.processAndStoreImage(seCard.images.full[0], parseInt(tcgCard.id), groupId.toString())
+          )
+        : null;
 
     const thumbResult =
-      groupId && seCard.images?.thumbs?.length > 0 ?
-        await retry.execute(() =>
-          storageService.processAndStoreImage(seCard.images.thumbs[0], parseInt(tcgCard.id), groupId.toString())
-        ) :
-        null;
+      groupId && seCard.images?.thumbs?.length > 0
+        ? await retry.execute(() =>
+            storageService.processAndStoreImage(seCard.images.thumbs[0], parseInt(tcgCard.id), groupId.toString())
+          )
+        : null;
 
     return {
       highResUrl: fullResResult?.highResUrl || null,
@@ -251,9 +260,13 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): FieldUpdat
     lastUpdated: FieldValue.serverTimestamp(),
   };
 
-  // Skip updates for non-card products
+  // Handle non-card products
   if (tcgCard.isNonCard) {
-    logger.info(`Skipping updates for non-card product ${tcgCard.id}`);
+    logger.info(`Setting null values for non-card product ${tcgCard.id}`);
+    updates.cardNumbers = null;
+    updates.primaryCardNumber = null;
+    updates.fullCardNumber = null;
+    updates.number = null;
     return updates;
   }
 
@@ -269,9 +282,9 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): FieldUpdat
   }
 
   const elements =
-    seCard.type_en === "Crystal" || seCard.code.startsWith("C-") ?
-      ["Crystal"] :
-      seCard.element.map((e: string) => elementMap[e] || e);
+    seCard.type_en === "Crystal" || seCard.code.startsWith("C-")
+      ? ["Crystal"]
+      : seCard.element.map((e: string) => elementMap[e] || e);
 
   const rarityMap = {
     C: "Common",
@@ -281,38 +294,89 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): FieldUpdat
     S: "Starter",
   } as const;
 
-  // Build categories array from Square Enix data
-  const categories = [seCard.category_1];
-  if (seCard.category_2) {
-    categories.push(seCard.category_2);
+  // Process categories
+  function splitCategory(category: string | undefined): string[] {
+    if (!category) return [];
+    return category
+      .replace(/&middot;/g, "\u00B7") // Replace HTML entity with actual middot
+      .split(/\u00B7/)
+      .map((c) => c.trim())
+      .filter(Boolean);
   }
 
-  // Only update card numbers if they're invalid
-  const hasValidNumbers = (tcgCard.cardNumbers || []).every(isValidCardNumber);
-  const usesForwardSlash = tcgCard.fullCardNumber?.includes("/");
+  // Get unique categories while preserving DFF category priority
+  function getUniqueOrderedCategories(categories: string[]): string[] {
+    const seen = new Set<string>();
+    const result: string[] = [];
 
-  if (!hasValidNumbers || !usesForwardSlash) {
-    updates.cardNumbers = seCard.code.includes("/") ?
-      seCard.code
-        .split("/")
-        .map((num) => num.trim())
-        .filter((num) => isValidCardNumber(num)) :
-      [seCard.code].filter((num) => isValidCardNumber(num));
+    // First pass: add DFF categories while maintaining order
+    categories.forEach((cat) => {
+      if (cat.includes("DFF") && !seen.has(cat)) {
+        seen.add(cat);
+        result.push(cat);
+      }
+    });
 
-    updates.fullCardNumber = seCard.code;
+    // Second pass: add remaining categories while maintaining order
+    categories.forEach((cat) => {
+      if (!seen.has(cat)) {
+        seen.add(cat);
+        result.push(cat);
+      }
+    });
+
+    return result;
+  }
+
+  // Process and deduplicate categories
+  const cat1 = splitCategory(seCard.category_1);
+  const cat2 = splitCategory(seCard.category_2);
+  const seCategories = getUniqueOrderedCategories([...cat1, ...cat2]);
+
+  // Only update if categories have changed
+  if (!arraysEqual(tcgCard.categories || [], seCategories)) {
+    // Join with actual middot for category string
+    const seCategory = seCategories.join("\u00B7");
+    updates.category = seCategory;
+    updates.categories = seCategories;
+  }
+
+  // Handle card numbers
+  if (tcgCard.isNonCard) {
+    // For non-card products, set all number fields to null
+    updates.cardNumbers = null;
+    updates.fullCardNumber = null;
+    updates.primaryCardNumber = null;
+    updates.number = null;
+  } else {
+    // For valid cards, process card numbers
+    const validNumbers = seCard.code.includes("/")
+      ? seCard.code
+          .split("/")
+          .map((num) => num.trim())
+          .filter((num) => isValidCardNumber(num))
+      : [seCard.code].filter((num) => isValidCardNumber(num));
+
+    // Set all number fields to null if no valid numbers found
+    if (validNumbers.length === 0) {
+      updates.cardNumbers = null;
+      updates.fullCardNumber = null;
+      updates.primaryCardNumber = null;
+      updates.number = null;
+    } else {
+      updates.cardNumbers = validNumbers;
+      updates.fullCardNumber = seCard.code;
+      updates.primaryCardNumber = validNumbers[0];
+      updates.number = validNumbers[0];
+    }
   }
 
   const fields = {
-    cardType: seCard.type_en,
-    category: seCard.category_1,
-    category_2: seCard.category_2 || undefined,
-    categories,
-    cost: seCard.cost ? parseInt(seCard.cost.trim()) || null : null,
-    elements,
+    cardType: seCard.type_en === "Crystal" || seCard.code.startsWith("C-") ? "Crystal" : seCard.type_en,
     job: seCard.type_en === "Summon" ? "" : seCard.job_en,
-    power: seCard.power ? parseInt(seCard.power.trim()) || null : null,
     rarity: isPromo ? "Promo" : rarityMap[seCard.rarity as keyof typeof rarityMap] || seCard.rarity,
     set: seCard.set || [], // Always update set from Square Enix data
+    elements,
   };
 
   // Update fields that have changed
@@ -332,10 +396,17 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): FieldUpdat
   return updates;
 }
 
+function normalizeSet(set: string): string {
+  return set.trim().toLowerCase();
+}
+
 function arraysEqual<T>(a: T[], b: T[]): boolean {
   if (a.length !== b.length) return false;
-  const sortedA = [...a].sort();
-  const sortedB = [...b].sort();
+
+  // If arrays contain strings, normalize them before comparison
+  const sortedA = [...a].sort().map((item) => (typeof item === "string" ? normalizeSet(item) : item));
+  const sortedB = [...b].sort().map((item) => (typeof item === "string" ? normalizeSet(item) : item));
+
   return JSON.stringify(sortedA) === JSON.stringify(sortedB);
 }
 
@@ -349,6 +420,12 @@ export async function main(options: SyncOptions = {}): Promise<UpdateResult> {
     const seCardsSnapshot = await db.collection(COLLECTION.SQUARE_ENIX_CARDS).get();
     const freshSeCards = seCardsSnapshot.docs.map((doc) => {
       const data = doc.data();
+      logger.info(`Loading Square Enix card ${doc.id}:`, {
+        cost: data.cost,
+        power: data.power,
+        costType: typeof data.cost,
+        powerType: typeof data.power,
+      });
       return {
         ...data,
         code: doc.id.split("_")[0].replace(/;/g, "/"), // Extract card number from document ID
@@ -403,13 +480,13 @@ export async function main(options: SyncOptions = {}): Promise<UpdateResult> {
         const numberMatches = findCardNumberMatch(card, seCard);
         if (!numberMatches) return false;
 
-        // If TCG card has no set, accept any Square Enix card and update set later
-        const setMatches = !card.set ? true : arraysEqual(card.set, seCard.set || []);
+        // If either card has no set, or if sets match, consider it a match
+        const setMatches = !card.set || !seCard.set || arraysEqual(card.set, seCard.set);
         if (numberMatches) {
           logger.info("Found number match:", {
             cardId: card.id,
             seCardCode: seCard.code,
-            seCardSet: seCard.set,
+            seCardSet: card.set,
             tcgCardSet: card.set,
             setMatches,
           });
@@ -435,10 +512,21 @@ export async function main(options: SyncOptions = {}): Promise<UpdateResult> {
         forceUpdate: options.forceUpdate || false,
       });
 
-      // Only update if hash doesn't match or force update
-      if (!storedHash || currentHash !== storedHash || options.forceUpdate) {
-        fieldUpdates = getFieldsToUpdate(card, match);
-      }
+      // Always get field updates and force cost/power updates
+      fieldUpdates = getFieldsToUpdate(card, match);
+
+      // Force cost/power updates from Square Enix data
+      logger.info("Updating cost/power values:", {
+        cardId: card.id,
+        currentCost: card.cost,
+        newCost: match.cost,
+        currentPower: card.power,
+        newPower: match.power,
+      });
+
+      // Always update cost/power from Square Enix data
+      fieldUpdates.cost = match.cost;
+      fieldUpdates.power = match.power;
 
       // Handle image URLs
       const hasNullUrls = card.highResUrl === null || card.lowResUrl === null || card.fullResUrl === null;
