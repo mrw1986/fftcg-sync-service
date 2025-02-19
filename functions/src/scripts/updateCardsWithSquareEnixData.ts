@@ -480,8 +480,11 @@ export async function main(options: SyncOptions = {}): Promise<UpdateResult> {
         const numberMatches = findCardNumberMatch(card, seCard);
         if (!numberMatches) return false;
 
-        // If either card has no set, or if sets match, consider it a match
-        const setMatches = !card.set || !seCard.set || arraysEqual(card.set, seCard.set);
+        // Check if any set matches between the cards
+        const setMatches =
+          !card.set ||
+          !seCard.set ||
+          card.set.some((tcgSet) => seCard.set.some((seSet) => normalizeSet(tcgSet) === normalizeSet(seSet)));
         if (numberMatches) {
           logger.info("Found number match:", {
             cardId: card.id,
