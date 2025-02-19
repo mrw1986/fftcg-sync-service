@@ -11,6 +11,7 @@
 - [x] Category handling improvements
 - [x] Cost/power value synchronization
 - [x] Category deduplication
+- [x] Proper null handling for card fields
 
 ## Current Features
 
@@ -29,6 +30,8 @@
 - Enhanced category formatting
 - Accurate cost/power synchronization
 - Deduplicated categories with proper ordering
+- Proper null handling for non-card products
+- Improved set matching for data updates
 
 ## Completed Tasks
 
@@ -63,6 +66,7 @@
   - [x] Proper separator usage
   - [x] Number format validation
   - [x] Promo card special handling
+  - [x] Null handling for non-card products
 - [x] Group sync integration
   - [x] Set name handling from groups
   - [x] Group sync as first step
@@ -72,6 +76,7 @@
     - [x] Proper value validation
     - [x] Conditional updates
     - [x] Null value handling
+    - [x] Improved set matching
   - [x] Category handling
     - [x] Removed duplicate categories
     - [x] Consistent middot handling
@@ -112,3 +117,5 @@
 - API endpoint development
 - Mobile optimization
 - Data validation improvements
+- Caching strategy enhancements
+- Monitoring and alerting system
