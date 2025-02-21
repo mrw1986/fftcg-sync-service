@@ -128,12 +128,12 @@ function hasSpecialTerms(name: string): boolean {
 function calculateHash(card: SquareEnixCard): string {
   // Normalize element array
   const normalizedElement =
-    card.type_en === "Crystal" || card.code.startsWith("C-")
-      ? ["Crystal"]
-      : (card.element || [])
-          .map((e: string) => elementMap[e] || e)
-          .filter((e: string) => e)
-          .sort();
+    card.type_en === "Crystal" || card.code.startsWith("C-") ?
+      ["Crystal"] :
+      (card.element || [])
+        .map((e: string) => elementMap[e] || e)
+        .filter((e: string) => e)
+        .sort();
 
   // Normalize set array
   const normalizedSet = (card.set || []).filter(Boolean).sort();
@@ -229,18 +229,18 @@ async function processImages(tcgCard: TcgCard, seCard: SquareEnixCard): Promise<
     const groupId = tcgCard.groupId;
 
     const fullResResult =
-      groupId && seCard.images?.full?.length > 0
-        ? await retry.execute(() =>
-            storageService.processAndStoreImage(seCard.images.full[0], parseInt(tcgCard.id), groupId.toString())
-          )
-        : null;
+      groupId && seCard.images?.full?.length > 0 ?
+        await retry.execute(() =>
+          storageService.processAndStoreImage(seCard.images.full[0], parseInt(tcgCard.id), groupId.toString())
+        ) :
+        null;
 
     const thumbResult =
-      groupId && seCard.images?.thumbs?.length > 0
-        ? await retry.execute(() =>
-            storageService.processAndStoreImage(seCard.images.thumbs[0], parseInt(tcgCard.id), groupId.toString())
-          )
-        : null;
+      groupId && seCard.images?.thumbs?.length > 0 ?
+        await retry.execute(() =>
+          storageService.processAndStoreImage(seCard.images.thumbs[0], parseInt(tcgCard.id), groupId.toString())
+        ) :
+        null;
 
     return {
       highResUrl: fullResResult?.highResUrl || null,
@@ -282,9 +282,9 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): FieldUpdat
   }
 
   const elements =
-    seCard.type_en === "Crystal" || seCard.code.startsWith("C-")
-      ? ["Crystal"]
-      : seCard.element.map((e: string) => elementMap[e] || e);
+    seCard.type_en === "Crystal" || seCard.code.startsWith("C-") ?
+      ["Crystal"] :
+      seCard.element.map((e: string) => elementMap[e] || e);
 
   const rarityMap = {
     C: "Common",
@@ -350,12 +350,12 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): FieldUpdat
     updates.number = null;
   } else {
     // For valid cards, process card numbers
-    const validNumbers = seCard.code.includes("/")
-      ? seCard.code
-          .split("/")
-          .map((num) => num.trim())
-          .filter((num) => isValidCardNumber(num))
-      : [seCard.code].filter((num) => isValidCardNumber(num));
+    const validNumbers = seCard.code.includes("/") ?
+      seCard.code
+        .split("/")
+        .map((num) => num.trim())
+        .filter((num) => isValidCardNumber(num)) :
+      [seCard.code].filter((num) => isValidCardNumber(num));
 
     // Set all number fields to null if no valid numbers found
     if (validNumbers.length === 0) {

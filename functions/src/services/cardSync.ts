@@ -251,7 +251,7 @@ export class CardSyncService {
     processed = processed.replace(/\bDull\b/g, "");
 
     // Finally, restore protected "Dull" instances
-    processed = processed.replace(/###PROTECTED_DULL###/g, function (match, offset, string) {
+    processed = processed.replace(/###PROTECTED_DULL###/g, function(match, offset) {
       // Check if this was originally a <b> tag or bracket
       const originalText = description.slice(offset, offset + 20); // Look ahead enough to catch either format
       if (originalText.startsWith("<b>Dull</b>")) {
@@ -661,9 +661,9 @@ export class CardSyncService {
     try {
       logger.info("Starting card sync", { options });
 
-      const groups = options.groupId
-        ? [{ groupId: options.groupId }]
-        : await this.retry.execute(() => tcgcsvApi.getGroups());
+      const groups = options.groupId ?
+        [{ groupId: options.groupId }] :
+        await this.retry.execute(() => tcgcsvApi.getGroups());
 
       // Apply limit if specified
       if (options.limit) {
