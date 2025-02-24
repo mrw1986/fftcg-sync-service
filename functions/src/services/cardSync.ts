@@ -167,7 +167,7 @@ export class CardSyncService {
     return result;
   }
 
-  private cleanDisplayName(name: string): string {
+  private cleanDisplayName(name: string, cardNumbers: string[] | null): string {
     logger.info("Cleaning display name", { original: name });
 
     // First remove parentheses with PR numbers
@@ -249,9 +249,19 @@ export class CardSyncService {
       logger.info("Skipping content", { content });
     }
 
+    // Check if this is a promo card by looking at cardNumbers
+    const isPromoCard = cardNumbers?.some((num) => num.startsWith("PR-")) || /PR-?\d+/.test(name);
+    let hasSpecialKeyword = processedParts.length > 1; // Has any special content in parentheses
+
+    // If it's a promo card and doesn't have any special keywords, add (Promo)
+    if (isPromoCard && !hasSpecialKeyword) {
+      processedParts.push("(Promo)");
+      logger.info("Adding (Promo) suffix", { isPromoCard, hasSpecialKeyword });
+    }
+
     // Join all parts with spaces and clean up any double spaces
     const result = processedParts.join(" ").replace(/\s+/g, " ").trim();
-    logger.info("Final display name", { result });
+    logger.info("Final display name", { result, isPromoCard, hasSpecialKeyword });
     return result;
   }
 
@@ -591,7 +601,7 @@ export class CardSyncService {
 
             const cardDoc: CardDocument = {
               productId: card.productId,
-              name: this.cleanDisplayName(card.name),
+              name: this.cleanDisplayName(card.name, cardNumbers),
               cleanName: this.cleanCardName(card.name),
               fullResUrl: imageResult.fullResUrl,
               highResUrl: imageResult.highResUrl,
