@@ -138,7 +138,7 @@ export class CardSyncService {
     logger.info("Cleaning card name", { original: name });
 
     // First remove all card numbers and PR prefixes
-    let withoutNumbers = name
+    const withoutNumbers = name
       // Remove PR numbers with secondary numbers (e.g., PR-123/1-234H)
       .replace(/\s*[-–—]\s*PR-?\d+\/[^(\s]+/, "")
       // Remove standalone PR numbers (e.g., PR-123, PR123)
@@ -171,7 +171,7 @@ export class CardSyncService {
     logger.info("Cleaning display name", { original: name });
 
     // First remove parentheses with PR numbers
-    let withoutNumbers = name
+    const withoutNumbers = name
       // Remove parentheses containing PR numbers (e.g., "(PR-055)")
       .replace(/\s*\(PR-?\d+\)/, "")
       // Then remove other card numbers
@@ -251,7 +251,7 @@ export class CardSyncService {
 
     // Check if this is a promo card by looking at cardNumbers
     const isPromoCard = cardNumbers?.some((num) => num.startsWith("PR-")) || /PR-?\d+/.test(name);
-    let hasSpecialKeyword = processedParts.length > 1; // Has any special content in parentheses
+    const hasSpecialKeyword = processedParts.length > 1; // Has any special content in parentheses
 
     // If it's a promo card and doesn't have any special keywords, add (Promo)
     if (isPromoCard && !hasSpecialKeyword) {
@@ -698,9 +698,9 @@ export class CardSyncService {
     try {
       logger.info("Starting card sync", { options });
 
-      const groups = options.groupId
-        ? [{ groupId: options.groupId }]
-        : await this.retry.execute(() => tcgcsvApi.getGroups());
+      const groups = options.groupId ?
+        [{ groupId: options.groupId }] :
+        await this.retry.execute(() => tcgcsvApi.getGroups());
 
       // Apply limit if specified
       if (options.limit) {
