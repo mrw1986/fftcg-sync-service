@@ -170,18 +170,17 @@ export class CardSyncService {
   private cleanDisplayName(name: string): string {
     logger.info("Cleaning display name", { original: name });
 
-    // First remove all card numbers while preserving content in parentheses
+    // First remove parentheses with PR numbers
     let withoutNumbers = name
-      // Remove PR numbers with secondary numbers (e.g., PR-123/1-234H)
-      .replace(/\s*[-–—]\s*PR-?\d+\/[^(\s]+(?=\(|$)/, "")
-      // Remove standalone PR numbers (e.g., PR-123, PR123)
-      .replace(/\s*[-–—]\s*PR-?\d+(?=\(|$)/, "")
-      // Remove standard card numbers (e.g., 1-234H)
-      .replace(/\s*[-–—]\s*\d{1,2}-\d{3}[A-Z](?=\(|$)/, "")
-      // Remove special card numbers (e.g., A-123, C-123)
-      .replace(/\s*[-–—]\s*[A-C]-\d{3}(?=\(|$)/, "")
-      // Remove any remaining PR prefix
-      .replace(/\s*[-–—]\s*PR\b/, "")
+      // Remove parentheses containing PR numbers (e.g., "(PR-055)")
+      .replace(/\s*\(PR-?\d+\)/, "")
+      // Then remove other card numbers
+      .replace(/(?:\s*[-–—]\s*PR)?-?\d+\/[^(\s]+(?=\s*\(|$)/, "") // PR numbers with secondary numbers
+      .replace(/\s*[-–—]\s*PR-?\d+(?=\s*\(|$)/, "") // standalone PR numbers
+      .replace(/\s*[-–—]\s*\d{1,2}-\d{3}[A-Z](?=\s*\(|$)/, "") // standard card numbers
+      .replace(/\s*[-–—]\s*[A-C]-\d{3}(?=\s*\(|$)/, "") // special card numbers
+      .replace(/\s*[-–—]\s*PR\b/, "") // remaining PR prefix
+      .replace(/\s*[-–—]\s*\d+[^(\s]*(?=\s*\(|$)/, "") // remaining numbers after hyphen
       .trim();
 
     logger.info("After number removal", { withoutNumbers });
@@ -218,9 +217,9 @@ export class CardSyncService {
         continue;
       }
 
-      // Skip PR numbers in parentheses
-      if (/^PR-?\d+$/.test(content)) {
-        logger.info("Skipping PR number", { content });
+      // Skip PR numbers and incomplete PR parentheses
+      if (/^PR-?\d+$/.test(content) || content === "PR" || content.startsWith("PR-")) {
+        logger.info("Skipping PR content", { content });
         continue;
       }
 
