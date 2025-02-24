@@ -135,11 +135,23 @@ export class CardSyncService {
   }
 
   private cleanCardName(name: string): string {
-    // First remove card numbers at the end and any numbers after a hyphen
-    const withoutNumbers = name
-      .replace(/\s*[-–—]\s*(?:PR-\d{3}(?:\/\d{1,2}-\d{3}[A-Z])?|\d{1,2}-\d{3}[A-Z]|[A-C]-\d{3})\s*$/, "")
-      .replace(/\s*[-–—]\s*[A-Z]?-?\d+.*$/, "")
+    logger.info("Cleaning card name", { original: name });
+
+    // First remove all card numbers and PR prefixes
+    let withoutNumbers = name
+      // Remove PR numbers with secondary numbers (e.g., PR-123/1-234H)
+      .replace(/\s*[-–—]\s*PR-?\d+\/[^(\s]+/, "")
+      // Remove standalone PR numbers (e.g., PR-123, PR123)
+      .replace(/\s*[-–—]\s*PR-?\d+/, "")
+      // Remove standard card numbers (e.g., 1-234H)
+      .replace(/\s*[-–—]\s*\d{1,2}-\d{3}[A-Z]/, "")
+      // Remove special card numbers (e.g., A-123, C-123)
+      .replace(/\s*[-–—]\s*[A-C]-\d{3}/, "")
+      // Remove any remaining PR prefix
+      .replace(/\s*[-–—]\s*PR\b/, "")
       .trim();
+
+    logger.info("After number removal", { withoutNumbers });
 
     // Preserve special type indicators (EX, LB)
     const hasSpecialType = /\b(EX|LB)\b/.test(withoutNumbers);
@@ -149,19 +161,30 @@ export class CardSyncService {
     const cleanedName = withoutNumbers.replace(/\s*\([^)]+\)/g, "").trim();
 
     // Add back special type if it existed
-    if (specialType) {
-      return cleanedName.includes(specialType) ? cleanedName : `${cleanedName} ${specialType}`;
-    }
+    const result = specialType && !cleanedName.includes(specialType) ? `${cleanedName} ${specialType}` : cleanedName;
 
-    return cleanedName;
+    logger.info("Final clean name", { result });
+    return result;
   }
 
   private cleanDisplayName(name: string): string {
-    // First remove card numbers at the end and any numbers after a hyphen
-    const withoutNumbers = name
-      .replace(/\s*[-–—]\s*(?:PR-\d{3}(?:\/\d{1,2}-\d{3}[A-Z])?|\d{1,2}-\d{3}[A-Z]|[A-C]-\d{3})\s*$/, "")
-      .replace(/\s*[-–—]\s*[A-Z]?-?\d+.*(?=\s*\(|$)/, "")
+    logger.info("Cleaning display name", { original: name });
+
+    // First remove all card numbers while preserving content in parentheses
+    let withoutNumbers = name
+      // Remove PR numbers with secondary numbers (e.g., PR-123/1-234H)
+      .replace(/\s*[-–—]\s*PR-?\d+\/[^(\s]+(?=\(|$)/, "")
+      // Remove standalone PR numbers (e.g., PR-123, PR123)
+      .replace(/\s*[-–—]\s*PR-?\d+(?=\(|$)/, "")
+      // Remove standard card numbers (e.g., 1-234H)
+      .replace(/\s*[-–—]\s*\d{1,2}-\d{3}[A-Z](?=\(|$)/, "")
+      // Remove special card numbers (e.g., A-123, C-123)
+      .replace(/\s*[-–—]\s*[A-C]-\d{3}(?=\(|$)/, "")
+      // Remove any remaining PR prefix
+      .replace(/\s*[-–—]\s*PR\b/, "")
       .trim();
+
+    logger.info("After number removal", { withoutNumbers });
 
     // Special keywords that indicate we should keep the content
     const specialKeywords = [
@@ -173,68 +196,64 @@ export class CardSyncService {
       "Prerelease Promo",
       "Alternate Art Promo",
       "Full Art Reprint",
+      "Buy A Box Promo",
     ];
-
-    // Check if this is a Crystal Token
-    const isCrystalToken = withoutNumbers.includes("Crystal Token");
 
     // Process all parentheses content
     const parts = withoutNumbers.split(/\s*\((.*?)\)\s*/);
     const processedParts: string[] = [parts[0]]; // Start with the base name
 
+    logger.info("Processing parts", { baseName: parts[0], remainingParts: parts.slice(1) });
+
     // Process each parentheses content
     for (let i = 1; i < parts.length; i += 2) {
       const content = parts[i];
-      if (content) {
-        // Remove "(Common)" and "(Rare)" suffixes
-        if (/^(?:Common|Rare)$/.test(content)) {
-          continue;
-        }
+      if (!content) continue;
 
-        // Check for month year pattern (e.g., "March 2024")
-        const monthYearPattern =
-          /^(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}$/;
-        if (monthYearPattern.test(content)) {
-          processedParts.push(`(${content})`);
-          continue;
-        }
+      logger.info("Processing content", { content });
 
-        // Special case: If content contains "Buy A Box Promo", always use just that
-        if (content.includes("Buy A Box Promo")) {
-          processedParts.push("(Buy A Box Promo)");
-          continue;
-        }
-
-        // For Crystal Tokens, handle elements and special keywords separately
-        if (isCrystalToken) {
-          // Check if it's an element
-          if (/^(Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)$/i.test(content)) {
-            processedParts.push(`(${content})`);
-            continue;
-          }
-          // Check for special keywords
-          if (specialKeywords.some((keyword) => content.includes(keyword))) {
-            processedParts.push(`(${content})`);
-            continue;
-          }
-        }
-
-        // If content contains any special keywords, keep it
-        if (specialKeywords.some((keyword) => content.includes(keyword))) {
-          processedParts.push(`(${content})`);
-          continue;
-        }
-
-        // Check if content contains a year (e.g., "2024")
-        if (/\b\d{4}\b/.test(content)) {
-          processedParts.push(`(${content})`);
-          continue;
-        }
+      // Remove "(Common)" and "(Rare)" suffixes
+      if (/^(?:Common|Rare)$/.test(content)) {
+        logger.info("Skipping Common/Rare suffix", { content });
+        continue;
       }
+
+      // Skip PR numbers in parentheses
+      if (/^PR-?\d+$/.test(content)) {
+        logger.info("Skipping PR number", { content });
+        continue;
+      }
+
+      // Always keep special keywords
+      if (specialKeywords.some((keyword) => content.includes(keyword))) {
+        logger.info("Keeping special keyword content", { content });
+        processedParts.push(`(${content})`);
+        continue;
+      }
+
+      // Keep month year patterns
+      const monthYearPattern =
+        /^(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}$/;
+      if (monthYearPattern.test(content)) {
+        logger.info("Keeping month year pattern", { content });
+        processedParts.push(`(${content})`);
+        continue;
+      }
+
+      // Keep content with years (but not if it's just a number)
+      if (/\b\d{4}\b/.test(content) && !/^\d+$/.test(content)) {
+        logger.info("Keeping content with year", { content });
+        processedParts.push(`(${content})`);
+        continue;
+      }
+
+      logger.info("Skipping content", { content });
     }
 
-    // Join all parts with spaces
-    return processedParts.join(" ").trim();
+    // Join all parts with spaces and clean up any double spaces
+    const result = processedParts.join(" ").replace(/\s+/g, " ").trim();
+    logger.info("Final display name", { result });
+    return result;
   }
 
   private processDescription(description: string | null): string | null {
@@ -243,22 +262,31 @@ export class CardSyncService {
     // 1. Capitalize "ex burst" to "EX BURST"
     let processed = description.replace(/\bex burst\b/gi, "EX BURST");
 
-    // 2. Remove duplicate "Dull" that are not within <b> tags or [] brackets
-    // First, temporarily replace protected "Dull" instances
-    processed = processed.replace(/<b>Dull<\/b>|\[Dull\]/g, "###PROTECTED_DULL###");
+    // 2. Remove any HTML tags wrapping Dull
+    processed = processed.replace(/<[^>]+>Dull<\/[^>]+>/g, "Dull");
 
-    // Then remove unprotected "Dull" instances
-    processed = processed.replace(/\bDull\b/g, "");
+    // 3. Handle "Dull" text based on position relative to colon
+    const parts = processed.split(/\s*:\s*/);
+    if (parts.length === 2) {
+      // Left side: Keep [Dull] and remove unbracketed Dull
+      let leftSide = parts[0];
+      // Temporarily protect [Dull]
+      leftSide = leftSide.replace(/\[Dull\]/g, "###PROTECTED_DULL###");
+      // Remove unbracketed Dull
+      leftSide = leftSide.replace(/\bDull\b/g, "");
+      // Restore [Dull]
+      leftSide = leftSide.replace(/###PROTECTED_DULL###/g, "[Dull]");
 
-    // Finally, restore protected "Dull" instances
-    processed = processed.replace(/###PROTECTED_DULL###/g, function(match, offset) {
-      // Check if this was originally a <b> tag or bracket
-      const originalText = description.slice(offset, offset + 20); // Look ahead enough to catch either format
-      if (originalText.startsWith("<b>Dull</b>")) {
-        return "<b>Dull</b>";
-      }
-      return "[Dull]";
-    });
+      // Right side: First remove any duplicate "Dull" words
+      let rightSide = parts[1];
+      // Replace multiple consecutive "Dull" with a single "Dull"
+      rightSide = rightSide.replace(/\bDull\s+Dull\b/g, "Dull");
+      // Replace any bracketed [Dull] with unbracketed Dull
+      rightSide = rightSide.replace(/\[Dull\]/g, "Dull");
+
+      // Combine the parts
+      processed = `${leftSide}: ${rightSide}`;
+    }
 
     return processed;
   }
@@ -661,9 +689,9 @@ export class CardSyncService {
     try {
       logger.info("Starting card sync", { options });
 
-      const groups = options.groupId ?
-        [{ groupId: options.groupId }] :
-        await this.retry.execute(() => tcgcsvApi.getGroups());
+      const groups = options.groupId
+        ? [{ groupId: options.groupId }]
+        : await this.retry.execute(() => tcgcsvApi.getGroups());
 
       // Apply limit if specified
       if (options.limit) {

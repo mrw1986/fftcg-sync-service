@@ -195,28 +195,32 @@ function findCardNumberMatch(tcgCard: TcgCard, seCard: SquareEnixCard): boolean 
     return number.replace(/[-\s.,;/]/g, "").toUpperCase();
   }
 
-  const seCode = seCard.code;
-  const numbers = getAllCardNumbers(tcgCard);
-  if (!numbers) {
+  // Get all Square Enix card numbers (split by forward slash)
+  const seNumbers = seCard.code.split("/").map((n) => normalizeForComparison(n.trim()));
+
+  // Get all TCG card numbers
+  const tcgNumbers = getAllCardNumbers(tcgCard);
+  if (!tcgNumbers) {
     return false;
   }
 
-  const isPromo = isPromoCard(numbers);
-  if (isPromo) {
-    const getBaseNumber = (num: string): string | null => {
-      const match = num.match(/PR-\d+\/(.+)/);
-      return match ? normalizeForComparison(match[1]) : null;
-    };
+  // For each TCG card number, check if it matches any Square Enix number
+  return tcgNumbers.some((tcgNum) => {
+    const normalizedTcgNum = normalizeForComparison(tcgNum);
 
-    const normalizedSeCode = normalizeForComparison(seCode);
-    return numbers.some((num) => {
-      const baseNum = getBaseNumber(num);
-      return baseNum === normalizedSeCode;
-    });
-  }
+    // For promo cards, extract and compare the base number
+    if (isPromoCard([tcgNum])) {
+      const match = tcgNum.match(/PR-\d+\/(.+)/);
+      if (match) {
+        const baseNum = normalizeForComparison(match[1]);
+        return seNumbers.some((seNum) => baseNum === seNum);
+      }
+      return false;
+    }
 
-  const normalizedSeCode = normalizeForComparison(seCode);
-  return numbers.some((num) => normalizeForComparison(num) === normalizedSeCode);
+    // For non-promo cards, directly compare normalized numbers
+    return seNumbers.some((seNum) => normalizedTcgNum === seNum);
+  });
 }
 
 async function processImages(tcgCard: TcgCard, seCard: SquareEnixCard): Promise<ImageProcessResult> {
