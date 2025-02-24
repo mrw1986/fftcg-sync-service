@@ -2,24 +2,20 @@
 
 ## Overview
 
-FFTCG Sync Service is a Firebase-based application designed to synchronize Final
- Fantasy Trading Card Game data. The system uses Firebase Cloud Functions for
-  serverless operations, Firestore for data storage, and Firebase Storage for
-   image management. For setup details, see our [Installation Guide](/setup/installation).
+FFTCG Sync Service is a Firebase-based application designed to synchronize Final Fantasy Trading Card Game data. The system uses Firebase Cloud Functions for serverless operations, Firestore for data storage, and Cloudflare R2 for image storage. The architecture emphasizes data accuracy, performance, and maintainability. For setup details, see our [Installation Guide](/setup/installation).
 
 ## System Diagram
 
-The diagram below illustrates the key components and their interactions. Each
- color represents a different component type:
+The diagram below illustrates the key components and their interactions. Each color represents a different component type:
 
 <ArchitectureDiagram :zoom="1.2" :showLabels="true" />
 
 ::: tip Component Types
 
-- Blue: Firebase Services (Functions, Firestore, Auth)
-- Green: Storage Systems (Cloud Storage, Cache)
-- Orange: Core Functions (Card Sync, Price Sync, Image Processing)
-- Gray: External Services (TCGPlayer API)
+- Blue: Firebase Services (Functions, Firestore)
+- Green: Storage Systems (Cloudflare R2, Cache)
+- Orange: Core Services (Group Sync, Card Sync, Square Enix Integration, Search Index)
+- Gray: External Services (TCGCSV API, Square Enix Data)
 :::
 
 ## Core Components
@@ -38,7 +34,7 @@ export const runtimeOpts = {
 } as const;
 
 // Scheduled Functions
-export const scheduledCardSync = onSchedule({
+export const scheduledGroupSync = onSchedule({
   schedule: "0 21 * * *",  // Daily at 21:00 UTC
   timeZone: "UTC",
   memory: runtimeOpts.memory,
@@ -46,7 +42,15 @@ export const scheduledCardSync = onSchedule({
   retryCount: 3,
 });
 
-export const scheduledPriceSync = onSchedule({
+export const scheduledCardSync = onSchedule({
+  schedule: "15 21 * * *",  // Daily at 21:15 UTC
+  timeZone: "UTC",
+  memory: runtimeOpts.memory,
+  timeoutSeconds: runtimeOpts.timeoutSeconds,
+  retryCount: 3,
+});
+
+export const scheduledSquareEnixSync = onSchedule({
   schedule: "30 21 * * *", // Daily at 21:30 UTC
   timeZone: "UTC",
   memory: runtimeOpts.memory,
@@ -61,12 +65,13 @@ For collection usage details, see [API Documentation](/api/).
 
 ```typescript
 export const COLLECTION = {
-  CARDS: "cards",           // Card information
-  PRICES: "prices",         // Price data
-  SYNC_METADATA: "syncMetadata",  // Sync operation logs
-  LOGS: "logs",            // System logs
+  GROUPS: "groups",         // Group information
+  CARDS: "cards",          // Card information
   CARD_HASHES: "cardHashes",  // Card data version control
-  PRICE_HASHES: "priceHashes",  // Price data version control
+  CARD_DELTAS: "cardDeltas",  // Card change tracking
+  SYNC_METADATA: "syncMetadata",  // Sync operation logs
+  SEARCH_INDEX: "searchIndex",  // Search terms and data
+  LOGS: "logs",           // System logs
   IMAGE_METADATA: "imageMetadata",  // Image processing metadata
 };
 ```
@@ -77,8 +82,11 @@ For storage implementation details, see [Image Handler](/utils/image-handler).
 
 ```typescript
 export const STORAGE = {
-  BUCKETS: {
-    CARD_IMAGES: "fftcg-sync-service.firebasestorage.app",
+  R2_CONFIG: {
+    endpoint: process.env.R2_ENDPOINT,
+    accessKeyId: process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    bucketName: process.env.R2_BUCKET_NAME,
   },
   PATHS: {
     IMAGES: "card-images",
@@ -88,33 +96,47 @@ export const STORAGE = {
 
 ### Core Services
 
-#### Card Synchronization
+#### Group Sync Service
+
+For detailed implementation, see [Group Sync Service](/services/group-sync).
+
+- First step in sync process
+- Group data synchronization
+- Set name management
+- Data consistency checks
+- Hash-based change detection
+
+#### Card Sync Service
 
 For detailed implementation, see [Card Sync Service](/services/card-sync).
 
-- Daily automated sync (21:00 UTC)
+- Enhanced name processing
+- Category handling
+- Multi-number card support
+- Crystal card handling
 - Image processing and optimization
 - Hash-based change detection
-- Batch processing with configurable limits
+- Batch processing
 
-#### Price Synchronization
+#### Square Enix Integration
 
-For detailed implementation, see [Price Sync Service](/services/price-sync).
+For detailed implementation, see [Square Enix Integration](/services/square-enix-sync).
 
-- Daily automated sync (21:30 UTC)
-- Price history tracking
-- Market price monitoring
-- Batch updates with validation
+- Cost/power value synchronization
+- Category handling improvements
+- Data enrichment
+- Set matching logic
+- Duplicate prevention
 
-#### Image Processing
+#### Search Index Service
 
-For detailed implementation, see [Image Handler](/utils/image-handler) and
- [Image Compressor](/utils/image-compressor).
+For detailed implementation, see [Search Index Service](/services/search-index).
 
-- Dual resolution support (200w/400w)
-- Progressive JPEG compression
-- Metadata tracking
-- Cache integration
+- Progressive substring search
+- Number-specific search terms
+- Real-time index updates
+- Batch processing optimization
+- Hash-based change detection
 
 ### Utility Systems
 
@@ -123,11 +145,18 @@ For detailed implementation, see [Image Handler](/utils/image-handler) and
 For implementation details, see [Cache System](/utils/cache).
 
 ```typescript
-// Multiple cache layers
 const cacheOptions = {
+  groupCache: {
+    max: 100,
+    ttl: 1000 * 60 * 60  // 1 hour
+  },
   cardCache: {
     max: 500,
     ttl: 1000 * 60 * 60  // 1 hour
+  },
+  searchCache: {
+    max: 1000,
+    ttl: 1000 * 60 * 5  // 5 minutes
   },
   imageCache: {
     metadata: {
@@ -152,6 +181,7 @@ interface BatchOptions {
   batchSize?: number;  // Default: 500
   delayBetweenBatches?: number;  // Default: 100ms
   onBatchComplete?: (stats: BatchProcessingStats) => Promise<void>;
+  maxConcurrent?: number;  // Default: 3
 }
 ```
 
@@ -167,6 +197,8 @@ interface ErrorReport {
   stackTrace?: string;
   metadata?: Record<string, unknown>;
   severity: "ERROR" | "WARNING" | "CRITICAL";
+  component?: string;
+  operation?: string;
 }
 ```
 
@@ -176,23 +208,37 @@ interface ErrorReport {
 
 ```mermaid
 sequenceDiagram
-    participant TCG as TCGPlayer API
-    participant Func as Cloud Functions
+    participant TCGCSV as TCGCSV API
+    participant SE as Square Enix Data
+    participant GS as Group Sync
+    participant CS as Card Sync
+    participant SEI as Square Enix Integration
+    participant SI as Search Index
     participant Store as Firestore
-    participant Storage as Cloud Storage
+    participant R2 as Cloudflare R2
     participant Cache as Memory Cache
 
-    Func->>TCG: Request card/price data
-    TCG-->>Func: Return data
-    Func->>Cache: Check hash cache
-    Cache-->>Func: Return cache status
+    GS->>TCGCSV: Request group data
+    TCGCSV-->>GS: Return data
+    GS->>Store: Update group data
+    
+    CS->>TCGCSV: Request card data
+    TCGCSV-->>CS: Return data
+    CS->>Cache: Check hash cache
+    Cache-->>CS: Return cache status
     
     alt Data Changed
-        Func->>Store: Update card/price data
-        Func->>Storage: Process images
-        Func->>Cache: Update cache
+        CS->>Store: Update card data
+        CS->>R2: Process images
+        CS->>Cache: Update cache
+        
+        SEI->>SE: Get Square Enix data
+        SE-->>SEI: Return data
+        SEI->>Store: Update card details
+        
+        SI->>Store: Update search index
     else No Change
-        Func->>Store: Update sync metadata
+        CS->>Store: Update sync metadata
     end
 ```
 
@@ -202,9 +248,10 @@ sequenceDiagram
 graph TD
     A[Download Image] -->|Validate| B[Check Cache]
     B -->|Miss| C[Process Image]
-    C -->|Compress| D[Store Image]
-    D -->|Update| E[Cache Result]
-    B -->|Hit| F[Return Cached]
+    C -->|Optimize| D[Generate Sizes]
+    D -->|Upload| E[Store in R2]
+    E -->|Update| F[Cache Result]
+    B -->|Hit| G[Return Cached]
 ```
 
 ## Performance Optimization
@@ -217,6 +264,7 @@ For detailed performance guidelines, see [Performance Guide](/performance).
 - Function timeout: 540 seconds
 - Batch size: 500 items
 - Cache TTL: Configurable per type
+- Concurrent operations: 3-5 per type
 
 ### Rate Limiting
 
@@ -224,9 +272,13 @@ For rate limiting implementation, see [Request Handler](/utils/request).
 
 ```typescript
 const rateLimits = {
-  tcgPlayer: {
+  tcgcsv: {
     requestsPerMinute: 100,
     concurrentRequests: 10
+  },
+  squareEnix: {
+    requestsPerMinute: 50,
+    concurrentRequests: 5
   },
   storage: {
     uploadsPerMinute: 50,
@@ -243,15 +295,22 @@ For detailed security implementation, see [Security Guidelines](/security).
 
 - Firebase Authentication
 - Service account credentials
+- R2 access credentials
 - Token-based API access
 
 ### Data Protection
 
 ```typescript
-// Storage Rules
-service firebase.storage {
-  match /b/{bucket}/o {
-    match /card-images/{groupId}/{imageId} {
+// Firestore Rules
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /cards/{cardId} {
+      allow read: if true;
+      allow write: if request.auth != null 
+        && request.auth.token.admin == true;
+    }
+    match /groups/{groupId} {
       allow read: if true;
       allow write: if request.auth != null 
         && request.auth.token.admin == true;
@@ -271,8 +330,10 @@ export const healthCheck = onRequest({
   timeoutSeconds: 10,
   memory: "128MiB",
 }, async (_req: Request, res: Response) => {
+  const status = await checkComponents();
   res.json({
-    status: "healthy",
+    status: status.healthy ? "healthy" : "unhealthy",
+    components: status.components,
     timestamp: new Date().toISOString(),
     version: "1.0.0",
   });
@@ -287,6 +348,7 @@ For logging implementation details, see [Logging System](/utils/logging).
 - Error tracking
 - Performance monitoring
 - Operation auditing
+- Component-specific logging
 
 ## Additional Resources
 

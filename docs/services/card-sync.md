@@ -2,15 +2,21 @@
 
 ## Overview
 
-The Card Synchronization service (`cardSync.ts`) manages the automated synchronization of FFTCG card data from TCGPlayer's API. It handles card information updates, image processing, and maintains data consistency through hash-based versioning.
+The Card Synchronization service (`cardSync.ts`) manages the automated synchronization of FFTCG card data from TCGPlayer's API and Square Enix data sources. It handles card information updates, image processing, and maintains data consistency through hash-based versioning, with special handling for various card types and formats.
 
 ## Core Features
 
-- Automated card data synchronization
+- Automated card data synchronization from multiple sources
+- Enhanced name processing and preservation
+- Advanced category handling with DFF prioritization
+- Crystal card special handling
+- Multi-number card support
+- Group-based set name handling
+- Cost/power value synchronization
 - Image processing and storage
-- Batch processing
-- Error handling and retry logic
-- Dry run capability for testing
+- Batch processing with optimization
+- Comprehensive error handling and retry logic
+- Hash-based change detection
 - Progress tracking and logging
 
 ## API Reference
@@ -18,7 +24,7 @@ The Card Synchronization service (`cardSync.ts`) manages the automated synchroni
 ### Main Function
 
 ```typescript
-async function syncCards(options: SyncOptions = {}): Promise<SyncMetadata>
+async function syncCards(options: SyncOptions = {}): Promise<SyncResult>
 ```
 
 #### Options
@@ -29,196 +35,229 @@ interface SyncOptions {
   limit?: number;        // Limit number of cards processed
   groupId?: string;      // Process specific group only
   skipImages?: boolean;  // Skip image processing
+  forceUpdate?: boolean; // Force update regardless of hash
 }
 ```
 
 #### Response
 
 ```typescript
-interface SyncMetadata {
-  lastSync: Date;
-  status: "in_progress" | "success" | "failed" | "completed_with_errors";
-  cardCount: number;
-  type: "manual" | "scheduled";
-  groupsProcessed: number;
-  groupsUpdated: number;
+interface SyncResult {
+  success: boolean;
+  itemsProcessed: number;
+  itemsUpdated: number;
   errors: string[];
-  duration?: number;
-  imagesProcessed?: number;
-  imagesUpdated?: number;
+  timing: {
+    startTime: Date;
+    groupStartTime?: Date;
+    endTime?: Date;
+    duration?: number;
+  };
 }
 ```
 
+## Data Processing Features
+
+### Name Processing
+
+- Special content preservation in parentheses
+- Crystal card handling
+- Date preservation in names
+- Card number removal from display names
+- Special keyword handling (EX, LB, etc.)
+- Proper handling of promo cards
+
+### Category Handling
+
+- DFF category prioritization
+- Middot separator implementation
+- Array ordering preservation
+- Format consistency
+- Raw category preservation
+- Duplicate category prevention
+- Consistent character encoding
+
+### Card Number Processing
+
+- Multi-number card support
+- Standardized separator usage
+- Format validation
+- Promo card special handling
+- Proper null handling for non-card products
+- Support for various number formats:
+  - PR-### (Promo cards)
+  - #-###X or ##-###X (Standard cards)
+  - A-### (Special cards)
+  - C-### (Crystal cards)
+  - B-### (Bonus cards)
+
+### Group Integration
+
+- Group sync as first step
+- Set name handling from groups
+- Proper group ID handling
+- Data consistency checks
+- Improved set matching logic
+
+### Cost/Power Synchronization
+
+- Value validation
+- Conditional updates
+- Null value handling
+- Set matching improvements
+- Multiple set handling
+
 ## Usage Examples
 
-### Scheduled Sync
-
-The service runs automatically on a daily schedule:
+### Standard Sync
 
 ```typescript
-exports.scheduledCardSync = onSchedule({
-  schedule: "0 21 * * *", // Daily at 21:00 UTC
-  timeZone: "UTC",
-  memory: runtimeOpts.memory,
-  timeoutSeconds: runtimeOpts.timeoutSeconds,
-  retryCount: 3,
-});
-```
+// Full sync with all features
+await cardSync.syncCards();
 
-### Manual Sync
-
-Test specific groups or cards:
-
-```typescript
-// Test sync with limits
-await syncCards({
-  dryRun: true,
-  limit: 5,
+// Sync specific group
+await cardSync.syncCards({
   groupId: "23783"
 });
 
-// Full manual sync
-await syncCards({
-  dryRun: false
+// Test sync with limits
+await cardSync.syncCards({
+  dryRun: true,
+  limit: 5
+});
+```
+
+### Force Update
+
+```typescript
+// Force update regardless of hash
+await cardSync.syncCards({
+  forceUpdate: true
 });
 ```
 
 ## Error Handling
 
-The service implements comprehensive error handling:
+The service implements comprehensive error handling with specific error types:
 
 ```typescript
-class SyncError extends Error implements GenericError {
-  constructor(
-    message: string,
-    code?: string,
-    public details?: Record<string, unknown>
-  ) {
-    super(message);
-    this.name = "SyncError";
-    this.code = code;
-  }
+interface CardSyncError {
+  code: string;
+  message: string;
+  details?: {
+    cardId?: number;
+    groupId?: number;
+    operation?: string;
+    [key: string]: unknown;
+  };
 }
 ```
 
-### Retry Logic
+### Retry Strategy
 
 ```typescript
-const MAX_RETRIES = 3;
-const BASE_DELAY = 1000; // 1 second
-
-// Exponential backoff
-const delay = Math.pow(2, retryCount) * BASE_DELAY;
+private readonly retry = new RetryWithBackoff({
+  maxRetries: 3,
+  baseDelay: 1000,
+  maxDelay: 10000
+});
 ```
 
-## Data Processing
+## Data Consistency
+
+### Hash-based Change Detection
+
+```typescript
+private calculateHash(card: CardProduct): string {
+  const deltaData = this.getDeltaData(card);
+  return crypto.createHash("md5")
+    .update(JSON.stringify(deltaData))
+    .digest("hex");
+}
+```
 
 ### Batch Processing
 
 ```typescript
-async function processBatch<T>(
-  items: T[],
-  processor: (batch: T[]) => Promise<void>,
-  options: BatchOptions = {}
-): Promise<void>
-```
+private readonly batchProcessor = new OptimizedBatchProcessor(db);
 
-### Hash Generation
+// Add operations to batch
+await this.batchProcessor.addOperation((batch) => {
+  batch.set(docRef, data, { merge: true });
+});
 
-```typescript
-function getDataHash(data: any): string {
-  return crypto.createHash("md5")
-    .update(JSON.stringify(data, Object.keys(data).sort()))
-    .digest("hex");
-}
+// Commit all batches
+await this.batchProcessor.commitAll();
 ```
 
 ## Monitoring
 
 ### Progress Tracking
 
-The service logs detailed progress information:
+The service provides detailed progress information:
 
+- Cards processed and updated
 - Groups processed
-- Cards updated
-- Images processed
+- Hash changes detected
 - Processing duration
-- Error counts
+- Error counts and types
+- Image processing status
 
-### Success Metrics
+### Performance Metrics
 
-- Number of groups updated
-- Number of cards processed
-- Number of images updated
-- Processing duration
-- Error rate
+- Batch processing efficiency
+- Memory usage
+- API call frequency
+- Cache hit rates
+- Error rates by type
 
 ## Best Practices
 
 1. Testing Changes:
+   - Use dry run mode first
+   - Test with limited card sets
+   - Verify hash calculations
+   - Check category handling
 
-```typescript
-// Always test with dry run first
-await syncCards({
-  dryRun: true,
-  limit: 5
-});
-```
+2. Performance Optimization:
+   - Use batch processing
+   - Implement proper caching
+   - Monitor memory usage
+   - Optimize database queries
 
-1. Error Monitoring:
-
-```typescript
-// Check sync metadata for errors
-const metadata = await syncCards();
-if (metadata.errors.length > 0) {
-  console.error("Sync completed with errors:", metadata.errors);
-}
-```
-
-1. Resource Management:
-
-```typescript
-// Use limits when testing
-const options: SyncOptions = {
-  limit: 10,
-  dryRun: true
-};
-```
+3. Error Handling:
+   - Implement proper retry logic
+   - Log detailed error information
+   - Monitor error patterns
+   - Handle edge cases
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. Rate Limiting:
-   - Implement proper delays between requests
-   - Use batch processing
-   - Follow exponential backoff
+1. Data Synchronization:
+   - Verify API responses
+   - Check hash calculations
+   - Monitor batch processing
+   - Validate category handling
 
 2. Image Processing:
    - Verify storage permissions
    - Check image URLs
    - Monitor storage quotas
+   - Validate image metadata
 
-3. Data Consistency:
-   - Use hash verification
-   - Implement proper error handling
-   - Monitor sync metadata
-
-### Debug Mode
-
-Enable detailed logging:
-
-```typescript
-// Enable debug logging
-await syncCards({
-  dryRun: true,
-  debug: true
-});
-```
+3. Performance:
+   - Monitor batch sizes
+   - Check memory usage
+   - Optimize database queries
+   - Review cache efficiency
 
 ## Related Components
 
-- [Price Sync Service](./price-sync)
+- [Group Sync Service](./group-sync)
+- [Square Enix Integration](./square-enix-sync)
+- [Search Index Service](./search-index)
 - [Image Handler](../utils/image-handler)
 - [Cache System](../utils/cache)
 - [Error Handling](../utils/error-handling)
