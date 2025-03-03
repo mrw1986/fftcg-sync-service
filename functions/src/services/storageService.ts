@@ -39,6 +39,14 @@ export class StorageService {
       throw new Error("R2 bucket name is not configured");
     }
 
+    // Define extended request handler options type
+    interface ExtendedRequestHandlerOptions {
+      socketTimeout?: number;
+      connectionTimeout?: number;
+      maxSockets?: number;
+      socketAcquisitionWarningTimeout?: number;
+    }
+
     this.client = new S3Client({
       region: "auto",
       endpoint: `https://${R2_CONFIG.ACCOUNT_ID}.r2.cloudflarestorage.com`,
@@ -49,12 +57,11 @@ export class StorageService {
       forcePathStyle: true,
       // Increase socket limits to handle more concurrent requests
       requestHandler: {
-        // @ts-ignore - The type definitions don't include these options, but they are supported
         socketTimeout: 60000, // 60 seconds
         connectionTimeout: 60000, // 60 seconds
         maxSockets: 200, // Increase from default 50
         socketAcquisitionWarningTimeout: 5000, // 5 seconds
-      },
+      } as ExtendedRequestHandlerOptions,
     });
 
     this.bucket = R2_CONFIG.BUCKET_NAME;
@@ -141,7 +148,7 @@ export class StorageService {
       timeout: this.timeoutMs,
       headers: {
         "User-Agent": "FFTCG-Sync-Service/1.0",
-        Accept: "image/jpeg,image/png,image/*",
+        "Accept": "image/jpeg,image/png,image/*",
       },
       maxContentLength: 10 * 1024 * 1024, // 10MB max
       validateStatus: (status) => status === 200, // Only accept 200 status
