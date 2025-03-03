@@ -19,6 +19,8 @@
    - Group-based set names
    - Validates card numbers
    - Handles promo cards
+   - Card versioning with dataVersion field
+   - Incremental sync support for app clients
 
 3. Square Enix Integration (squareEnixSync.ts)
    - Enriches card data
@@ -69,26 +71,41 @@
 
 ## Recent Significant Changes
 
-1. Square Enix Data Integration
+1. Reprint Card Number Handling
+   - Added support for "Re-" prefix card numbers
+   - Improved hash calculation to include "Re-" prefix numbers
+   - Enhanced Square Enix data integration to preserve "Re-" prefix numbers
+   - Updated search index generation for "Re-" prefix numbers
+   - Fixed card number merging during Square Enix data updates
+
+2. Metadata System Implementation
+   - Added dataVersion field to card documents
+   - Implemented smart detection for existing cards
+   - Enabled incremental sync for app clients
+   - Reduced Firestore reads during updates
+   - Improved version tracking between app and backend
+
+3. Square Enix Data Integration
    - Cost/power value updates
    - Category handling improvements
    - Duplicate category prevention
    - Consistent middot handling
+   - Preservation of TCGCSV-specific card numbers
 
-2. Group Integration
+4. Group Integration
    - Group sync as first step
    - Set name handling from groups
    - Proper group ID handling
    - Data consistency improvements
 
-3. Name Processing Updates
+5. Name Processing Updates
    - Enhanced special content preservation
    - Improved card number removal
    - Date preservation in names
    - Crystal card handling
    - Proper handling of special keywords
 
-4. Category Handling Improvements
+6. Category Handling Improvements
    - DFF category prioritization
    - Middot separator implementation
    - Array ordering

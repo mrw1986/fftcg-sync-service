@@ -2,7 +2,10 @@
 
 ## Overview
 
-The Card Synchronization service (`cardSync.ts`) manages the automated synchronization of FFTCG card data from TCGPlayer's API and Square Enix data sources. It handles card information updates, image processing, and maintains data consistency through hash-based versioning, with special handling for various card types and formats.
+The Card Synchronization service (`cardSync.ts`) manages the automated synchronization
+of FFTCG card data from TCGPlayer's API and Square Enix data sources. It handles
+card information updates, image processing, and maintains data consistency through
+hash-based versioning, with special handling for various card types and formats.
 
 ## Core Features
 
@@ -13,7 +16,7 @@ The Card Synchronization service (`cardSync.ts`) manages the automated synchroni
 - Multi-number card support
 - Group-based set name handling
 - Cost/power value synchronization
-- Image processing and storage
+- Image processing and storage with placeholder fallback
 - Batch processing with optimization
 - Comprehensive error handling and retry logic
 - Hash-based change detection
@@ -90,6 +93,11 @@ interface SyncResult {
   - A-### (Special cards)
   - C-### (Crystal cards)
   - B-### (Bonus cards)
+  - Re-###X (Reprint cards)
+- Reprint card handling:
+  - Preservation of "Re-" prefix numbers during Square Enix data updates
+  - Inclusion in search terms for improved searchability
+  - Proper hash calculation to detect changes
 
 ### Group Integration
 
@@ -246,8 +254,40 @@ The service provides detailed progress information:
    - Check image URLs
    - Monitor storage quotas
    - Validate image metadata
+   - Ensure placeholder images are used for invalid or missing images
 
-3. Performance:
+#### Placeholder Image Handling
+
+The Card Sync Service integrates with the Storage Service to ensure that cards without
+valid images always use a placeholder image:
+
+```typescript
+// Process image handling
+const imageResult = await (async () => {
+  const PLACEHOLDER_URL = "https://fftcgcompanion.com/card-images/image-coming-soon.jpeg";
+  if (card.imageUrl) {
+    // If URL exists, process normally
+    return await this.retry.execute(() =>
+      storageService.processAndStoreImage(card.imageUrl, card.productId, groupId.toString())
+    );
+  } else {
+    // For any item without image, use placeholder URL
+    return {
+      fullResUrl: PLACEHOLDER_URL,
+      highResUrl: PLACEHOLDER_URL,
+      lowResUrl: PLACEHOLDER_URL,
+      metadata: {},
+    } as ImageResult;
+  }
+})();
+```
+
+This ensures that cards always have valid image URLs for all three resolutions
+(low, high, and full), preventing null values in the database. See the
+[Storage Service](./storage-service) documentation for more details on image
+processing and placeholder handling.
+
+1. Performance:
    - Monitor batch sizes
    - Check memory usage
    - Optimize database queries
@@ -258,6 +298,7 @@ The service provides detailed progress information:
 - [Group Sync Service](./group-sync)
 - [Square Enix Integration](./square-enix-sync)
 - [Search Index Service](./search-index)
+- [Storage Service](./storage-service)
 - [Image Handler](../utils/image-handler)
 - [Cache System](../utils/cache)
 - [Error Handling](../utils/error-handling)

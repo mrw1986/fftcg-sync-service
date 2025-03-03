@@ -12,6 +12,8 @@
 - [x] Cost/power value synchronization
 - [x] Category deduplication
 - [x] Proper null handling for card fields
+- [x] Reprint card number handling with "Re-" prefix
+- [x] Image processing optimization
 
 ## Current Features
 
@@ -32,6 +34,9 @@
 - Deduplicated categories with proper ordering
 - Proper null handling for non-card products
 - Improved set matching for data updates
+- Reprint card number handling with "Re-" prefix
+- Optimized image processing with socket management
+- Enhanced hash calculation for data consistency
 
 ## Completed Tasks
 
@@ -42,6 +47,8 @@
   - [x] Progressive substring search
   - [x] Number-specific search terms
   - [x] Hash-based change detection
+  - [x] Enhanced support for "Re-" prefix card numbers
+  - [x] Improved search term generation for hyphenated formats
 - [x] Batch processing optimization
 - [x] Rate limiting implementation
 - [x] Error handling improvements
@@ -67,6 +74,9 @@
   - [x] Number format validation
   - [x] Promo card special handling
   - [x] Null handling for non-card products
+  - [x] Reprint card number handling with "Re-" prefix
+  - [x] Enhanced hash calculation for data consistency
+  - [x] Improved card number merging during updates
 - [x] Group sync integration
   - [x] Set name handling from groups
   - [x] Group sync as first step
@@ -81,6 +91,13 @@
     - [x] Removed duplicate categories
     - [x] Consistent middot handling
     - [x] Maintained proper category ordering
+
+- [x] Image processing optimization
+  - [x] Increased socket limits for concurrent requests
+  - [x] Sequential image downloads to avoid overwhelming servers
+  - [x] Sequential image uploads to manage connections
+  - [x] Enhanced error handling for rate limiting
+  - [x] Improved axios configuration for better performance
 
 ## Current Tasks
 

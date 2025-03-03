@@ -2,7 +2,11 @@
 
 ## Overview
 
-The Search Index Service (`searchIndexService.ts`) maintains a high-performance, searchable index of card data. It supports progressive substring search, number-specific search terms, and uses hash-based change detection for efficient updates. The service optimizes search capabilities while maintaining data consistency across the system.
+The Search Index Service (`searchIndexService.ts`) maintains a high-performance,
+searchable index of card data. It supports progressive substring search,
+number-specific search terms, and uses hash-based change detection for efficient
+updates. The service optimizes search capabilities while maintaining data consistency
+across the system.
 
 ## Core Features
 
@@ -17,7 +21,7 @@ The Search Index Service (`searchIndexService.ts`) maintains a high-performance,
 
 ## Components
 
-### Search Index Service
+### Service Interface
 
 ```typescript
 class SearchIndexService {
@@ -66,11 +70,19 @@ function generateSearchTerms(
 - Multiple number format support
 - Promo card number handling
 - Crystal card number support
+- Reprint card number handling with "Re-" prefix
+- Special handling for hyphenated formats
 
 ```typescript
 function generateNumberTerms(
   numbers: string[]
-): string[];
+): string[] {
+  // Example implementation for "Re-" prefix numbers
+  if (number.startsWith("re-")) {
+    // Generate terms like "re", "re-", "re-0", "re-00", "re-004", "re-004c"
+    // Also include the full "re-004c" as a search term
+  }
+}
 ```
 
 ## Data Processing

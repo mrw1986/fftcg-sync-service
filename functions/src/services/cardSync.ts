@@ -22,6 +22,8 @@ interface CardDeltaData {
   elements: string[];
   set: string[]; // Added set field
   category: string | null;
+  cardNumbers: string[] | null; // Added cardNumbers field for hash calculation
+  fullCardNumber: string | null; // Added fullCardNumber field for hash calculation
 }
 
 interface CardDocument {
@@ -48,6 +50,7 @@ interface CardDocument {
   power: number | null;
   rarity: string | null;
   set: string[]; // Added set field
+  dataVersion: number; // Added dataVersion field for incremental sync
 }
 
 export class CardSyncService {
@@ -171,9 +174,12 @@ export class CardSyncService {
     logger.info("Cleaning display name", { original: name });
 
     // First remove parentheses with PR numbers
-    const withoutNumbers = name
+    let withoutNumbers = name
       // Remove parentheses containing PR numbers (e.g., "(PR-055)")
       .replace(/\s*\(PR-?\d+\)/, "")
+      // Remove parentheses containing card numbers (e.g., "(1-044R)", "(B-038)")
+      .replace(/\s*\(\d{1,2}-\d{3}[A-Z]\)/, "")
+      .replace(/\s*\([A-C]-\d{3}\)/, "")
       // Then remove other card numbers
       .replace(/(?:\s*[-–—]\s*PR)?-?\d+\/[^(\s]+(?=\s*\(|$)/, "") // PR numbers with secondary numbers
       .replace(/\s*[-–—]\s*PR-?\d+(?=\s*\(|$)/, "") // standalone PR numbers
@@ -184,6 +190,18 @@ export class CardSyncService {
       .trim();
 
     logger.info("After number removal", { withoutNumbers });
+
+    // Fix incomplete parentheses patterns like "(1" or "(B" at the end of the name
+    const hasIncompleteParentheses = /\([A-C1-9](?!\))/.test(withoutNumbers);
+    if (hasIncompleteParentheses) {
+      // Remove the incomplete parentheses
+      const cleanedName = withoutNumbers.replace(/\s*\([A-C1-9][^)]*$/, "").trim();
+      logger.info("Fixed incomplete parentheses", {
+        original: withoutNumbers,
+        cleaned: cleanedName,
+      });
+      withoutNumbers = cleanedName;
+    }
 
     // Special keywords that indicate we should keep the content
     const specialKeywords = [
@@ -196,6 +214,7 @@ export class CardSyncService {
       "Alternate Art Promo",
       "Full Art Reprint",
       "Buy A Box Promo",
+      "Class Zero Cadet",
     ];
 
     // Process all parentheses content
@@ -221,6 +240,22 @@ export class CardSyncService {
       if (/^PR-?\d+$/.test(content) || content === "PR" || content.startsWith("PR-")) {
         logger.info("Skipping PR content", { content });
         continue;
+      }
+
+      // Skip standalone card number patterns (e.g., "1", "B", "1-044R", "B-038")
+      if (/^(\d{1,2}|\d{1,2}-\d{3}[A-Z]|[A-C]|[A-C]-\d{3})$/.test(content)) {
+        logger.info("Skipping card number content", { content });
+        continue;
+      }
+
+      // Fix partial content like "19 (Full Art" to just "Full Art"
+      if (/^\d+\s+\((.+)$/.test(content)) {
+        const match = content.match(/^\d+\s+\((.+)$/);
+        if (match && match[1]) {
+          logger.info("Fixing partial content", { original: content, fixed: match[1] });
+          processedParts.push(`(${match[1]})`);
+          continue;
+        }
       }
 
       // Always keep special keywords
@@ -311,6 +346,8 @@ export class CardSyncService {
     if (number.match(/^C-\d{3}$/)) return true;
     // Check B-### format (Bonus cards)
     if (number.match(/^B-\d{3}$/)) return true;
+    // Check Re-###X format (Reprint cards)
+    if (number.match(/^Re-\d{3}[A-Z]$/)) return true;
     return false;
   }
 
@@ -329,6 +366,15 @@ export class CardSyncService {
       // Pad to 3 digits and always use PR- prefix
       const paddedNum = match[1].padStart(3, "0");
       return `PR-${paddedNum}`;
+    }
+
+    // Handle Re-### format (Reprint cards)
+    if (clean.startsWith("RE")) {
+      const match = clean.match(/^RE0*(\d{1,3})([A-Z])$/);
+      if (match) {
+        const paddedNum = match[1].padStart(3, "0");
+        return `Re-${paddedNum}${match[2]}`;
+      }
     }
 
     // Handle A-### format
@@ -390,12 +436,31 @@ export class CardSyncService {
       .forEach((numberField) => {
         const valueStr = String(numberField.value);
         originalFormat = valueStr;
-        // Split on any separator and normalize each number
-        const vals = valueStr.split(/[,;/]/).map((n: string) => n.trim());
-        const normalizedNums = vals.map((num: string) => this.normalizeCardNumber(num));
-        // Filter out any null values
-        const validNums = normalizedNums.filter((num): num is string => num !== null);
-        numbers.push(...validNums);
+
+        // Special handling for Re- prefixed numbers
+        if (valueStr.includes("Re-")) {
+          logger.info(`Processing card with Re- prefix: ${valueStr}`);
+
+          // Split on any separator and process each part
+          const vals = valueStr.split(/[,;/]/).map((n: string) => n.trim());
+
+          // Process each number individually to ensure Re- numbers are included
+          for (const val of vals) {
+            const normalizedNum = this.normalizeCardNumber(val);
+            if (normalizedNum) {
+              logger.info(`Normalized Re- number: ${val} -> ${normalizedNum}`);
+              numbers.push(normalizedNum);
+            }
+          }
+        } else {
+          // Standard processing for non-Re numbers
+          // Split on any separator and normalize each number
+          const vals = valueStr.split(/[,;/]/).map((n: string) => n.trim());
+          const normalizedNums = vals.map((num: string) => this.normalizeCardNumber(num));
+          // Filter out any null values
+          const validNums = normalizedNums.filter((num): num is string => num !== null);
+          numbers.push(...validNums);
+        }
       });
 
     // If no valid numbers found, return null values
@@ -413,15 +478,21 @@ export class CardSyncService {
     // Find a valid primary card number
     let primary: string | null = null;
 
-    // First try the rightmost number
-    const rightmost = uniqueNumbers[uniqueNumbers.length - 1];
-    if (rightmost && this.isValidNormalizedNumber(rightmost)) {
-      primary = rightmost;
+    // First try to find a non-Re- number to use as primary
+    const nonReNumber = uniqueNumbers.find((num) => !num.startsWith("Re-"));
+    if (nonReNumber && this.isValidNormalizedNumber(nonReNumber)) {
+      primary = nonReNumber;
     } else {
-      // If rightmost isn't valid, try to find the first valid number
-      const validNumber = uniqueNumbers.find((num) => this.isValidNormalizedNumber(num));
-      if (validNumber) {
-        primary = validNumber;
+      // If no non-Re- number, try the rightmost number
+      const rightmost = uniqueNumbers[uniqueNumbers.length - 1];
+      if (rightmost && this.isValidNormalizedNumber(rightmost)) {
+        primary = rightmost;
+      } else {
+        // If rightmost isn't valid, try to find the first valid number
+        const validNumber = uniqueNumbers.find((num) => this.isValidNormalizedNumber(num));
+        if (validNumber) {
+          primary = validNumber;
+        }
       }
     }
 
@@ -452,6 +523,9 @@ export class CardSyncService {
     const numberField = card.extendedData.find((data) => data.name === "Number");
     const isCrystal = numberField?.value && String(numberField.value).toUpperCase().startsWith("C-");
 
+    // Get card numbers for hash calculation
+    const { numbers: cardNumbers, fullNumber: fullCardNumber } = this.getCardNumbers(card);
+
     return {
       name: card.name,
       cleanName: card.cleanName,
@@ -464,6 +538,8 @@ export class CardSyncService {
       elements: this.getElements(card),
       set,
       category: this.getExtendedValue(card, "Category"),
+      cardNumbers,
+      fullCardNumber,
     };
   }
 
@@ -514,7 +590,6 @@ export class CardSyncService {
 
     return hashMap;
   }
-
   private async processCards(
     cards: CardProduct[],
     groupId: number,
@@ -533,6 +608,11 @@ export class CardSyncService {
     try {
       const productIds = cards.map((card) => card.productId);
       const hashMap = await this.getStoredHashes(productIds);
+
+      // Get the current metadata version
+      const metadata = await db.collection(COLLECTION.SYNC_METADATA).doc("cards").get();
+      const currentVersion = metadata.exists ? metadata.data()?.version || 1 : 1;
+      logger.info(`Using dataVersion ${currentVersion} for card updates`);
 
       // Get the group name from Firestore
       const groupRef = db.collection(COLLECTION.GROUPS).doc(groupId.toString());
@@ -558,10 +638,19 @@ export class CardSyncService {
             const cardRef = db.collection(COLLECTION.CARDS).doc(card.productId.toString());
             const cardSnapshot = await this.retry.execute(() => cardRef.get());
 
-            // Skip only if document exists AND hash matches (unless forcing update)
-            if (cardSnapshot.exists && currentHash === storedHash && !options.forceUpdate) {
+            // Check if the card document has the dataVersion field
+            const cardData = cardSnapshot.data();
+            const hasDataVersion = cardSnapshot.exists && cardData && "dataVersion" in cardData;
+
+            // Skip only if document exists, hash matches, has dataVersion, and not forcing update
+            if (cardSnapshot.exists && currentHash === storedHash && hasDataVersion && !options.forceUpdate) {
               logger.info(`Skipping card ${card.productId} - no changes detected`);
               return;
+            }
+
+            // Log if processing due to missing dataVersion
+            if (cardSnapshot.exists && currentHash === storedHash && !hasDataVersion) {
+              logger.info(`Processing card ${card.productId} - adding dataVersion field`);
             }
 
             logger.info(
@@ -623,6 +712,7 @@ export class CardSyncService {
               power: this.normalizeNumericValue(this.getExtendedValue(card, "Power")),
               rarity: this.getExtendedValue(card, "Rarity"),
               set,
+              dataVersion: currentVersion, // Add the current version to enable incremental sync
             };
 
             // Add main card document
@@ -698,9 +788,9 @@ export class CardSyncService {
     try {
       logger.info("Starting card sync", { options });
 
-      const groups = options.groupId ?
-        [{ groupId: options.groupId }] :
-        await this.retry.execute(() => tcgcsvApi.getGroups());
+      const groups = options.groupId
+        ? [{ groupId: options.groupId }]
+        : await this.retry.execute(() => tcgcsvApi.getGroups());
 
       // Apply limit if specified
       if (options.limit) {

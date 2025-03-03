@@ -111,7 +111,7 @@ const elementMap: Record<string, string> = {
 const specialKeywords = ["Full Art", ".*Promo.*", "Road.*", "Champion.*", ".*Anniversary.*"];
 
 function isValidCardNumber(number: string): boolean {
-  return /^(?:PR-\d{3}|[1-9]\d?-\d{3}[A-Z]|[A-C]-\d{3})$/.test(number);
+  return /^(?:PR-\d{3}|[1-9]\d?-\d{3}[A-Z]|[A-C]-\d{3}|Re-\d{3}[A-Z])$/.test(number);
 }
 
 function isPromoCard(cardNumbers: string[] | null): boolean {
@@ -125,24 +125,30 @@ function hasSpecialTerms(name: string): boolean {
   return /\((.*?)\)/g.test(name) && specialKeywords.some((term) => new RegExp(term, "i").test(name));
 }
 
-function calculateHash(card: SquareEnixCard): string {
+function calculateHash(card: SquareEnixCard, tcgCard?: TcgCard): string {
   // Normalize element array
   const normalizedElement =
-    card.type_en === "Crystal" || card.code.startsWith("C-") ?
-      ["Crystal"] :
-      (card.element || [])
-        .map((e: string) => elementMap[e] || e)
-        .filter((e: string) => e)
-        .sort();
+    card.type_en === "Crystal" || card.code.startsWith("C-")
+      ? ["Crystal"]
+      : (card.element || [])
+          .map((e: string) => elementMap[e] || e)
+          .filter((e: string) => e)
+          .sort();
 
   // Normalize set array
   const normalizedSet = (card.set || []).filter(Boolean).sort();
 
-  // Normalize card numbers
-  const normalizedCardNumbers = (card.code.includes("/") ? card.code.split("/") : [card.code])
+  // Normalize card numbers from Square Enix
+  const seCardNumbers = (card.code.includes("/") ? card.code.split("/") : [card.code])
     .map((num) => num.trim())
     .filter(Boolean)
     .sort();
+
+  // Get Re- prefix numbers from TCG card if available
+  const reNumbers = tcgCard?.cardNumbers?.filter((num) => num.startsWith("Re-")) || [];
+
+  // Combine SE numbers with Re- numbers
+  const combinedCardNumbers = [...new Set([...seCardNumbers, ...reNumbers])].sort();
 
   // Build categories array for hash calculation
   const categories = [card.category_1];
@@ -163,12 +169,15 @@ function calculateHash(card: SquareEnixCard): string {
     multicard: card.multicard,
     ex_burst: card.ex_burst,
     set: normalizedSet,
-    cardNumbers: normalizedCardNumbers,
+    cardNumbers: combinedCardNumbers, // Use combined card numbers including Re- prefix
   };
 
   const jsonData = JSON.stringify(deltaData);
   logger.info("Card hash data:", {
     code: deltaData.code,
+    seCardNumbers,
+    reNumbers,
+    combinedCardNumbers,
     data: jsonData,
     hash: crypto.createHash("md5").update(jsonData).digest("hex"),
   });
@@ -233,18 +242,18 @@ async function processImages(tcgCard: TcgCard, seCard: SquareEnixCard): Promise<
     const groupId = tcgCard.groupId;
 
     const fullResResult =
-      groupId && seCard.images?.full?.length > 0 ?
-        await retry.execute(() =>
-          storageService.processAndStoreImage(seCard.images.full[0], parseInt(tcgCard.id), groupId.toString())
-        ) :
-        null;
+      groupId && seCard.images?.full?.length > 0
+        ? await retry.execute(() =>
+            storageService.processAndStoreImage(seCard.images.full[0], parseInt(tcgCard.id), groupId.toString())
+          )
+        : null;
 
     const thumbResult =
-      groupId && seCard.images?.thumbs?.length > 0 ?
-        await retry.execute(() =>
-          storageService.processAndStoreImage(seCard.images.thumbs[0], parseInt(tcgCard.id), groupId.toString())
-        ) :
-        null;
+      groupId && seCard.images?.thumbs?.length > 0
+        ? await retry.execute(() =>
+            storageService.processAndStoreImage(seCard.images.thumbs[0], parseInt(tcgCard.id), groupId.toString())
+          )
+        : null;
 
     return {
       highResUrl: fullResResult?.highResUrl || null,
@@ -286,9 +295,9 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): FieldUpdat
   }
 
   const elements =
-    seCard.type_en === "Crystal" || seCard.code.startsWith("C-") ?
-      ["Crystal"] :
-      seCard.element.map((e: string) => elementMap[e] || e);
+    seCard.type_en === "Crystal" || seCard.code.startsWith("C-")
+      ? ["Crystal"]
+      : seCard.element.map((e: string) => elementMap[e] || e);
 
   const rarityMap = {
     C: "Common",
@@ -354,12 +363,12 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): FieldUpdat
     updates.number = null;
   } else {
     // For valid cards, process card numbers
-    const validNumbers = seCard.code.includes("/") ?
-      seCard.code
-        .split("/")
-        .map((num) => num.trim())
-        .filter((num) => isValidCardNumber(num)) :
-      [seCard.code].filter((num) => isValidCardNumber(num));
+    const validNumbers = seCard.code.includes("/")
+      ? seCard.code
+          .split("/")
+          .map((num) => num.trim())
+          .filter((num) => isValidCardNumber(num))
+      : [seCard.code].filter((num) => isValidCardNumber(num));
 
     // Set all number fields to null if no valid numbers found
     if (validNumbers.length === 0) {
@@ -368,10 +377,29 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): FieldUpdat
       updates.primaryCardNumber = null;
       updates.number = null;
     } else {
-      updates.cardNumbers = validNumbers;
-      updates.fullCardNumber = seCard.code;
-      updates.primaryCardNumber = validNumbers[0];
-      updates.number = validNumbers[0];
+      // Preserve "Re-" prefix numbers from TCGCSV API sync
+      const existingCardNumbers = tcgCard.cardNumbers || [];
+      const reNumbers = existingCardNumbers.filter((num) => num.startsWith("Re-"));
+
+      // Merge SE numbers with Re- numbers, removing duplicates
+      const mergedNumbers = [...new Set([...validNumbers, ...reNumbers])];
+
+      logger.info(`Merging card numbers for ${tcgCard.id}:`, {
+        seNumbers: validNumbers,
+        existingReNumbers: reNumbers,
+        mergedNumbers: mergedNumbers,
+      });
+
+      // Update card numbers
+      updates.cardNumbers = mergedNumbers;
+
+      // For fullCardNumber, combine all numbers with forward slash
+      updates.fullCardNumber = mergedNumbers.join("/");
+
+      // For primaryCardNumber and number, prefer non-Re- numbers
+      const nonReNumber = validNumbers.find((num) => !num.startsWith("Re-"));
+      updates.primaryCardNumber = nonReNumber || validNumbers[0];
+      updates.number = nonReNumber || validNumbers[0];
     }
   }
 
@@ -508,7 +536,8 @@ export async function main(options: SyncOptions = {}): Promise<UpdateResult> {
 
       matchCount++;
       sanitizedCode = match.code.replace(/\//g, ";");
-      currentHash = calculateHash(match);
+      // Pass the TCG card to calculateHash to include Re- prefix numbers in hash calculation
+      currentHash = calculateHash(match, card);
       storedHash = hashMap.get(sanitizedCode);
 
       logger.info(`Processing card ${card.id}:`, {
@@ -517,6 +546,7 @@ export async function main(options: SyncOptions = {}): Promise<UpdateResult> {
         currentHash,
         storedHash: storedHash || "none",
         forceUpdate: options.forceUpdate || false,
+        cardNumbers: card.cardNumbers,
       });
 
       // Always get field updates and force cost/power updates
@@ -558,7 +588,13 @@ export async function main(options: SyncOptions = {}): Promise<UpdateResult> {
 
       if (Object.keys(fieldUpdates).length > 1) {
         // > 1 because lastUpdated is always present
-        updates.set(id, { match, updates: fieldUpdates, hash: currentHash });
+        // Recalculate hash with the updated card numbers to ensure it's accurate
+        const updatedHash = calculateHash(match, {
+          ...card,
+          cardNumbers: fieldUpdates.cardNumbers || card.cardNumbers,
+        } as TcgCard);
+
+        updates.set(id, { match, updates: fieldUpdates, hash: updatedHash });
         updateCount++;
       }
     }

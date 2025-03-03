@@ -2,7 +2,10 @@
 
 ## Overview
 
-The Square Enix Integration service (`squareEnixSync.ts`) enriches card data with official Square Enix information, ensuring accuracy in critical fields like cost, power, and categories. This service acts as a secondary data source that complements the primary TCGCSV API data.
+The Square Enix Integration service (`squareEnixSync.ts`) enriches card data with
+official Square Enix information, ensuring accuracy in critical fields like cost,
+power, and categories. This service acts as a secondary data source that complements
+the primary TCGCSV API data.
 
 ## Core Features
 
@@ -56,6 +59,31 @@ function validateAndUpdateValues(
   current: CardDocument,
   update: ValueUpdate
 ): Partial<CardDocument>;
+```
+
+### Card Number Handling
+
+- Preservation of "Re-" prefix numbers from TCGCSV API
+- Merging of Square Enix numbers with "Re-" prefix numbers
+- Hash calculation that includes "Re-" prefix numbers
+- Support for multiple numbering schemes in a single card
+- Proper validation of all number formats
+
+```typescript
+function calculateHash(card: SquareEnixCard, tcgCard?: TcgCard): string {
+  // Get Re- prefix numbers from TCG card if available
+  const reNumbers = tcgCard?.cardNumbers?.filter(num =>
+    num.startsWith("Re-")) || [];
+  
+  // Combine SE numbers with Re- numbers
+  const combinedCardNumbers = [...new Set([...seCardNumbers, ...reNumbers])].sort();
+  
+  // Include combined card numbers in hash calculation
+  const deltaData: HashData = {
+    // ... other fields ...
+    cardNumbers: combinedCardNumbers,
+  };
+}
 ```
 
 ### Category Handling

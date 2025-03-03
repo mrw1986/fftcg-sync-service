@@ -38,6 +38,11 @@
     - Tag preservation
   - Group-based set names
   - Crystal card special handling
+  - Metadata system
+    - Card versioning with dataVersion field
+    - Smart detection for existing cards
+    - Incremental sync support for app clients
+    - Efficient Firestore reads
 
 ### Square Enix Integration
 

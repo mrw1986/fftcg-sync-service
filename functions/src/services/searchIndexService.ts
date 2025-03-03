@@ -50,18 +50,23 @@ export class SearchIndexService {
         terms.add(cleanNumber[0]);
       }
 
-      // Handle numbers with hyphen (e.g., "13-114h" or "pr-101")
+      // Handle numbers with hyphen (e.g., "13-114h", "pr-101", or "re-004c")
       if (cleanNumber.includes("-")) {
         const [prefix, suffix] = cleanNumber.split("-");
 
-        // Add full prefix (e.g., "13" or "pr")
+        // Add full prefix (e.g., "13", "pr", or "re")
         if (prefix) {
           terms.add(prefix);
         }
 
-        // Add prefix with hyphen (e.g., "13-" or "pr-")
+        // Add prefix with hyphen (e.g., "13-", "pr-", or "re-")
         if (prefix) {
           terms.add(`${prefix}-`);
+        }
+
+        // Special handling for "re-" prefix to ensure it's searchable
+        if (prefix === "re") {
+          logger.info(`Processing Re- number for search: ${cleanNumber}`);
         }
 
         // Add progressive parts with hyphen
@@ -71,6 +76,11 @@ export class SearchIndexService {
             current += char;
             terms.add(`${prefix}-${current}`);
           }
+        }
+
+        // For "re-" prefix, also add the full number as a search term
+        if (prefix === "re") {
+          terms.add(cleanNumber);
         }
       } else {
         // For numbers without hyphen, just add the full number

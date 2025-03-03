@@ -47,6 +47,14 @@ export class StorageService {
         secretAccessKey: R2_CONFIG.SECRET_ACCESS_KEY,
       },
       forcePathStyle: true,
+      // Increase socket limits to handle more concurrent requests
+      requestHandler: {
+        // @ts-ignore - The type definitions don't include these options, but they are supported
+        socketTimeout: 60000, // 60 seconds
+        connectionTimeout: 60000, // 60 seconds
+        maxSockets: 200, // Increase from default 50
+        socketAcquisitionWarningTimeout: 5000, // 5 seconds
+      },
     });
 
     this.bucket = R2_CONFIG.BUCKET_NAME;
@@ -127,19 +135,24 @@ export class StorageService {
   private async downloadImage(url: string, retries = this.maxRetries): Promise<Buffer> {
     let lastError: Error | null = null;
 
+    // Create a custom axios instance with optimized settings
+    const axiosInstance = axios.create({
+      responseType: "arraybuffer",
+      timeout: this.timeoutMs,
+      headers: {
+        "User-Agent": "FFTCG-Sync-Service/1.0",
+        Accept: "image/jpeg,image/png,image/*",
+      },
+      maxContentLength: 10 * 1024 * 1024, // 10MB max
+      validateStatus: (status) => status === 200, // Only accept 200 status
+      // Add connection optimization settings
+      maxRedirects: 5,
+      decompress: true, // Handle gzip/deflate content
+    });
+
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        const response = await axios.get(url, {
-          responseType: "arraybuffer",
-          timeout: this.timeoutMs,
-          headers: {
-            "User-Agent": "FFTCG-Sync-Service/1.0",
-            "Accept": "image/jpeg,image/png,image/*",
-          },
-          maxContentLength: 10 * 1024 * 1024, // 10MB max
-          validateStatus: (status) => status === 200, // Only accept 200 status
-        });
-
+        const response = await axiosInstance.get(url);
         const buffer = Buffer.from(response.data);
 
         if (await this.validateImage(buffer)) {
@@ -156,6 +169,13 @@ export class StorageService {
         if (axiosError?.response?.status === 403) {
           logger.info(`Image not available (403) for URL: ${url}`);
           throw new Error("IMAGE_NOT_AVAILABLE");
+        }
+
+        // Handle rate limiting (429) with longer backoff
+        if (axiosError?.response?.status === 429) {
+          logger.info(`Rate limited (429) for URL: ${url}, backing off...`);
+          await new Promise((resolve) => setTimeout(resolve, 5000 * Math.pow(2, attempt)));
+          continue;
         }
 
         lastError = error;
@@ -176,7 +196,10 @@ export class StorageService {
           status: axiosError?.response?.status,
         });
 
-        await new Promise((resolve) => setTimeout(resolve, 2000 * Math.pow(2, attempt)));
+        // Exponential backoff with jitter to avoid thundering herd
+        const baseDelay = 2000 * Math.pow(1.5, attempt);
+        const jitter = Math.random() * 1000;
+        await new Promise((resolve) => setTimeout(resolve, baseDelay + jitter));
       }
     }
 
@@ -246,10 +269,11 @@ export class StorageService {
     },
     originalUrl?: string
   ): ImageResult {
+    const PLACEHOLDER_URL = "https://fftcgcompanion.com/card-images/image-coming-soon.jpeg";
     return {
-      fullResUrl: null,
-      highResUrl: null,
-      lowResUrl: null,
+      fullResUrl: PLACEHOLDER_URL,
+      highResUrl: PLACEHOLDER_URL,
+      lowResUrl: PLACEHOLDER_URL,
       metadata: {
         ...baseMetadata,
         isPlaceholder: true,
@@ -339,17 +363,29 @@ export class StorageService {
           urls: downloadUrls,
         });
 
-        // Try to download each resolution
-        const buffers = await Promise.all(
-          downloadUrls.map((url) =>
-            url ?
-              this.downloadImage(url).catch((error) => {
-                logger.info(`Failed to download image: ${error.message}`);
-                return null;
-              }) :
-              Promise.resolve(null)
-          )
-        );
+        // Try to download each resolution sequentially to avoid too many concurrent requests
+        const buffers: (Buffer | null)[] = [];
+
+        // Process URLs one at a time with a small delay between requests
+        for (const url of downloadUrls) {
+          if (!url) {
+            buffers.push(null);
+            continue;
+          }
+
+          try {
+            // Add a small delay between requests to avoid overwhelming the server
+            if (buffers.length > 0) {
+              await new Promise((resolve) => setTimeout(resolve, 100));
+            }
+
+            const buffer = await this.downloadImage(url);
+            buffers.push(buffer);
+          } catch (error) {
+            logger.info(`Failed to download image: ${error instanceof Error ? error.message : String(error)}`);
+            buffers.push(null);
+          }
+        }
 
         // Map buffers to their correct resolutions
         let [fullResBuffer, highResBuffer, lowResBuffer] = buffers;
@@ -373,39 +409,63 @@ export class StorageService {
         });
 
         // Prepare arrays for successful uploads
-        const uploadPromises: Promise<string>[] = [];
         const uploadPaths: string[] = [];
+        const urlMap: { [key: string]: string } = {};
 
-        // Add available images to upload queue
+        // Process uploads sequentially to avoid too many concurrent connections
+        // Upload full resolution image
         if (fullResBuffer) {
-          uploadPromises.push(this.uploadToR2WithRetry(fullResBuffer, fullResPath, baseMetadata));
-          uploadPaths.push(fullResPath);
+          try {
+            const url = await this.uploadToR2WithRetry(fullResBuffer, fullResPath, baseMetadata);
+            urlMap[fullResPath] = url;
+            uploadPaths.push(fullResPath);
+            // Add a small delay between uploads
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          } catch (error) {
+            logger.error(`Failed to upload full resolution image for ${productId}`, {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
         }
+
+        // Upload high resolution image
         if (highResBuffer) {
-          uploadPromises.push(this.uploadToR2WithRetry(highResBuffer, highResPath, baseMetadata));
-          uploadPaths.push(highResPath);
+          try {
+            const url = await this.uploadToR2WithRetry(highResBuffer, highResPath, baseMetadata);
+            urlMap[highResPath] = url;
+            uploadPaths.push(highResPath);
+            // Add a small delay between uploads
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          } catch (error) {
+            logger.error(`Failed to upload high resolution image for ${productId}`, {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
         }
+
+        // Upload low resolution image
         if (lowResBuffer) {
-          uploadPromises.push(this.uploadToR2WithRetry(lowResBuffer, lowResPath, baseMetadata));
-          uploadPaths.push(lowResPath);
+          try {
+            const url = await this.uploadToR2WithRetry(lowResBuffer, lowResPath, baseMetadata);
+            urlMap[lowResPath] = url;
+            uploadPaths.push(lowResPath);
+          } catch (error) {
+            logger.error(`Failed to upload low resolution image for ${productId}`, {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
         }
-
-        const uploadedUrls = await Promise.all(uploadPromises);
-
-        // Create a map of paths to URLs
-        const urlMap = uploadPaths.reduce((map, path, index) => {
-          map[path] = uploadedUrls[index];
-          return map;
-        }, {} as { [key: string]: string });
 
         // Determine which URLs to use, falling back to the highest available resolution
+        const PLACEHOLDER_URL = "https://fftcgcompanion.com/card-images/image-coming-soon.jpeg";
         const result: ImageResult = {
-          fullResUrl: urlMap[fullResPath] || urlMap[highResPath] || urlMap[lowResPath] || null,
-          highResUrl: urlMap[highResPath] || urlMap[fullResPath] || urlMap[lowResPath] || null,
-          lowResUrl: urlMap[lowResPath] || urlMap[highResPath] || urlMap[fullResPath] || null,
+          fullResUrl: urlMap[fullResPath] || urlMap[highResPath] || urlMap[lowResPath] || PLACEHOLDER_URL,
+          highResUrl: urlMap[highResPath] || urlMap[fullResPath] || urlMap[lowResPath] || PLACEHOLDER_URL,
+          lowResUrl: urlMap[lowResPath] || urlMap[highResPath] || urlMap[fullResPath] || PLACEHOLDER_URL,
           metadata: {
             ...baseMetadata,
             originalUrl: imageUrl,
+            isPlaceholder: !(urlMap[fullResPath] || urlMap[highResPath] || urlMap[lowResPath]),
           },
         };
 

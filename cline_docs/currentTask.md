@@ -2,6 +2,21 @@
 
 ## Recently Completed Objectives
 
+- [x] Reprint Card Number Handling
+  - [x] Added support for "Re-" prefix card numbers
+  - [x] Fixed hash calculation to include "Re-" prefix numbers
+  - [x] Enhanced Square Enix data integration to preserve "Re-" prefix numbers
+  - [x] Updated search index generation for "Re-" prefix numbers
+  - [x] Improved card number merging during Square Enix data updates
+  - [x] Fixed socket capacity issues in image handling
+
+- [x] Metadata System Implementation
+  - [x] Added dataVersion field to card documents
+  - [x] Implemented smart detection for existing cards
+  - [x] Enabled incremental sync for app clients
+  - [x] Reduced Firestore reads during updates
+  - [x] Improved version tracking between app and backend
+
 - [x] Card name processing improvements
   - [x] Special parentheses content preservation
   - [x] Crystal card handling
@@ -13,6 +28,7 @@
   - [x] Separator standardization
   - [x] Format validation
   - [x] Proper null handling for non-card products
+  - [x] Support for various number formats including "Re-" prefix
 - [x] Category handling
   - [x] Raw category preservation
   - [x] Proper array format
@@ -96,15 +112,24 @@
    - Crystal card handling
    - Multi-number support
    - Proper null handling
+   - Card versioning with dataVersion field
+   - Incremental sync support
 
-2. Group Integration
+2. Metadata System
+   - Version tracking with dataVersion field
+   - Smart detection for existing cards
+   - Efficient incremental sync
+   - Reduced Firestore reads
+   - Improved app-backend synchronization
+
+3. Group Integration
    - Group sync as first step
    - Set name from group data
    - Proper ID handling
    - Data consistency
    - Improved set matching
 
-3. Category Handling
+4. Category Handling
    - DFF prioritization
    - Middot separator
    - Array ordering
@@ -112,7 +137,7 @@
    - Duplicate prevention
    - Consistent character encoding
 
-4. System Infrastructure
+5. System Infrastructure
    - Batch processing
    - Rate limiting
    - Error handling
@@ -122,19 +147,36 @@
 
 ### Recent Improvements
 
-1. Card Number Handling
+1. Reprint Card Number Handling
+   - Added support for "Re-" prefix card numbers in validation
+   - Fixed hash calculation to include "Re-" prefix numbers
+   - Enhanced Square Enix data integration to preserve "Re-" prefix numbers
+   - Updated search index generation for "Re-" prefix numbers
+   - Improved card number merging during Square Enix data updates
+   - Fixed socket capacity issues in image handling
+   - Optimized image download and upload processes
+
+2. Metadata System Implementation
+   - Added dataVersion field to card documents
+   - Modified skip condition to check for dataVersion field
+   - Ensured existing cards get updated with dataVersion
+   - Enabled efficient incremental sync for app clients
+   - Reduced Firestore reads during sync operations
+
+3. Card Number Handling
    - Now using null (not "N/A") for all card number fields
    - Proper handling of non-card products
    - Updated interfaces to support null values
    - Improved validation and error handling
+   - Added support for various number formats including "Re-" prefix
 
-2. Cost/Power Synchronization
+4. Cost/Power Synchronization
    - Fixed set matching logic
    - Now checking if any set matches between cards
    - Handles cases with multiple sets correctly
    - Proper value validation and updates
 
-3. Set Matching
+5. Set Matching
    - Improved comparison logic
    - Handles multiple sets correctly
    - Case-insensitive matching

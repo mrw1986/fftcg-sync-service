@@ -7,6 +7,7 @@ import { squareEnixStorage } from "../services/squareEnixStorageService";
 import { searchIndex } from "../services/searchIndexService";
 import { groupSync } from "../services/groupSync";
 import { filterAggregation } from "../services/filterAggregationService";
+import { metadataService } from "../services/metadataService";
 import minimist from "minimist";
 
 function parseArgs(): { forceUpdate?: boolean; groupId?: string } {
@@ -46,7 +47,6 @@ function parseArgs(): { forceUpdate?: boolean; groupId?: string } {
 
   return options;
 }
-
 async function main() {
   try {
     const options = parseArgs();
@@ -54,10 +54,26 @@ async function main() {
     await logger.startSync();
     await logger.info("Starting complete sync process with options:", options);
 
+    // Initialize metadata document if it doesn't exist
+    await logger.info("Initializing metadata document");
+    const metadata = await metadataService.initializeMetadata();
+    if (!metadata) {
+      logger.warn("Failed to initialize metadata document, but continuing with sync");
+    } else {
+      logger.info("Metadata document initialized or already exists", {
+        version: metadata.version,
+        lastUpdated: metadata.lastUpdated,
+      });
+    }
+
+    // Start sync in metadata
+    await metadataService.startSync();
+
     // Step 1: Sync groups from TCGCSV API
     logger.info("Step 1: Starting group sync", { options });
     const groupResult = await groupSync.syncGroups(options);
     if (!groupResult.success) {
+      await metadataService.addSyncError("Group sync failed");
       throw new Error("Group sync failed");
     }
     await logger.info("Step 1: Group sync completed:", {
@@ -72,6 +88,7 @@ async function main() {
     logger.info("Step 2: Starting TCGCSV sync", { options });
     const tcgResult = await cardSync.syncCards(options);
     if (!tcgResult.success) {
+      await metadataService.addSyncError("TCGCSV sync failed");
       throw new Error("TCGCSV sync failed");
     }
     await logger.info("Step 2: TCGCSV sync completed:", {
@@ -89,6 +106,7 @@ async function main() {
       forceUpdate: options.forceUpdate,
     });
     if (!seResult.success) {
+      await metadataService.addSyncError("Square Enix sync failed");
       throw new Error("Square Enix sync failed");
     }
     await logger.info("Step 3: Square Enix sync completed:", {
@@ -106,7 +124,9 @@ async function main() {
       forceUpdate: options.forceUpdate,
     });
     if (!updateResult.success) {
-      throw new Error(updateResult.error || "Square Enix data update failed");
+      const errorMsg = updateResult.error || "Square Enix data update failed";
+      await metadataService.addSyncError(errorMsg);
+      throw new Error(errorMsg);
     }
     await logger.info("Step 4: Square Enix data update completed:", {
       success: updateResult.success,
@@ -137,7 +157,9 @@ async function main() {
         forceUpdate: options.forceUpdate,
       });
       if (!searchResult.totalProcessed) {
-        throw new Error("Search index update failed - no cards processed");
+        const errorMsg = "Search index update failed - no cards processed";
+        await metadataService.addSyncError(errorMsg);
+        throw new Error(errorMsg);
       }
       await logger.info("Step 5: Search index update completed:", {
         totalProcessed: searchResult.totalProcessed,
@@ -146,7 +168,9 @@ async function main() {
       });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      throw new Error(`Search index update failed: ${errorMessage}`);
+      const errorMsg = `Search index update failed: ${errorMessage}`;
+      await metadataService.addSyncError(errorMsg);
+      throw new Error(errorMsg);
     }
 
     // Step 6: Update filters
@@ -170,7 +194,9 @@ async function main() {
         forceUpdate: options.forceUpdate,
       });
       if (!filterResult.success) {
-        throw new Error("Filter aggregation failed");
+        const errorMsg = "Filter aggregation failed";
+        await metadataService.addSyncError(errorMsg);
+        throw new Error(errorMsg);
       }
       await logger.info("Step 6: Filter aggregation completed:", {
         processed: filterResult.itemsProcessed,
@@ -180,7 +206,9 @@ async function main() {
       });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      throw new Error(`Filter aggregation failed: ${errorMessage}`);
+      const errorMsg = `Filter aggregation failed: ${errorMessage}`;
+      await metadataService.addSyncError(errorMsg);
+      throw new Error(errorMsg);
     }
 
     // Log final success with all results
@@ -193,6 +221,29 @@ async function main() {
       filterAggregation: filterResult || { success: false, error: "Filter aggregation failed" },
     });
 
+    // Get card and group counts for metadata
+    const [cardCount, groupCount] = await Promise.all([
+      db
+        .collection(COLLECTION.CARDS)
+        .count()
+        .get()
+        .then((snap) => snap.data().count),
+      db
+        .collection(COLLECTION.GROUPS)
+        .count()
+        .get()
+        .then((snap) => snap.data().count),
+    ]);
+
+    // Update metadata to mark sync as completed
+    await metadataService.completeSync(
+      true, // success
+      cardCount,
+      groupCount,
+      searchResult?.totalProcessed > 0, // searchIndexed
+      filterResult?.success // filtersUpdated
+    );
+
     // Clean shutdown - only do this once
     await logger.disableFirestore();
     await db.terminate();
@@ -200,6 +251,10 @@ async function main() {
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     await logger.error("Sync process failed:", { error: errorMessage });
+
+    // Update metadata to mark sync as failed
+    await metadataService.completeSync(false);
+    await metadataService.addSyncError(errorMessage);
 
     // Ensure all logs are written and disable Firestore logging before termination
     await logger.disableFirestore();
