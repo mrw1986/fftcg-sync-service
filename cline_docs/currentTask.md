@@ -182,6 +182,18 @@
    - Case-insensitive matching
    - Whitespace normalization
 
+### Recent Improvements
+
+1. Missing Field Population
+   - [x] Added support for populating missing fields from Square Enix data
+   - [x] Enhanced field update logic to check for null, undefined, empty arrays, and empty strings
+   - [x] Modified cost/power update logic to only update when TCGCSV data is null or empty
+   - [x] Improved category handling to update categories when they're null or empty
+   - [x] Added detailed logging for field updates
+   - [x] Fixed field mapping between Square Enix API and Firestore (type_en → type)
+   - [x] Added intelligent detection and correction of cards incorrectly marked as non-cards
+   - [x] Enhanced validation of card-specific fields
+
 ### Next Steps
 
 1. Performance Optimization

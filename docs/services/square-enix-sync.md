@@ -15,6 +15,7 @@ the primary TCGCSV API data.
 - Set matching and validation
 - Batch processing optimization
 - Hash-based change detection
+- Missing field population from Square Enix data
 
 ## Components
 
@@ -46,6 +47,7 @@ class SquareEnixSync {
 - Null value handling for special cases
 - Set matching improvements for accurate updates
 - Multiple set handling capability
+- Only updates values when TCGCSV data is null or empty
 
 ```typescript
 interface ValueUpdate {
@@ -69,6 +71,15 @@ function validateAndUpdateValues(
 - Support for multiple numbering schemes in a single card
 - Proper validation of all number formats
 
+### Non-Card Product Detection
+
+- Intelligent detection of card products vs. non-card products
+- Verification of card-specific fields (Number, Power, Job, etc.)
+- Correction of products incorrectly marked as non-cards
+- Proper handling of sealed products and accessories
+- Field validation to ensure data consistency
+- Special handling for Crystal cards and other special types
+
 ```typescript
 function calculateHash(card: SquareEnixCard, tcgCard?: TcgCard): string {
   // Get Re- prefix numbers from TCG card if available
@@ -83,6 +94,31 @@ function calculateHash(card: SquareEnixCard, tcgCard?: TcgCard): string {
     // ... other fields ...
     cardNumbers: combinedCardNumbers,
   };
+}
+```
+
+### Missing Field Population
+
+- Automatically populates fields that are null or empty in TCGCSV API data
+- Prioritizes Square Enix data for completeness
+- Handles null, undefined, empty arrays, and empty strings
+- Applies to card types, categories, elements, cost, power, and other fields
+- Preserves existing data when it's not null or empty
+- Logs detailed information about field updates
+- Intelligently detects and corrects cards incorrectly marked as non-cards
+- Ensures all card-specific fields are properly populated
+
+```typescript
+// Check for null, undefined, empty arrays, or empty strings
+const isEmpty =
+  currentValue === null ||
+  currentValue === undefined ||
+  (Array.isArray(currentValue) && currentValue.length === 0) ||
+  (typeof currentValue === 'string' && currentValue.trim() === '');
+
+if (isEmpty) {
+  // Update with Square Enix data
+  updates[field] = seValue;
 }
 ```
 

@@ -71,26 +71,34 @@
 
 ## Recent Significant Changes
 
-1. Reprint Card Number Handling
+1. Missing Field Population from Square Enix Data
+   - Added intelligent detection and correction of cards incorrectly marked as non-cards
+   - Implemented automatic population of missing fields (cardType, elements, categories, etc.)
+   - Fixed field mapping between Square Enix API and Firestore (type_en → type)
+   - Enhanced validation of card-specific fields
+   - Improved logging for better debugging and monitoring
+
+2. Reprint Card Number Handling
    - Added support for "Re-" prefix card numbers
    - Improved hash calculation to include "Re-" prefix numbers
    - Enhanced Square Enix data integration to preserve "Re-" prefix numbers
    - Updated search index generation for "Re-" prefix numbers
    - Fixed card number merging during Square Enix data updates
 
-2. Metadata System Implementation
+3. Metadata System Implementation
    - Added dataVersion field to card documents
    - Implemented smart detection for existing cards
    - Enabled incremental sync for app clients
    - Reduced Firestore reads during updates
    - Improved version tracking between app and backend
 
-3. Square Enix Data Integration
+4. Square Enix Data Integration
    - Cost/power value updates
    - Category handling improvements
    - Duplicate category prevention
    - Consistent middot handling
    - Preservation of TCGCSV-specific card numbers
+   - Enhanced non-card product detection
 
 4. Group Integration
    - Group sync as first step

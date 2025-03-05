@@ -87,6 +87,7 @@ interface SyncResult {
 - Format validation
 - Promo card special handling
 - Proper null handling for non-card products
+- Intelligent detection of card products vs. non-card products
 - Support for various number formats:
   - PR-### (Promo cards)
   - #-###X or ##-###X (Standard cards)
@@ -113,6 +114,19 @@ interface SyncResult {
 - Conditional updates
 - Null value handling
 - Set matching improvements
+- Multiple set handling
+
+### Square Enix Data Integration
+
+- Automatic population of missing fields from Square Enix data
+- Intelligent detection and correction of cards incorrectly marked as non-cards
+- Field synchronization for:
+  - Card type (Forward, Backup, Summon, etc.)
+  - Elements (Fire, Ice, Wind, etc.)
+  - Categories (FF game identifiers)
+  - Cost and power values
+- Preservation of special card names and formats
+- Hash-based change detection to minimize unnecessary updates
 - Multiple set handling
 
 ## Usage Examples

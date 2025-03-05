@@ -514,8 +514,26 @@ export class CardSyncService {
   }
 
   private isNonCardProduct(card: CardProduct): boolean {
+    // Check for CardType field
     const cardType = card.extendedData.find((data) => data.name === "CardType")?.value;
-    return !cardType || String(cardType).toLowerCase() === "sealed product";
+
+    // If CardType exists and is not "sealed product", it's a card
+    if (cardType && String(cardType).toLowerCase() !== "sealed product") {
+      return false;
+    }
+
+    // If no CardType, check for other card-specific fields
+    const hasNumber = card.extendedData.some((data) => data.name === "Number" && data.value);
+    const hasPower = card.extendedData.some((data) => data.name === "Power" && data.value);
+    const hasJob = card.extendedData.some((data) => data.name === "Job" && data.value);
+
+    // If it has any of these fields, it's likely a card
+    if (hasNumber || hasPower || hasJob) {
+      return false;
+    }
+
+    // Otherwise, assume it's a non-card product
+    return true;
   }
 
   private getDeltaData(card: CardProduct): CardDeltaData {
@@ -788,9 +806,9 @@ export class CardSyncService {
     try {
       logger.info("Starting card sync", { options });
 
-      const groups = options.groupId ?
-        [{ groupId: options.groupId }] :
-        await this.retry.execute(() => tcgcsvApi.getGroups());
+      const groups = options.groupId
+        ? [{ groupId: options.groupId }]
+        : await this.retry.execute(() => tcgcsvApi.getGroups());
 
       // Apply limit if specified
       if (options.limit) {

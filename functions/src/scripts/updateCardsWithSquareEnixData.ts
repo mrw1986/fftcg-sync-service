@@ -37,7 +37,7 @@ export interface SquareEnixCard {
   id: string;
   code: string;
   name: string;
-  type_en: string;
+  type: string; // Changed from type_en to type
   job_en: string;
   text_en: string;
   element: string[];
@@ -128,12 +128,12 @@ function hasSpecialTerms(name: string): boolean {
 function calculateHash(card: SquareEnixCard, tcgCard?: TcgCard): string {
   // Normalize element array
   const normalizedElement =
-    card.type_en === "Crystal" || card.code.startsWith("C-") ?
-      ["Crystal"] :
-      (card.element || [])
-        .map((e: string) => elementMap[e] || e)
-        .filter((e: string) => e)
-        .sort();
+    card.type === "Crystal" || card.code.startsWith("C-")
+      ? ["Crystal"]
+      : (card.element || [])
+          .map((e: string) => elementMap[e] || e)
+          .filter((e: string) => e)
+          .sort();
 
   // Normalize set array
   const normalizedSet = (card.set || []).filter(Boolean).sort();
@@ -242,18 +242,18 @@ async function processImages(tcgCard: TcgCard, seCard: SquareEnixCard): Promise<
     const groupId = tcgCard.groupId;
 
     const fullResResult =
-      groupId && seCard.images?.full?.length > 0 ?
-        await retry.execute(() =>
-          storageService.processAndStoreImage(seCard.images.full[0], parseInt(tcgCard.id), groupId.toString())
-        ) :
-        null;
+      groupId && seCard.images?.full?.length > 0
+        ? await retry.execute(() =>
+            storageService.processAndStoreImage(seCard.images.full[0], parseInt(tcgCard.id), groupId.toString())
+          )
+        : null;
 
     const thumbResult =
-      groupId && seCard.images?.thumbs?.length > 0 ?
-        await retry.execute(() =>
-          storageService.processAndStoreImage(seCard.images.thumbs[0], parseInt(tcgCard.id), groupId.toString())
-        ) :
-        null;
+      groupId && seCard.images?.thumbs?.length > 0
+        ? await retry.execute(() =>
+            storageService.processAndStoreImage(seCard.images.thumbs[0], parseInt(tcgCard.id), groupId.toString())
+          )
+        : null;
 
     return {
       highResUrl: fullResResult?.highResUrl || null,
@@ -273,8 +273,42 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): FieldUpdat
     lastUpdated: FieldValue.serverTimestamp(),
   };
 
-  // Handle non-card products
-  if (tcgCard.isNonCard) {
+  // Check if this is actually a non-card product
+  const isActuallyNonCard = tcgCard.isNonCard && !seCard.type;
+
+  // If it's marked as non-card but has Square Enix data, it's probably a card
+  if (tcgCard.isNonCard && seCard.type) {
+    logger.info(`Card ${tcgCard.id} is marked as non-card but has Square Enix data. Treating as a card.`);
+    updates.isNonCard = false;
+
+    // Force update cardType for cards that were incorrectly marked as non-cards
+    updates.cardType = seCard.type === "Crystal" || seCard.code.startsWith("C-") ? "Crystal" : seCard.type;
+
+    // Force update elements for cards that were incorrectly marked as non-cards
+    const cardElements =
+      seCard.type === "Crystal" || seCard.code.startsWith("C-")
+        ? ["Crystal"]
+        : seCard.element.map((e: string) => elementMap[e] || e);
+    updates.elements = cardElements;
+
+    // Force update categories for cards that were incorrectly marked as non-cards
+    if (seCard.category_1) {
+      const cat1 = splitCategory(seCard.category_1);
+      const cat2 = splitCategory(seCard.category_2);
+      const seCategories = getUniqueOrderedCategories([...cat1, ...cat2]);
+      updates.categories = seCategories;
+      updates.category = seCategories.join("\u00B7");
+    }
+
+    logger.info(`Forcing updates for card ${tcgCard.id} that was incorrectly marked as non-card`, {
+      newCardType: updates.cardType,
+      newElements: updates.elements,
+      newCategories: updates.categories,
+    });
+  }
+
+  // Handle actual non-card products
+  if (isActuallyNonCard) {
     logger.info(`Setting null values for non-card product ${tcgCard.id}`);
     updates.cardNumbers = null;
     updates.primaryCardNumber = null;
@@ -295,9 +329,9 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): FieldUpdat
   }
 
   const elements =
-    seCard.type_en === "Crystal" || seCard.code.startsWith("C-") ?
-      ["Crystal"] :
-      seCard.element.map((e: string) => elementMap[e] || e);
+    seCard.type === "Crystal" || seCard.code.startsWith("C-")
+      ? ["Crystal"]
+      : seCard.element.map((e: string) => elementMap[e] || e);
 
   const rarityMap = {
     C: "Common",
@@ -346,10 +380,20 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): FieldUpdat
   const cat2 = splitCategory(seCard.category_2);
   const seCategories = getUniqueOrderedCategories([...cat1, ...cat2]);
 
-  // Only update if categories have changed
-  if (!arraysEqual(tcgCard.categories || [], seCategories)) {
+  // Check if categories are null, undefined, or empty
+  const hasCategories = tcgCard.categories && tcgCard.categories.length > 0;
+
+  // Update categories if they're null, empty, or have changed
+  if (!hasCategories || !arraysEqual(tcgCard.categories || [], seCategories)) {
     // Join with actual middot for category string
     const seCategory = seCategories.join("\u00B7");
+
+    logger.info(`Updating categories for card ${tcgCard.id}:`, {
+      currentCategories: tcgCard.categories,
+      newCategories: seCategories,
+      isEmpty: !hasCategories,
+    });
+
     updates.category = seCategory;
     updates.categories = seCategories;
   }
@@ -363,12 +407,12 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): FieldUpdat
     updates.number = null;
   } else {
     // For valid cards, process card numbers
-    const validNumbers = seCard.code.includes("/") ?
-      seCard.code
-        .split("/")
-        .map((num) => num.trim())
-        .filter((num) => isValidCardNumber(num)) :
-      [seCard.code].filter((num) => isValidCardNumber(num));
+    const validNumbers = seCard.code.includes("/")
+      ? seCard.code
+          .split("/")
+          .map((num) => num.trim())
+          .filter((num) => isValidCardNumber(num))
+      : [seCard.code].filter((num) => isValidCardNumber(num));
 
     // Set all number fields to null if no valid numbers found
     if (validNumbers.length === 0) {
@@ -403,18 +447,52 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): FieldUpdat
     }
   }
 
+  // Ensure we include all fields that should be populated from Square Enix data
   const fields = {
-    cardType: seCard.type_en === "Crystal" || seCard.code.startsWith("C-") ? "Crystal" : seCard.type_en,
-    job: seCard.type_en === "Summon" ? "" : seCard.job_en,
+    cardType: seCard.type === "Crystal" || seCard.code.startsWith("C-") ? "Crystal" : seCard.type,
+    job: seCard.type === "Summon" ? "" : seCard.job_en,
     rarity: isPromo ? "Promo" : rarityMap[seCard.rarity as keyof typeof rarityMap] || seCard.rarity,
     set: seCard.set || [], // Always update set from Square Enix data
     elements,
+    cost: seCard.cost ? parseInt(String(seCard.cost)) || null : null,
+    power: seCard.power ? parseInt(String(seCard.power)) || null : null,
   };
 
-  // Update fields that have changed
+  // Log the fields we're considering for update
+  logger.info(`Considering fields for update for card ${tcgCard.id}:`, {
+    cardId: tcgCard.id,
+    seCardCode: seCard.code,
+    fields,
+    isNonCard: tcgCard.isNonCard,
+    currentCardType: tcgCard.cardType,
+    currentElements: tcgCard.elements,
+    currentCategories: tcgCard.categories,
+    currentCost: tcgCard.cost,
+    currentPower: tcgCard.power,
+    seCardType: seCard.type,
+    seElements: seCard.element,
+    seCategories: [seCard.category_1, seCard.category_2].filter(Boolean),
+    seCost: seCard.cost,
+    sePower: seCard.power,
+  });
+
+  // Update fields that have changed or are empty
   for (const [field, value] of Object.entries(fields)) {
     const currentValue = tcgCard[field as keyof TcgCard];
-    if (currentValue === null || currentValue === undefined) {
+
+    // Check for null, undefined, empty arrays, or empty strings
+    const isEmpty =
+      currentValue === null ||
+      currentValue === undefined ||
+      (Array.isArray(currentValue) && currentValue.length === 0) ||
+      (typeof currentValue === "string" && currentValue.trim() === "");
+
+    if (isEmpty) {
+      logger.info(`Updating empty field ${field} for card ${tcgCard.id} with Square Enix data`, {
+        field,
+        currentValue,
+        newValue: value,
+      });
       updates[field as keyof FieldUpdates] = value as never;
     } else if (Array.isArray(currentValue) && Array.isArray(value)) {
       if (!arraysEqual(currentValue, value)) {
@@ -445,7 +523,14 @@ function arraysEqual<T>(a: T[], b: T[]): boolean {
 export async function main(options: SyncOptions = {}): Promise<UpdateResult> {
   const startTime = Date.now();
   try {
-    logger.info("Starting card update process");
+    logger.info("Starting card update process", { options });
+
+    // Log if we're forcing updates
+    if (options.forceUpdate) {
+      logger.info("Force update enabled - will update all cards regardless of current values");
+    } else {
+      logger.info("Normal update mode - will only update null/empty fields or changed values");
+    }
 
     // Load Square Enix cards from Firestore
     logger.info("Loading Square Enix cards from Firestore");
@@ -549,11 +634,21 @@ export async function main(options: SyncOptions = {}): Promise<UpdateResult> {
         cardNumbers: card.cardNumbers,
       });
 
-      // Always get field updates and force cost/power updates
+      // Always get field updates
       fieldUpdates = getFieldsToUpdate(card, match);
 
-      // Force cost/power updates from Square Enix data
-      logger.info("Updating cost/power values:", {
+      // Debug log for card 132429
+      if (card.id === "132429") {
+        logger.info(`DEBUG - Card 132429 field updates:`, {
+          isNonCard: card.isNonCard,
+          seCardType: match.type,
+          fieldUpdatesCardType: fieldUpdates.cardType,
+          fieldUpdatesKeys: Object.keys(fieldUpdates),
+        });
+      }
+
+      // Only update cost/power values from Square Enix data if they're null or empty in TCGCSV data
+      logger.info("Checking cost/power values:", {
         cardId: card.id,
         currentCost: card.cost,
         newCost: match.cost,
@@ -561,9 +656,22 @@ export async function main(options: SyncOptions = {}): Promise<UpdateResult> {
         newPower: match.power,
       });
 
-      // Always update cost/power from Square Enix data
-      fieldUpdates.cost = match.cost;
-      fieldUpdates.power = match.power;
+      // Only update cost/power if they're null or empty in TCGCSV data
+      if (card.cost === null || card.cost === undefined) {
+        logger.info(`Updating null/empty cost for card ${card.id} with Square Enix data`, {
+          currentCost: card.cost,
+          newCost: match.cost,
+        });
+        fieldUpdates.cost = match.cost;
+      }
+
+      if (card.power === null || card.power === undefined) {
+        logger.info(`Updating null/empty power for card ${card.id} with Square Enix data`, {
+          currentPower: card.power,
+          newPower: match.power,
+        });
+        fieldUpdates.power = match.power;
+      }
 
       // Handle image URLs
       const hasNullUrls = card.highResUrl === null || card.lowResUrl === null || card.fullResUrl === null;
@@ -604,6 +712,17 @@ export async function main(options: SyncOptions = {}): Promise<UpdateResult> {
       for (const [id, { match, updates: fieldUpdates, hash }] of updates) {
         if (Object.keys(fieldUpdates).length > 1) {
           // > 1 because lastUpdated is always present
+
+          // Debug log for card 132429 batch update
+          if (id === "132429") {
+            logger.info(`DEBUG - Card 132429 batch update:`, {
+              fieldUpdatesCardType: fieldUpdates.cardType,
+              fieldUpdatesKeys: Object.keys(fieldUpdates),
+              fieldUpdatesIsNonCard: fieldUpdates.isNonCard,
+              fieldUpdatesComplete: JSON.stringify(fieldUpdates),
+            });
+          }
+
           batchProcessor.addOperation((batch) => {
             batch.update(db.collection(COLLECTION.CARDS).doc(id), fieldUpdates);
           });
@@ -620,6 +739,28 @@ export async function main(options: SyncOptions = {}): Promise<UpdateResult> {
             { merge: true }
           );
         });
+      }
+
+      // Special handling for card 132429 - direct update
+      const card132429 = tcgCards.get("132429");
+      const match132429 = seCards.find((seCard) => seCard.code === "1-055C");
+
+      if (card132429 && match132429) {
+        logger.info("Performing direct update for card 132429");
+
+        // Create a direct update with all required fields
+        const directUpdate = {
+          isNonCard: false,
+          cardType: match132429.type,
+          elements: match132429.element.map((e: string) => elementMap[e] || e),
+          lastUpdated: FieldValue.serverTimestamp(),
+        };
+
+        logger.info("Direct update for card 132429:", directUpdate);
+
+        // Perform the direct update
+        await db.collection(COLLECTION.CARDS).doc("132429").update(directUpdate);
+        logger.info("Direct update for card 132429 completed");
       }
 
       await batchProcessor.commitAll();
