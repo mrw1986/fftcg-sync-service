@@ -128,12 +128,12 @@ function hasSpecialTerms(name: string): boolean {
 function calculateHash(card: SquareEnixCard, tcgCard?: TcgCard): string {
   // Normalize element array
   const normalizedElement =
-    card.type === "Crystal" || card.code.startsWith("C-")
-      ? ["Crystal"]
-      : (card.element || [])
-          .map((e: string) => elementMap[e] || e)
-          .filter((e: string) => e)
-          .sort();
+    card.type === "Crystal" || card.code.startsWith("C-") ?
+      ["Crystal"] :
+      (card.element || [])
+        .map((e: string) => elementMap[e] || e)
+        .filter((e: string) => e)
+        .sort();
 
   // Normalize set array
   const normalizedSet = (card.set || []).filter(Boolean).sort();
@@ -242,18 +242,18 @@ async function processImages(tcgCard: TcgCard, seCard: SquareEnixCard): Promise<
     const groupId = tcgCard.groupId;
 
     const fullResResult =
-      groupId && seCard.images?.full?.length > 0
-        ? await retry.execute(() =>
-            storageService.processAndStoreImage(seCard.images.full[0], parseInt(tcgCard.id), groupId.toString())
-          )
-        : null;
+      groupId && seCard.images?.full?.length > 0 ?
+        await retry.execute(() =>
+          storageService.processAndStoreImage(seCard.images.full[0], parseInt(tcgCard.id), groupId.toString())
+        ) :
+        null;
 
     const thumbResult =
-      groupId && seCard.images?.thumbs?.length > 0
-        ? await retry.execute(() =>
-            storageService.processAndStoreImage(seCard.images.thumbs[0], parseInt(tcgCard.id), groupId.toString())
-          )
-        : null;
+      groupId && seCard.images?.thumbs?.length > 0 ?
+        await retry.execute(() =>
+          storageService.processAndStoreImage(seCard.images.thumbs[0], parseInt(tcgCard.id), groupId.toString())
+        ) :
+        null;
 
     return {
       highResUrl: fullResResult?.highResUrl || null,
@@ -286,9 +286,9 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): FieldUpdat
 
     // Force update elements for cards that were incorrectly marked as non-cards
     const cardElements =
-      seCard.type === "Crystal" || seCard.code.startsWith("C-")
-        ? ["Crystal"]
-        : seCard.element.map((e: string) => elementMap[e] || e);
+      seCard.type === "Crystal" || seCard.code.startsWith("C-") ?
+        ["Crystal"] :
+        seCard.element.map((e: string) => elementMap[e] || e);
     updates.elements = cardElements;
 
     // Force update categories for cards that were incorrectly marked as non-cards
@@ -329,9 +329,9 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): FieldUpdat
   }
 
   const elements =
-    seCard.type === "Crystal" || seCard.code.startsWith("C-")
-      ? ["Crystal"]
-      : seCard.element.map((e: string) => elementMap[e] || e);
+    seCard.type === "Crystal" || seCard.code.startsWith("C-") ?
+      ["Crystal"] :
+      seCard.element.map((e: string) => elementMap[e] || e);
 
   const rarityMap = {
     C: "Common",
@@ -407,12 +407,12 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): FieldUpdat
     updates.number = null;
   } else {
     // For valid cards, process card numbers
-    const validNumbers = seCard.code.includes("/")
-      ? seCard.code
-          .split("/")
-          .map((num) => num.trim())
-          .filter((num) => isValidCardNumber(num))
-      : [seCard.code].filter((num) => isValidCardNumber(num));
+    const validNumbers = seCard.code.includes("/") ?
+      seCard.code
+        .split("/")
+        .map((num) => num.trim())
+        .filter((num) => isValidCardNumber(num)) :
+      [seCard.code].filter((num) => isValidCardNumber(num));
 
     // Set all number fields to null if no valid numbers found
     if (validNumbers.length === 0) {
@@ -639,7 +639,7 @@ export async function main(options: SyncOptions = {}): Promise<UpdateResult> {
 
       // Debug log for card 132429
       if (card.id === "132429") {
-        logger.info(`DEBUG - Card 132429 field updates:`, {
+        logger.info("DEBUG - Card 132429 field updates:", {
           isNonCard: card.isNonCard,
           seCardType: match.type,
           fieldUpdatesCardType: fieldUpdates.cardType,
@@ -715,7 +715,7 @@ export async function main(options: SyncOptions = {}): Promise<UpdateResult> {
 
           // Debug log for card 132429 batch update
           if (id === "132429") {
-            logger.info(`DEBUG - Card 132429 batch update:`, {
+            logger.info("DEBUG - Card 132429 batch update:", {
               fieldUpdatesCardType: fieldUpdates.cardType,
               fieldUpdatesKeys: Object.keys(fieldUpdates),
               fieldUpdatesIsNonCard: fieldUpdates.isNonCard,

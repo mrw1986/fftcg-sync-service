@@ -806,9 +806,9 @@ export class CardSyncService {
     try {
       logger.info("Starting card sync", { options });
 
-      const groups = options.groupId
-        ? [{ groupId: options.groupId }]
-        : await this.retry.execute(() => tcgcsvApi.getGroups());
+      const groups = options.groupId ?
+        [{ groupId: options.groupId }] :
+        await this.retry.execute(() => tcgcsvApi.getGroups());
 
       // Apply limit if specified
       if (options.limit) {

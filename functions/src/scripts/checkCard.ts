@@ -3,6 +3,26 @@ import { db, COLLECTION } from "../config/firebase";
 import { logger } from "../utils/logger";
 import minimist from "minimist";
 
+// Define interface for Square Enix card data
+interface SquareEnixCardData {
+  id: string;
+  code?: string;
+  name?: string;
+  type?: string;
+  type_en?: string; // For backward compatibility
+  job_en?: string;
+  element?: string[];
+  rarity?: string;
+  cost?: number | null;
+  power?: number | null;
+  category_1?: string;
+  category_2?: string;
+  multicard?: string | boolean;
+  ex_burst?: string | boolean;
+  set?: string[];
+  [key: string]: unknown; // Allow for additional properties
+}
+
 async function main() {
   try {
     // Parse command line arguments
@@ -46,14 +66,14 @@ async function main() {
     console.log(`Card numbers: ${uniqueCardNumbers.join(", ")}`);
 
     // Try to find matching Square Enix card
-    let matchedSeCard: any = null;
+    let matchedSeCard: SquareEnixCardData | null = null;
     for (const cardNumber of uniqueCardNumbers) {
       // Square Enix cards are stored with semicolons instead of slashes
       const sanitizedCode = cardNumber.replace(/\//g, ";");
       const seCardDoc = await db.collection(COLLECTION.SQUARE_ENIX_CARDS).doc(sanitizedCode).get();
 
       if (seCardDoc.exists) {
-        matchedSeCard = seCardDoc.data();
+        matchedSeCard = seCardDoc.data() as SquareEnixCardData;
         console.log(`Found matching Square Enix card with code: ${cardNumber}`);
         break;
       }
@@ -64,7 +84,7 @@ async function main() {
       console.log("No exact match found, trying a more flexible search...");
 
       const seCardsSnapshot = await db.collection(COLLECTION.SQUARE_ENIX_CARDS).get();
-      const allSeCards = seCardsSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      const allSeCards = seCardsSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as SquareEnixCardData));
 
       for (const seCardItem of allSeCards) {
         const seCardNumbers = seCardItem.id.split("_")[0].replace(/;/g, "/").split("/");
