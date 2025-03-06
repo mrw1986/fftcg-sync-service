@@ -99,7 +99,7 @@
   - [x] Enhanced error handling for rate limiting
   - [x] Improved axios configuration for better performance
 
-## Completed Tasks
+## Additional Completed Tasks
 
 - [x] Basic card syncing implementation
 - [x] Square Enix data integration
@@ -152,6 +152,14 @@
     - [x] Removed duplicate categories
     - [x] Consistent middot handling
     - [x] Maintained proper category ordering
+    - [x] Square Enix data used as the source of truth for categories
+    - [x] Implemented consistent formatting rules for specific categories:
+      - [x] "Theatrhythm", "Mobius", "Pictlogica", and "Type-0" in exact format
+      - [x] "World of Final Fantasy" as "WOFF"
+      - [x] "Lord of Vermilion" as "LOV"
+      - [x] Roman numerals in uppercase
+      - [x] Known acronyms preserved in uppercase
+      - [x] Other categories in title case
   - [x] Missing field population
     - [x] Automatic population of null/empty fields from Square Enix data
     - [x] Enhanced field update logic for null/empty detection

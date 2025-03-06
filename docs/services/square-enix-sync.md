@@ -102,14 +102,15 @@ function calculateHash(card: SquareEnixCard, tcgCard?: TcgCard): string {
 - Automatically populates fields that are null or empty in TCGCSV API data
 - Prioritizes Square Enix data for completeness
 - Handles null, undefined, empty arrays, and empty strings
-- Applies to card types, categories, elements, cost, power, and other fields
-- Preserves existing data when it's not null or empty
+- Applies to card types, elements, cost, power, and other fields
+- Always uses Square Enix data for categories when available
+- Preserves existing data for other fields when it's not null or empty
 - Logs detailed information about field updates
 - Intelligently detects and corrects cards incorrectly marked as non-cards
 - Ensures all card-specific fields are properly populated
 
 ```typescript
-// Check for null, undefined, empty arrays, or empty strings
+// For most fields: Check for null, undefined, empty arrays, or empty strings
 const isEmpty =
   currentValue === null ||
   currentValue === undefined ||
@@ -119,6 +120,16 @@ const isEmpty =
 if (isEmpty) {
   // Update with Square Enix data
   updates[field] = seValue;
+}
+
+// For categories: Always use Square Enix data when available
+if (seCategories.length > 0) {
+  // Join with actual middot for category string
+  const seCategory = seCategories.join("\u00B7");
+  
+  // Always update categories with Square Enix data
+  updates.category = seCategory;
+  updates.categories = seCategories;
 }
 ```
 
@@ -131,6 +142,14 @@ if (isEmpty) {
 - Raw category preservation
 - Duplicate category prevention
 - Consistent character encoding
+- Square Enix data used as the source of truth for categories
+- Specific category formatting rules:
+  - "Theatrhythm", "Mobius", "Pictlogica", and "Type-0" always in that exact format
+  - "World of Final Fantasy" always converted to "WOFF"
+  - "Lord of Vermilion" always converted to "LOV"
+  - Roman numerals (I, II, III, etc.) always in uppercase
+  - Known acronyms (DFF, FF, FFCC, etc.) preserved in uppercase
+  - Other categories in title case (first letter of each word capitalized)
 
 ```typescript
 interface CategoryUpdate {

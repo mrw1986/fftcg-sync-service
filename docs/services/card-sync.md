@@ -79,6 +79,13 @@ interface SyncResult {
 - Raw category preservation
 - Duplicate category prevention
 - Consistent character encoding
+- Specific category formatting rules:
+  - "Theatrhythm", "Mobius", "Pictlogica", and "Type-0" always in that exact format
+  - "World of Final Fantasy" always converted to "WOFF"
+  - "Lord of Vermilion" always converted to "LOV"
+  - Roman numerals (I, II, III, etc.) always in uppercase
+  - Known acronyms (DFF, FF, FFCC, etc.) preserved in uppercase
+  - Other categories in title case (first letter of each word capitalized)
 
 ### Card Number Processing
 

@@ -95,31 +95,39 @@
 4. Square Enix Data Integration
    - Cost/power value updates
    - Category handling improvements
+   - Square Enix data used as the source of truth for categories
    - Duplicate category prevention
    - Consistent middot handling
    - Preservation of TCGCSV-specific card numbers
    - Enhanced non-card product detection
-
-4. Group Integration
+5. Group Integration
    - Group sync as first step
    - Set name handling from groups
    - Proper group ID handling
    - Data consistency improvements
 
-5. Name Processing Updates
+6. Name Processing Updates
    - Enhanced special content preservation
    - Improved card number removal
    - Date preservation in names
    - Crystal card handling
    - Proper handling of special keywords
 
-6. Category Handling Improvements
+7. Category Handling Improvements
    - DFF category prioritization
    - Middot separator implementation
    - Array ordering
    - Format consistency
    - Raw category preservation
    - Duplicate category prevention
+   - Square Enix data used as the source of truth for categories
+   - Consistent formatting rules for specific categories:
+     - "Theatrhythm", "Mobius", "Pictlogica", and "Type-0" in exact format
+     - "World of Final Fantasy" converted to "WOFF"
+     - "Lord of Vermilion" converted to "LOV"
+   - Roman numerals always in uppercase
+   - Known acronyms preserved in uppercase
+   - Other categories in title case
 
 ## Current Focus
 
@@ -167,6 +175,12 @@
   - Format consistency ensured
   - Raw data preserved
   - Duplicates prevented
+  - Specific category formatting rules implemented:
+    - "Theatrhythm", "Mobius", "Pictlogica", and "Type-0" in exact format
+    - "World of Final Fantasy" as "WOFF"
+    - "Lord of Vermilion" as "LOV"
+    - Roman numerals in uppercase
+  - Square Enix data used as the source of truth for categories
 
 - Group integration complete
   - Set names from groups

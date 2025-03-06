@@ -41,6 +41,58 @@ export class FilterAggregationService {
     this.batchProcessor = new OptimizedBatchProcessor(db);
   }
 
+  private normalizeCategory(category: string): string {
+    // Handle specific categories that need consistent formatting
+    if (category.toUpperCase() === "THEATRHYTHM") return "Theatrhythm";
+    if (category.toUpperCase() === "MOBIUS") return "Mobius";
+    if (category.toUpperCase() === "PICTLOGICA") return "Pictlogica";
+    if (category.toUpperCase() === "TYPE-0") return "Type-0";
+
+    // Handle specific category conversions to acronyms
+    if (category.toLowerCase() === "world of final fantasy") return "WOFF";
+    if (category.toLowerCase() === "lord of vermilion") return "LOV";
+
+    // Check if it's a Roman numeral (I, II, III, IV, V, VI, VII, VIII, IX, X, XI, XII, XIII, XIV, XV, XVI)
+    const romanNumeralPattern = /^(X{0,3})(IX|IV|V?I{0,3})$/i;
+    if (romanNumeralPattern.test(category)) {
+      return category.toUpperCase(); // Keep Roman numerals uppercase
+    }
+
+    // For any other category, ensure it's not all-caps unless it's an acronym
+    if (category === category.toUpperCase() && category.length > 1) {
+      // Check if it's a known acronym or starts with FF (Final Fantasy)
+      const knownAcronyms = [
+        "DFF",
+        "FF",
+        "WOFF",
+        "FFCC",
+        "FFTA",
+        "FFBE",
+        "FFEX",
+        "FFL",
+        "FFRK",
+        "FFT",
+        "FFTA2",
+        "MQ",
+        "LOV",
+        "SOPFFO",
+      ];
+
+      if (knownAcronyms.includes(category) || category.startsWith("FF")) {
+        return category; // Keep known acronyms as-is
+      }
+
+      // Otherwise, convert to title case (first letter of each word capitalized)
+      return category
+        .toLowerCase()
+        .split(/\s+/)
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(" ");
+    }
+
+    return category;
+  }
+
   private calculateHash(values: (string | number)[]): string {
     return crypto.createHash("md5").update(JSON.stringify(values)).digest("hex");
   }
@@ -108,7 +160,8 @@ export class FilterAggregationService {
         const categories = categoryStr
           .split(/\u00B7/)
           .map((c) => c.trim())
-          .filter(Boolean);
+          .filter(Boolean)
+          .map((c) => this.normalizeCategory(c)); // Apply category normalization
         categories.forEach((c) => values.add(c));
       } else if (Array.isArray(value)) {
         // Handle array fields (e.g., elements, set)

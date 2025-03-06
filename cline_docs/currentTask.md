@@ -182,7 +182,7 @@
    - Case-insensitive matching
    - Whitespace normalization
 
-### Recent Improvements
+### Additional Improvements
 
 1. Missing Field Population
    - [x] Added support for populating missing fields from Square Enix data
@@ -193,6 +193,16 @@
    - [x] Fixed field mapping between Square Enix API and Firestore (type_en → type)
    - [x] Added intelligent detection and correction of cards incorrectly marked as non-cards
    - [x] Enhanced validation of card-specific fields
+
+2. Category Handling Improvements
+   - [x] Updated Square Enix integration to always use SE data as the source of truth for categories
+   - [x] Implemented consistent formatting rules for specific categories:
+     - [x] "Theatrhythm", "Mobius", "Pictlogica", and "Type-0" always in that exact format
+     - [x] "World of Final Fantasy" always converted to "WOFF"
+     - [x] "Lord of Vermilion" always converted to "LOV"
+   - [x] Added special handling for Roman numerals to ensure they're always uppercase
+   - [x] Expanded list of known acronyms to preserve uppercase formatting
+   - [x] Ensured other categories use title case (first letter of each word capitalized)
 
 ### Next Steps
 
