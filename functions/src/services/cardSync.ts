@@ -123,8 +123,8 @@ export class CardSyncService {
     if (category.toLowerCase() === "world of final fantasy") return "WOFF";
     if (category.toLowerCase() === "lord of vermilion") return "LOV";
 
-    // Check if it's a Roman numeral (I, II, III, IV, V, VI, VII, VIII, IX, X, XI, XII, XIII, XIV, XV, XVI)
-    const romanNumeralPattern = /^(X{0,3})(IX|IV|V?I{0,3})$/i;
+    // Check if it's a Roman numeral (supports 1-4999: I, II, III, IV, V, VI, VII, VIII, IX, X, XL, L, XC, C, CD, D, CM, M, etc.)
+    const romanNumeralPattern = /^M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$/i;
     if (romanNumeralPattern.test(category)) {
       return category.toUpperCase(); // Keep Roman numerals uppercase
     }
@@ -867,9 +867,9 @@ export class CardSyncService {
     try {
       logger.info("Starting card sync", { options });
 
-      const groups = options.groupId ?
-        [{ groupId: options.groupId }] :
-        await this.retry.execute(() => tcgcsvApi.getGroups());
+      const groups = options.groupId
+        ? [{ groupId: options.groupId }]
+        : await this.retry.execute(() => tcgcsvApi.getGroups());
 
       // Apply limit if specified
       if (options.limit) {
