@@ -223,3 +223,18 @@
    - Document recent improvements
    - Create performance tuning guides
    - Update deployment procedures
+
+## Recent Bug Fixes
+
+### Card Description Processing (Fixed)
+
+- **Issue**: Card descriptions were incorrectly removing "Dull" text when it appeared before a colon, causing ability costs to be malformed
+- **Root Cause**: The `processDescription` function in [`cardSync.ts`](functions/src/services/cardSync.ts:356) was unconditionally removing unbracketed "Dull" text from the left side of colons
+- **Solution**: Modified the logic to preserve "Dull" when it's the only text before a colon (indicating an ability cost)
+- **Impact**: Card descriptions now correctly display ability costs like "Dull: Choose 1 blocking Forward..."
+
+### HTML Entity Case Conversion (Analyzed)
+
+- **Observation**: HTML entities in descriptions may appear in lowercase (e.g., `\u003cem\u003e`) instead of uppercase (e.g., `\u003Cem\u003E`)
+- **Analysis**: This conversion is not happening in the description processing function but likely occurs at the data source level, during JSON serialization/deserialization, or in database storage/retrieval
+- **Recommendation**: This is a cosmetic issue that doesn't affect functionality, as both forms are valid Unicode escape sequences

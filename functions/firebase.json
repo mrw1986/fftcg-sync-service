@@ -2,7 +2,7 @@
   "functions": {
     "source": ".",
     "codebase": "default",
-    "runtime": "nodejs18",
+    "runtime": "nodejs22",
     "ignore": [
       "node_modules",
       ".git",

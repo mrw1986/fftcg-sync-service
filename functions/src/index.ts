@@ -4,6 +4,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import { Request, Response } from "express";
 import { cardSync } from "./services/cardSync";
 import { priceSync } from "./services/priceSync";
+import { groupSync } from "./services/groupSync";
 import { retention } from "./utils/retention";
 import { runtimeOpts } from "./config/firebase";
 import { logger } from "./utils/logger";
@@ -22,12 +23,25 @@ export const scheduledCardSync = onSchedule({
 }, async (): Promise<void> => {
   try {
     console.log("Function triggered"); // Added console.log
-    logger.info("Starting scheduled card sync");
-    const result = await cardSync.syncCards();
-    logger.info("Scheduled card sync completed", result);
+    logger.info("Starting scheduled sync (groups + cards)");
+
+    // First sync groups to ensure new groups are available
+    logger.info("Starting group sync");
+    const groupResult = await groupSync.syncGroups();
+    logger.info("Group sync completed", groupResult);
+
+    // Then sync cards
+    logger.info("Starting card sync");
+    const cardResult = await cardSync.syncCards();
+    logger.info("Card sync completed", cardResult);
+
+    logger.info("Scheduled sync completed", {
+      groups: groupResult,
+      cards: cardResult,
+    });
   } catch (error) {
     console.error("Function error:", error); // Added console.error
-    logger.error("Scheduled card sync failed", { error });
+    logger.error("Scheduled sync failed", { error });
     throw error;
   }
 });
@@ -95,7 +109,7 @@ export const testScheduledCardSync = onRequest({
       forceUpdate: req.query.forceUpdate === "true",
     };
 
-    logger.info("Starting manual card sync test", { options });
+    logger.info("Starting manual sync test (groups + cards)", { options });
 
     // Test API connectivity first
     try {
@@ -120,9 +134,17 @@ export const testScheduledCardSync = onRequest({
         apiError.message : String(apiError)}`);
     }
 
-    // Proceed with sync
-    const result = await cardSync.syncCards(options);
-    logger.info("Manual card sync completed", result);
+    // First sync groups
+    logger.info("Starting group sync");
+    const groupResult = await groupSync.syncGroups({ forceUpdate: options.forceUpdate });
+    logger.info("Group sync completed", groupResult);
+
+    // Then sync cards
+    logger.info("Starting card sync");
+    const cardResult = await cardSync.syncCards(options);
+    logger.info("Card sync completed", cardResult);
+
+    const result = { groups: groupResult, cards: cardResult };
 
     // Send detailed response
     res.json({
@@ -179,8 +201,20 @@ export const manualCardSync = onRequest({
   memory: runtimeOpts.memory,
   maxInstances: 1,
 }, async (_req: Request, res: Response) => {
-  const result = await cardSync.syncCards({ dryRun: false }); // Full sync
-  res.json(result);
+  try {
+    // First sync groups
+    const groupResult = await groupSync.syncGroups();
+    // Then sync cards
+    const cardResult = await cardSync.syncCards({ dryRun: false }); // Full sync
+
+    const result = { groups: groupResult, cards: cardResult };
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 });
 
 // Scheduled price sync

@@ -71,28 +71,34 @@
 
 ## Recent Significant Changes
 
-1. Missing Field Population from Square Enix Data
+1. Card Description Processing Fixes
+   - Fixed incorrect removal of "Dull" text from card descriptions
+   - Modified [`processDescription`](functions/src/services/cardSync.ts:356) function to preserve "Dull" when it's an ability cost
+   - Added comprehensive test coverage in [`testDescriptionProcessing.ts`](functions/src/scripts/testDescriptionProcessing.ts)
+   - Analyzed HTML entity case conversion (determined to be external to processing code)
+
+2. Missing Field Population from Square Enix Data
    - Added intelligent detection and correction of cards incorrectly marked as non-cards
    - Implemented automatic population of missing fields (cardType, elements, categories, etc.)
    - Fixed field mapping between Square Enix API and Firestore (type_en → type)
    - Enhanced validation of card-specific fields
    - Improved logging for better debugging and monitoring
 
-2. Reprint Card Number Handling
+3. Reprint Card Number Handling
    - Added support for "Re-" prefix card numbers
    - Improved hash calculation to include "Re-" prefix numbers
    - Enhanced Square Enix data integration to preserve "Re-" prefix numbers
    - Updated search index generation for "Re-" prefix numbers
    - Fixed card number merging during Square Enix data updates
 
-3. Metadata System Implementation
+4. Metadata System Implementation
    - Added dataVersion field to card documents
    - Implemented smart detection for existing cards
    - Enabled incremental sync for app clients
    - Reduced Firestore reads during updates
    - Improved version tracking between app and backend
 
-4. Square Enix Data Integration
+5. Square Enix Data Integration
    - Cost/power value updates
    - Category handling improvements
    - Square Enix data used as the source of truth for categories
@@ -100,20 +106,20 @@
    - Consistent middot handling
    - Preservation of TCGCSV-specific card numbers
    - Enhanced non-card product detection
-5. Group Integration
+6. Group Integration
    - Group sync as first step
    - Set name handling from groups
    - Proper group ID handling
    - Data consistency improvements
 
-6. Name Processing Updates
+7. Name Processing Updates
    - Enhanced special content preservation
    - Improved card number removal
    - Date preservation in names
    - Crystal card handling
    - Proper handling of special keywords
 
-7. Category Handling Improvements
+8. Category Handling Improvements
    - DFF category prioritization
    - Middot separator implementation
    - Array ordering

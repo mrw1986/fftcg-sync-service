@@ -54,8 +54,9 @@ interface CardDocument {
 }
 
 export class CardSyncService {
-  private readonly CHUNK_SIZE = 1000;
-  private readonly MAX_EXECUTION_TIME = 510; // 8.5 minutes
+  private readonly CHUNK_SIZE = 50; // Reduced from 1000 to avoid quota issues
+  private readonly MAX_EXECUTION_TIME = 480; // 8 minutes (safer margin)
+  private readonly BATCH_DELAY = 1000; // 1 second delay between batches
 
   private readonly cache = new Cache<string>(15);
   private readonly retry = new RetryWithBackoff();
@@ -359,26 +360,28 @@ export class CardSyncService {
     // 1. Capitalize "ex burst" to "EX BURST"
     let processed = description.replace(/\bex burst\b/gi, "EX BURST");
 
-    // 2. Remove any HTML tags wrapping Dull
+    // 2. Remove any HTML tags wrapping Dull (but preserve the Dull text)
     processed = processed.replace(/<[^>]+>Dull<\/[^>]+>/g, "Dull");
 
     // 3. Handle "Dull" text based on position relative to colon
     const parts = processed.split(/\s*:\s*/);
     if (parts.length === 2) {
-      // Left side: Keep [Dull] and remove unbracketed Dull
       let leftSide = parts[0];
-      // Temporarily protect [Dull]
-      leftSide = leftSide.replace(/\[Dull\]/g, "###PROTECTED_DULL###");
-      // Remove unbracketed Dull
-      leftSide = leftSide.replace(/\bDull\b/g, "");
-      // Restore [Dull]
-      leftSide = leftSide.replace(/###PROTECTED_DULL###/g, "[Dull]");
-
-      // Right side: First remove any duplicate "Dull" words
       let rightSide = parts[1];
-      // Replace multiple consecutive "Dull" with a single "Dull"
+
+      // Only process left side if it contains more than just "Dull"
+      // If left side is just "Dull" (ability cost), preserve it as-is
+      if (leftSide.trim() !== "Dull") {
+        // Temporarily protect [Dull]
+        leftSide = leftSide.replace(/\[Dull\]/g, "###PROTECTED_DULL###");
+        // Remove unbracketed Dull only if there are other words
+        leftSide = leftSide.replace(/\bDull\b/g, "");
+        // Restore [Dull]
+        leftSide = leftSide.replace(/###PROTECTED_DULL###/g, "[Dull]");
+      }
+
+      // Right side: Remove duplicate "Dull" words and convert bracketed to unbracketed
       rightSide = rightSide.replace(/\bDull\s+Dull\b/g, "Dull");
-      // Replace any bracketed [Dull] with unbracketed Dull
       rightSide = rightSide.replace(/\[Dull\]/g, "Dull");
 
       // Combine the parts
@@ -836,6 +839,11 @@ export class CardSyncService {
       );
 
       await this.batchProcessor.commitAll();
+
+      // Add delay after processing batch to avoid quota exhaustion
+      if (result.updated > 0) {
+        await new Promise((resolve) => setTimeout(resolve, this.BATCH_DELAY));
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
       result.errors.push(`Batch processing error: ${errorMessage}`);
