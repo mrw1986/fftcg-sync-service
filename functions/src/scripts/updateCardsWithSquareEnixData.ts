@@ -7,6 +7,7 @@ import { OptimizedBatchProcessor } from "../services/batchProcessor";
 import { FieldValue } from "firebase-admin/firestore";
 import * as crypto from "crypto";
 import { storageService } from "../services/storageService";
+import { translateElements, translateDescription } from "../utils/elementTranslator";
 
 export interface TcgCard {
   id: string;
@@ -22,6 +23,7 @@ export interface TcgCard {
   cardType?: string;
   category?: string;
   categories?: string[];
+  description?: string | null;
   cleanName?: string;
   elements?: string[];
   set?: string[];
@@ -39,7 +41,7 @@ export interface SquareEnixCard {
   name: string;
   type: string; // Changed from type_en to type
   job_en: string;
-  text_en: string;
+  text: string; // Fixed: actual field name is 'text', not 'text_en'
   element: string[];
   rarity: string;
   cost: number | null;
@@ -93,19 +95,7 @@ interface UpdateInfo {
 }
 
 const retry = new RetryWithBackoff();
-const batchProcessor = new OptimizedBatchProcessor(db);
 const PLACEHOLDER_URL = "https://fftcgcompanion.com/card-images/image-coming-soon.jpeg";
-
-const elementMap: Record<string, string> = {
-  火: "Fire",
-  氷: "Ice",
-  風: "Wind",
-  土: "Earth",
-  雷: "Lightning",
-  水: "Water",
-  光: "Light",
-  闇: "Dark",
-};
 
 // Special keywords that indicate we should keep the current name
 const specialKeywords = ["Full Art", ".*Promo.*", "Road.*", "Champion.*", ".*Anniversary.*"];
@@ -130,8 +120,7 @@ function calculateHash(card: SquareEnixCard, tcgCard?: TcgCard): string {
   const normalizedElement =
     card.type === "Crystal" || card.code.startsWith("C-") ?
       ["Crystal"] :
-      (card.element || [])
-        .map((e: string) => elementMap[e] || e)
+      translateElements(card.element || [])
         .filter((e: string) => e)
         .sort();
 
@@ -207,10 +196,18 @@ function findCardNumberMatch(tcgCard: TcgCard, seCard: SquareEnixCard): boolean 
   // Get all Square Enix card numbers (split by forward slash)
   const seNumbers = seCard.code.split("/").map((n) => normalizeForComparison(n.trim()));
 
-  // Get all TCG card numbers
+  // Get all TCG card numbers, prioritizing fullCardNumber for matching
   const tcgNumbers = getAllCardNumbers(tcgCard);
   if (!tcgNumbers) {
     return false;
+  }
+
+  // Prioritize fullCardNumber for matching if available
+  if (tcgCard.fullCardNumber) {
+    const normalizedFullCardNumber = normalizeForComparison(tcgCard.fullCardNumber);
+    if (seNumbers.some((seNum) => normalizedFullCardNumber === seNum)) {
+      return true;
+    }
   }
 
   // For each TCG card number, check if it matches any Square Enix number
@@ -286,9 +283,7 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): FieldUpdat
 
     // Force update elements for cards that were incorrectly marked as non-cards
     const cardElements =
-      seCard.type === "Crystal" || seCard.code.startsWith("C-") ?
-        ["Crystal"] :
-        seCard.element.map((e: string) => elementMap[e] || e);
+      seCard.type === "Crystal" || seCard.code.startsWith("C-") ? ["Crystal"] : translateElements(seCard.element);
     updates.elements = cardElements;
 
     // Force update categories for cards that were incorrectly marked as non-cards
@@ -329,9 +324,7 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): FieldUpdat
   }
 
   const elements =
-    seCard.type === "Crystal" || seCard.code.startsWith("C-") ?
-      ["Crystal"] :
-      seCard.element.map((e: string) => elementMap[e] || e);
+    seCard.type === "Crystal" || seCard.code.startsWith("C-") ? ["Crystal"] : translateElements(seCard.element);
 
   const rarityMap = {
     C: "Common",
@@ -498,7 +491,7 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): FieldUpdat
   }
 
   // Ensure we include all fields that should be populated from Square Enix data
-  const fields = {
+  const fields: Record<string, string | string[] | number | null> = {
     cardType: seCard.type === "Crystal" || seCard.code.startsWith("C-") ? "Crystal" : seCard.type,
     job: seCard.type === "Summon" ? "" : seCard.job_en,
     rarity: isPromo ? "Promo" : rarityMap[seCard.rarity as keyof typeof rarityMap] || seCard.rarity,
@@ -506,7 +499,65 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): FieldUpdat
     elements,
     cost: seCard.cost ? parseInt(String(seCard.cost)) || null : null,
     power: seCard.power ? parseInt(String(seCard.power)) || null : null,
+    description: null, // Initialize description field
   };
+
+  // Process and validate Square Enix description
+  const processedDescription = translateDescription(seCard.text);
+
+  // FORCE UPDATE: Always prioritize Square Enix description when available
+  if (seCard.text && seCard.text.trim() !== "") {
+    // Log description lengths for debugging
+    logger.info(`FORCE PROCESSING description for card ${tcgCard.id}:`, {
+      originalLength: seCard.text.length,
+      processedLength: processedDescription?.length || 0,
+      currentLength: tcgCard.description?.length || 0,
+      currentDescription: tcgCard.description?.substring(0, 100) + "...",
+      willOverwrite: true,
+    });
+
+    // UNCONDITIONALLY use the Square Enix description (processed or raw if processing fails)
+    fields.description =
+      processedDescription && processedDescription.trim() !== "" ? processedDescription : seCard.text;
+
+    // Verify the processed description is complete
+    if (processedDescription && processedDescription.length < seCard.text.length / 2) {
+      logger.warn(`Possible truncation in processing for card ${tcgCard.id} - using raw text`, {
+        originalText: seCard.text,
+        processedText: processedDescription,
+        usingRawText: true,
+      });
+      // Use raw text if processing appears to have truncated it
+      fields.description = seCard.text;
+    }
+  } else if (tcgCard.description) {
+    // Only fall back to TCGCSV description if Square Enix has no description at all
+    fields.description = tcgCard.description;
+    logger.info(`Using TCG description for card ${tcgCard.id} (no Square Enix description available)`);
+  } else {
+    // No description available from either source
+    fields.description = null;
+  }
+
+  // Final verification of description length (logging only - no longer blocks updates)
+  if (typeof fields.description === "string" && seCard.text) {
+    const expectedMinLength = Math.floor(seCard.text.length * 0.8); // Allow for some variation in processing
+    if (fields.description.length < expectedMinLength) {
+      logger.warn(`Description may be truncated for card ${tcgCard.id} but proceeding with forced update`, {
+        originalLength: seCard.text.length,
+        processedLength: processedDescription?.length || 0,
+        finalLength: fields.description.length,
+        original: seCard.text,
+        final: fields.description,
+        action: "proceeding_anyway",
+      });
+    } else {
+      logger.info(`Description length verification passed for card ${tcgCard.id}`, {
+        originalLength: seCard.text.length,
+        finalLength: fields.description.length,
+      });
+    }
+  }
 
   // Log the fields we're considering for update
   logger.info(`Considering fields for update for card ${tcgCard.id}:`, {
@@ -529,6 +580,35 @@ function getFieldsToUpdate(tcgCard: TcgCard, seCard: SquareEnixCard): FieldUpdat
   // Update fields that have changed or are empty
   for (const [field, value] of Object.entries(fields)) {
     const currentValue = tcgCard[field as keyof TcgCard];
+
+    // Special handling for description - always prioritize Square Enix when available
+    if (field === "description") {
+      // Force update description if Square Enix has a non-empty value, regardless of current value
+      const hasSquareEnixDescription = processedDescription && processedDescription.trim() !== "";
+      if (hasSquareEnixDescription) {
+        // UNCONDITIONALLY update when Square Enix has description data
+        logger.info(
+          `Force updating description for card ${tcgCard.id} with Square Enix data (unconditional overwrite)`,
+          {
+            source: "Square Enix (text_en)",
+            currentValue: typeof currentValue === "string" ? currentValue.substring(0, 100) + "..." : currentValue,
+            newValue: typeof value === "string" ? value.substring(0, 100) + "..." : value,
+            originalSeLength: seCard.text?.length || 0,
+            processedLength: processedDescription?.length || 0,
+          }
+        );
+        updates[field as keyof FieldUpdates] = value as never;
+      } else if (value !== currentValue) {
+        // Only check current vs new value if no Square Enix description is available
+        logger.info(`Updating description for card ${tcgCard.id} with fallback data`, {
+          source: "TCGPlayer fallback",
+          currentValue: typeof currentValue === "string" ? currentValue.substring(0, 100) + "..." : currentValue,
+          newValue: typeof value === "string" ? value.substring(0, 100) + "..." : value,
+        });
+        updates[field as keyof FieldUpdates] = value as never;
+      }
+      continue;
+    }
 
     // Check for null, undefined, empty arrays, or empty strings
     const isEmpty =
@@ -572,6 +652,10 @@ function arraysEqual<T>(a: T[], b: T[]): boolean {
 
 export async function main(options: SyncOptions = {}): Promise<UpdateResult> {
   const startTime = Date.now();
+
+  // Create a new batch processor instance for each execution to avoid conflicts
+  const batchProcessor = new OptimizedBatchProcessor(db);
+
   try {
     logger.info("Starting card update process", { options });
 
@@ -802,7 +886,7 @@ export async function main(options: SyncOptions = {}): Promise<UpdateResult> {
         const directUpdate = {
           isNonCard: false,
           cardType: match132429.type,
-          elements: match132429.element.map((e: string) => elementMap[e] || e),
+          elements: translateElements(match132429.element),
           lastUpdated: FieldValue.serverTimestamp(),
         };
 

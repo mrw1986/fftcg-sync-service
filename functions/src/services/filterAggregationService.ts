@@ -2,6 +2,7 @@
 import { db, COLLECTION } from "../config/firebase";
 import { logger } from "../utils/logger";
 import { RetryWithBackoff } from "../utils/retry";
+import { RateLimiter } from "../utils/rateLimiter";
 import * as crypto from "crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import { OptimizedBatchProcessor } from "./batchProcessor";
@@ -33,6 +34,7 @@ interface GroupInfo {
 export class FilterAggregationService {
   private readonly retry = new RetryWithBackoff();
   private readonly batchProcessor: OptimizedBatchProcessor;
+  private readonly rateLimiter = new RateLimiter(500, 1000, 5); // Match main sync settings
 
   // Fields to aggregate
   private readonly fields = ["cardType", "category", "cost", "elements", "power", "rarity", "set"];
@@ -222,10 +224,12 @@ export class FilterAggregationService {
       };
 
       // Update filter document
-      await this.batchProcessor.addOperation((batch) => {
-        const filterRef = db.collection(COLLECTION.FILTERS).doc(fieldName);
-        batch.set(filterRef, filterDoc);
-      });
+      await this.rateLimiter.add(() =>
+        this.batchProcessor.addOperation((batch) => {
+          const filterRef = db.collection(COLLECTION.FILTERS).doc(fieldName);
+          batch.set(filterRef, filterDoc);
+        })
+      );
 
       logger.info(`Updated filter ${fieldName} with ${values.length} unique values`);
       return { processed: true, updated: true };

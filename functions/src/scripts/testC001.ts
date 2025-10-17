@@ -1,6 +1,7 @@
 import { squareEnixSync } from "../services/squareEnixSync";
 import { logger } from "../utils/logger";
 import * as crypto from "crypto";
+import { translateElements } from "../utils/elementTranslator";
 
 interface SquareEnixCard {
   code: string;
@@ -16,24 +17,12 @@ interface SquareEnixCard {
   set: string[];
 }
 
-const elementMap: Record<string, string> = {
-  火: "Fire",
-  氷: "Ice",
-  風: "Wind",
-  土: "Earth",
-  雷: "Lightning",
-  水: "Water",
-  光: "Light",
-  闇: "Dark",
-};
-
 function calculateHash(card: SquareEnixCard): string {
   // Normalize element array
   const normalizedElement =
     card.type_en === "Crystal" || card.code.startsWith("C-") ?
       ["Crystal"] :
-      (card.element || [])
-        .map((e: string) => elementMap[e] || e)
+      translateElements(card.element || [])
         .filter((e: string) => e)
         .sort();
 
@@ -88,8 +77,7 @@ async function main() {
         data: JSON.stringify(
           {
             code: c001.code || "",
-            element:
-              c001.type_en === "Crystal" ? ["Crystal"] : (c001.element || []).map((e) => elementMap[e] || e).sort(),
+            element: c001.type_en === "Crystal" ? ["Crystal"] : translateElements(c001.element || []).sort(),
             rarity: c001.rarity || "",
             cost: c001.cost || "",
             power: c001.power || "",

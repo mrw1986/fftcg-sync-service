@@ -4,11 +4,13 @@ import { OptimizedBatchProcessor } from "./batchProcessor";
 import { FieldValue } from "firebase-admin/firestore";
 import { logger } from "../utils/logger";
 import { RetryWithBackoff } from "../utils/retry";
+import { RateLimiter } from "../utils/rateLimiter";
 
 export class SearchIndexService {
   private readonly batchProcessor: OptimizedBatchProcessor;
   private readonly BATCH_SIZE = 500;
   private readonly retry: RetryWithBackoff;
+  private readonly rateLimiter = new RateLimiter(500, 1000, 5); // Match main sync settings
 
   constructor() {
     this.batchProcessor = new OptimizedBatchProcessor(db);
@@ -158,7 +160,7 @@ export class SearchIndexService {
           });
         }
 
-        await this.batchProcessor.commitAll();
+        await this.rateLimiter.add(() => this.batchProcessor.commitAll());
       }
 
       return updatedCount;

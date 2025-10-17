@@ -35,15 +35,12 @@ interface SyncResult {
 
 export class GroupSyncService {
   private readonly BATCH_SIZE = 500;
-  private readonly rateLimiter = new RateLimiter();
+  private readonly rateLimiter = new RateLimiter(500, 1000, 5); // Match main sync settings
   private readonly cache = new Cache<string>(15);
   private readonly retry = new RetryWithBackoff();
 
   private calculateHash(data: GroupHashData): string {
-    return crypto
-      .createHash("md5")
-      .update(JSON.stringify(data))
-      .digest("hex");
+    return crypto.createHash("md5").update(JSON.stringify(data)).digest("hex");
   }
 
   private async getStoredHashes(groupIds: number[]): Promise<Map<number, string>> {
@@ -73,9 +70,7 @@ export class GroupSyncService {
 
     await Promise.all(
       chunks.map(async (chunk) => {
-        const refs = chunk.map((id) =>
-          db.collection("groupHashes").doc(id.toString())
-        );
+        const refs = chunk.map((id) => db.collection("groupHashes").doc(id.toString()));
 
         const snapshots = await this.retry.execute(() => db.getAll(...refs));
 
@@ -164,9 +159,7 @@ export class GroupSyncService {
 
           // Commit batch if reaching limit
           if (batchCount >= this.BATCH_SIZE) {
-            await this.rateLimiter.add(() =>
-              this.retry.execute(() => batch.commit())
-            );
+            await this.rateLimiter.add(() => this.retry.execute(() => batch.commit()));
             batch = db.batch();
             batchCount = 0;
           }
@@ -175,17 +168,13 @@ export class GroupSyncService {
           logger.info(`Updated group ${group.groupId}: ${group.name}`);
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : "Unknown error";
-          result.errors.push(
-            `Error processing group ${group.groupId}: ${errorMessage}`
-          );
+          result.errors.push(`Error processing group ${group.groupId}: ${errorMessage}`);
         }
       }
 
       // Commit any remaining operations
       if (batchCount > 0) {
-        await this.rateLimiter.add(() =>
-          this.retry.execute(() => batch.commit())
-        );
+        await this.rateLimiter.add(() => this.retry.execute(() => batch.commit()));
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
@@ -195,9 +184,11 @@ export class GroupSyncService {
     return result;
   }
 
-  async syncGroups(options: {
-    forceUpdate?: boolean;
-  } = {}): Promise<SyncResult> {
+  async syncGroups(
+    options: {
+      forceUpdate?: boolean;
+    } = {}
+  ): Promise<SyncResult> {
     const result: SyncResult = {
       success: true,
       itemsProcessed: 0,
@@ -214,10 +205,7 @@ export class GroupSyncService {
       const groups = await tcgcsvApi.getGroups();
       logger.info(`Found ${groups.length} groups to process`);
 
-      const batchResults = await this.processGroupBatch(
-        groups as unknown as Group[],
-        options
-      );
+      const batchResults = await this.processGroupBatch(groups as unknown as Group[], options);
 
       result.itemsProcessed = batchResults.processed;
       result.itemsUpdated = batchResults.updated;
@@ -231,8 +219,7 @@ export class GroupSyncService {
 
     // Calculate final timing
     result.timing.endTime = new Date();
-    result.timing.duration =
-      (result.timing.endTime.getTime() - result.timing.startTime.getTime()) / 1000;
+    result.timing.duration = (result.timing.endTime.getTime() - result.timing.startTime.getTime()) / 1000;
 
     logger.info(`Group sync completed in ${result.timing.duration}s`, {
       processed: result.itemsProcessed,

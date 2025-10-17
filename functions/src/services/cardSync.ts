@@ -60,10 +60,9 @@ export class CardSyncService {
 
   private readonly cache = new Cache<string>(15);
   private readonly retry = new RetryWithBackoff();
-  private readonly batchProcessor: OptimizedBatchProcessor;
 
   constructor() {
-    this.batchProcessor = new OptimizedBatchProcessor(db);
+    // Removed shared batch processor instance to avoid conflicts
   }
 
   private isApproachingTimeout(startTime: Date, safetyMarginSeconds = 30): boolean {
@@ -122,8 +121,8 @@ export class CardSyncService {
     // Handle specific category conversions to acronyms
     if (category.toLowerCase() === "world of final fantasy") return "WOFF";
     if (category.toLowerCase() === "lord of vermilion") return "LOV";
-
-    // Check if it's a Roman numeral (supports 1-4999: I, II, III, IV, V, VI, VII, VIII, IX, X, XL, L, XC, C, CD, D, CM, M, etc.)
+    // Check if it's a Roman numeral (supports 1-4999: I, II, III,
+    // IV, V, VI, VII, VIII, IX, X, XL, L, XC, C, CD, D, CM, M, etc.)
     const romanNumeralPattern = /^M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$/i;
     if (romanNumeralPattern.test(category)) {
       return category.toUpperCase(); // Keep Roman numerals uppercase
@@ -667,6 +666,7 @@ export class CardSyncService {
   private async processCards(
     cards: CardProduct[],
     groupId: number,
+    batchProcessor: OptimizedBatchProcessor,
     options: { forceUpdate?: boolean } = {}
   ): Promise<{
     processed: number;
@@ -790,19 +790,19 @@ export class CardSyncService {
             };
 
             // Add main card document
-            await this.batchProcessor.addOperation((batch) => {
+            await batchProcessor.addOperation((batch) => {
               const cardRef = db.collection(COLLECTION.CARDS).doc(card.productId.toString());
               batch.set(cardRef, cardDoc, { merge: true });
             });
 
             // Add image metadata
-            await this.batchProcessor.addOperation((batch) => {
+            await batchProcessor.addOperation((batch) => {
               const cardRef = db.collection(COLLECTION.CARDS).doc(card.productId.toString());
               batch.set(cardRef.collection("metadata").doc("image"), imageResult.metadata, { merge: true });
             });
 
             // Update hash
-            await this.batchProcessor.addOperation((batch) => {
+            await batchProcessor.addOperation((batch) => {
               const hashRef = db.collection(COLLECTION.CARD_HASHES).doc(card.productId.toString());
               batch.set(
                 hashRef,
@@ -815,7 +815,7 @@ export class CardSyncService {
             });
 
             // Save delta using productId as document ID
-            await this.batchProcessor.addOperation((batch) => {
+            await batchProcessor.addOperation((batch) => {
               const deltaRef = db.collection(COLLECTION.CARD_DELTAS).doc(card.productId.toString());
               batch.set(
                 deltaRef,
@@ -838,7 +838,7 @@ export class CardSyncService {
         })
       );
 
-      await this.batchProcessor.commitAll();
+      await batchProcessor.commitAll();
 
       // Add delay after processing batch to avoid quota exhaustion
       if (result.updated > 0) {
@@ -864,12 +864,15 @@ export class CardSyncService {
       },
     };
 
+    // Create a new batch processor instance for this sync operation
+    const batchProcessor = new OptimizedBatchProcessor(db);
+
     try {
       logger.info("Starting card sync", { options });
 
-      const groups = options.groupId
-        ? [{ groupId: options.groupId }]
-        : await this.retry.execute(() => tcgcsvApi.getGroups());
+      const groups = options.groupId ?
+        [{ groupId: options.groupId }] :
+        await this.retry.execute(() => tcgcsvApi.getGroups());
 
       // Apply limit if specified
       if (options.limit) {
@@ -905,7 +908,7 @@ export class CardSyncService {
             }
 
             const cardChunk = cards.slice(i, i + this.CHUNK_SIZE);
-            const batchResults = await this.processCards(cardChunk, parseInt(group.groupId), options);
+            const batchResults = await this.processCards(cardChunk, parseInt(group.groupId), batchProcessor, options);
 
             result.itemsProcessed += batchResults.processed;
             result.itemsUpdated += batchResults.updated;

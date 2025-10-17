@@ -4,19 +4,10 @@ import { SyncResult } from "../types";
 import * as crypto from "crypto";
 import { logger } from "../utils/logger";
 import { RetryWithBackoff } from "../utils/retry";
+import { RateLimiter } from "../utils/rateLimiter";
 import { FieldValue } from "firebase-admin/firestore";
 import { OptimizedBatchProcessor } from "./batchProcessor";
-
-const elementMap: Record<string, string> = {
-  火: "Fire",
-  氷: "Ice",
-  風: "Wind",
-  土: "Earth",
-  雷: "Lightning",
-  水: "Water",
-  光: "Light",
-  闇: "Dark",
-};
+import { translateElements, translateDescription } from "../utils/elementTranslator";
 
 interface SquareEnixApiResponse {
   id: string;
@@ -44,10 +35,10 @@ export class SquareEnixStorageService {
   private readonly CHUNK_SIZE = 1000;
   private readonly MAX_EXECUTION_TIME = 510; // 8.5 minutes
   private readonly retry = new RetryWithBackoff();
-  private readonly batchProcessor: OptimizedBatchProcessor;
+  private readonly rateLimiter = new RateLimiter(500, 1000, 5); // Match main sync settings
 
   constructor() {
-    this.batchProcessor = new OptimizedBatchProcessor(db);
+    // Removed shared batch processor instance to avoid conflicts
   }
 
   private isApproachingTimeout(startTime: Date, safetyMarginSeconds = 30): boolean {
@@ -109,6 +100,7 @@ export class SquareEnixStorageService {
   private async processCards(
     cards: SquareEnixApiResponse[],
     startTime: Date,
+    batchProcessor: OptimizedBatchProcessor,
     options: { forceUpdate?: boolean } = {}
   ): Promise<{
     processed: number;
@@ -169,11 +161,11 @@ export class SquareEnixStorageService {
               name: card.name_en || "",
               type: card.type_en || "",
               job: card.type_en === "Summon" ? "" : card.job_en || "",
-              text: card.text_en || "",
+              text: translateDescription(card.text_en) || "",
               element:
                 card.type_en === "Crystal" || card.code.startsWith("C-") ?
                   ["Crystal"] :
-                  (card.element || []).map((e) => elementMap[e] || e),
+                  translateElements(card.element || []),
               rarity: card.rarity || "",
               cost: card.cost ? parseInt(card.cost.trim()) || null : null,
               power: card.power ? parseInt(card.power.trim()) || null : null,
@@ -186,7 +178,7 @@ export class SquareEnixStorageService {
             };
 
             // Update card and hash in a single batch
-            await this.batchProcessor.addOperation((batch) => {
+            await batchProcessor.addOperation((batch) => {
               const docRef = db.collection(COLLECTION.SQUARE_ENIX_CARDS).doc(sanitizedCode);
               batch.set(docRef, cardDoc, { merge: true });
 
@@ -205,7 +197,7 @@ export class SquareEnixStorageService {
         })
       );
 
-      await this.batchProcessor.commitAll();
+      await this.rateLimiter.add(() => batchProcessor.commitAll());
 
       logger.info(`Processed ${cards.length} cards`, {
         totalProcessed: result.processed,
@@ -232,6 +224,9 @@ export class SquareEnixStorageService {
       },
     };
 
+    // Create a new batch processor instance for this sync operation
+    const batchProcessor = new OptimizedBatchProcessor(db);
+
     try {
       logger.info("Starting Square Enix card sync", {
         forceUpdate: options.forceUpdate || false,
@@ -256,7 +251,7 @@ export class SquareEnixStorageService {
         }
 
         const cardChunk = cards.slice(i, i + this.CHUNK_SIZE);
-        const batchResults = await this.processCards(cardChunk, result.timing.startTime, options);
+        const batchResults = await this.processCards(cardChunk, result.timing.startTime, batchProcessor, options);
 
         result.itemsProcessed += batchResults.processed;
         result.itemsUpdated += batchResults.updated;

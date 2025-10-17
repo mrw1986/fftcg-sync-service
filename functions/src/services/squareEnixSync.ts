@@ -1,6 +1,7 @@
 import fetch from "node-fetch";
 import { logger } from "../utils/logger";
 import { RetryWithBackoff } from "../utils/retry";
+import { translateElements } from "../utils/elementTranslator";
 
 interface SquareEnixApiResponse {
   count: number;
@@ -31,16 +32,6 @@ export class SquareEnixSyncService {
   private readonly retry = new RetryWithBackoff();
   private readonly baseUrl = "https://fftcg.square-enix-games.com/en";
   private sessionCookies: string | null = null;
-  private readonly elementMap: Record<string, string> = {
-    火: "Fire",
-    氷: "Ice",
-    風: "Wind",
-    土: "Earth",
-    雷: "Lightning",
-    水: "Water",
-    光: "Light",
-    闇: "Dark",
-  };
 
   private async establishSession(): Promise<void> {
     try {
@@ -85,10 +76,6 @@ export class SquareEnixSyncService {
       logger.error("Failed to establish session", { error: errorMessage });
       throw error;
     }
-  }
-
-  private translateElements(elements: string[]): string[] {
-    return elements.map((element) => this.elementMap[element] || element);
   }
 
   async fetchAllCards(): Promise<SquareEnixApiResponse["cards"]> {
@@ -205,7 +192,7 @@ export class SquareEnixSyncService {
         const elements = Array.isArray(card.element) ? card.element : [];
         return {
           ...card,
-          element: this.translateElements(elements),
+          element: translateElements(elements),
         };
       });
 

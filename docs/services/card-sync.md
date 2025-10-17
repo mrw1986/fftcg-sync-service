@@ -2,10 +2,15 @@
 
 ## Overview
 
-The Card Synchronization service (`cardSync.ts`) manages the automated synchronization
-of FFTCG card data from TCGPlayer's API and Square Enix data sources. It handles
-card information updates, image processing, and maintains data consistency through
-hash-based versioning, with special handling for various card types and formats.
+The Card Synchronization service (`cardSync.ts`) manages the initial
+synchronization of FFTCG card data from TCGPlayer's API. This service creates
+the foundational card records that are later enhanced with authoritative Square
+Enix data. It handles card information creation, image processing, and maintains
+data consistency through hash-based versioning, with special handling for
+various card types and formats.
+
+**Note**: This service is Step 2 of the complete 4-step sync process. See
+[Complete Sync Process](#complete-sync-process) below.
 
 ## Core Features
 
@@ -80,7 +85,8 @@ interface SyncResult {
 - Duplicate category prevention
 - Consistent character encoding
 - Specific category formatting rules:
-  - "Theatrhythm", "Mobius", "Pictlogica", and "Type-0" always in that exact format
+  - "Theatrhythm", "Mobius", "Pictlogica", and "Type-0" always in that exact
+    format
   - "World of Final Fantasy" always converted to "WOFF"
   - "Lord of Vermilion" always converted to "LOV"
   - Roman numerals (I, II, III, etc.) always in uppercase
@@ -106,6 +112,63 @@ interface SyncResult {
   - Preservation of "Re-" prefix numbers during Square Enix data updates
   - Inclusion in search terms for improved searchability
   - Proper hash calculation to detect changes
+
+## Complete Sync Process
+
+The card synchronization is part of a **4-step process** coordinated by the
+`scheduledCardSync` function:
+
+### Step 1: Group Sync
+
+```typescript
+await groupSync.syncGroups();
+```
+
+- Syncs set/group information from TCGPlayer API
+- Ensures group metadata is available for card processing
+
+### Step 2: TCGPlayer Card Sync (This Service)
+
+```typescript
+await cardSync.syncCards();
+```
+
+- **Primary Role**: Creates initial card records with TCGPlayer data
+- **Description Source**: TCGPlayer API (often incomplete/truncated)
+- **Data Quality**: Good for basic info, incomplete for descriptions
+- **Output**: Base card records ready for enhancement
+
+### Step 3: Square Enix Data Sync
+
+```typescript
+await squareEnixStorage.syncSquareEnixCards();
+```
+
+- Fetches and stores complete Square Enix card data
+- Processes official card information including complete descriptions
+- Stores data in separate collection for later application
+
+### Step 4: Square Enix Enhancement
+
+```typescript
+await updateCardsWithSquareEnixData();
+```
+
+- **Critical Step**: Applies complete Square Enix data to TCGPlayer cards
+- **Description Priority**: Square Enix descriptions overwrite TCGPlayer
+  descriptions
+- **Result**: Cards now have complete, accurate descriptions and data
+
+### Data Flow Summary
+
+```mermaid
+graph LR
+    A[TCGPlayer API] --> B[Step 2: Card Creation]
+    C[Square Enix API] --> D[Step 3: SE Data Storage]
+    B --> E[Step 4: Data Enhancement]
+    D --> E
+    E --> F[Complete Card Records]
+```
 
 ### Group Integration
 
@@ -243,44 +306,44 @@ The service provides detailed progress information:
 ## Best Practices
 
 1. Testing Changes:
-   - Use dry run mode first
-   - Test with limited card sets
-   - Verify hash calculations
-   - Check category handling
+    - Use dry run mode first
+    - Test with limited card sets
+    - Verify hash calculations
+    - Check category handling
 
 2. Performance Optimization:
-   - Use batch processing
-   - Implement proper caching
-   - Monitor memory usage
-   - Optimize database queries
+    - Use batch processing
+    - Implement proper caching
+    - Monitor memory usage
+    - Optimize database queries
 
 3. Error Handling:
-   - Implement proper retry logic
-   - Log detailed error information
-   - Monitor error patterns
-   - Handle edge cases
+    - Implement proper retry logic
+    - Log detailed error information
+    - Monitor error patterns
+    - Handle edge cases
 
 ## Troubleshooting
 
 ### Common Issues
 
 1. Data Synchronization:
-   - Verify API responses
-   - Check hash calculations
-   - Monitor batch processing
-   - Validate category handling
+    - Verify API responses
+    - Check hash calculations
+    - Monitor batch processing
+    - Validate category handling
 
 2. Image Processing:
-   - Verify storage permissions
-   - Check image URLs
-   - Monitor storage quotas
-   - Validate image metadata
-   - Ensure placeholder images are used for invalid or missing images
+    - Verify storage permissions
+    - Check image URLs
+    - Monitor storage quotas
+    - Validate image metadata
+    - Ensure placeholder images are used for invalid or missing images
 
 #### Placeholder Image Handling
 
-The Card Sync Service integrates with the Storage Service to ensure that cards without
-valid images always use a placeholder image:
+The Card Sync Service integrates with the Storage Service to ensure that cards
+without valid images always use a placeholder image:
 
 ```typescript
 // Process image handling
@@ -309,10 +372,10 @@ This ensures that cards always have valid image URLs for all three resolutions
 processing and placeholder handling.
 
 1. Performance:
-   - Monitor batch sizes
-   - Check memory usage
-   - Optimize database queries
-   - Review cache efficiency
+    - Monitor batch sizes
+    - Check memory usage
+    - Optimize database queries
+    - Review cache efficiency
 
 ## Related Components
 

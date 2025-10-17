@@ -2,13 +2,15 @@
 
 ## Overview
 
-The Square Enix Integration service (`squareEnixSync.ts`) enriches card data with
-official Square Enix information, ensuring accuracy in critical fields like cost,
-power, and categories. This service acts as a secondary data source that complements
-the primary TCGCSV API data.
+The Square Enix Integration service (`squareEnixSync.ts`) enriches card data
+with official Square Enix information, ensuring accuracy in critical fields like
+cost, power, categories, and **descriptions**. This service acts as a secondary
+data source that complements the primary TCGCSV API data, with **Square Enix
+data taking priority** for core card information.
 
 ## Core Features
 
+- **Description prioritization** (Square Enix as primary source)
 - Cost/power value synchronization
 - Category handling and deduplication
 - Data versioning and consistency
@@ -16,6 +18,47 @@ the primary TCGCSV API data.
 - Batch processing optimization
 - Hash-based change detection
 - Missing field population from Square Enix data
+
+## Data Source Prioritization
+
+### Description Field Priority (CRITICAL)
+
+**Square Enix API is the authoritative source for card descriptions.**
+
+1. **Primary Source**: Square Enix `text` field (complete, accurate
+    descriptions)
+2. **Fallback Source**: TCGPlayer API description (used only when Square Enix
+    data is unavailable)
+3. **Processing**: Square Enix markup (`[[br]]`, `[[i]]`, etc.) is converted to
+    HTML
+4. **Update Logic**: Square Enix descriptions **unconditionally overwrite**
+    TCGPlayer descriptions when available
+
+```typescript
+// Description prioritization logic
+if (seCard.text && seCard.text.trim() !== "") {
+  // ALWAYS use Square Enix description when available
+  const processedDescription = translateDescription(seCard.text);
+  fields.description = processedDescription || seCard.text; // Fallback to raw
+} else {
+  // Only use TCGPlayer description if Square Enix has no description
+  fields.description = tcgCard.description;
+}
+```
+
+### Field Priority Matrix
+
+| Field | Primary | Fallback | Update Condition |
+|---|---|---|---|
+| `description` | SE `text` | TCG | Always when available |
+| `cardType` | SE `type` | TCG | Always when available |
+| `elements` | SE `element` | TCG | Always when available |
+| `categories` | SE categories | TCG | Always when available |
+| `cost` | SE `cost` | TCG | Only when TCG null/empty |
+| `power` | SE `power` | TCG | Only when TCG null/empty |
+| `job` | SE `job_en` | TCG | Always when available |
+| `rarity` | SE `rarity` | TCG | Always when available |
+| `set` | SE `set` | TCG | Always when available |
 
 ## Components
 
@@ -144,7 +187,8 @@ if (seCategories.length > 0) {
 - Consistent character encoding
 - Square Enix data used as the source of truth for categories
 - Specific category formatting rules:
-  - "Theatrhythm", "Mobius", "Pictlogica", and "Type-0" always in that exact format
+  - "Theatrhythm", "Mobius", "Pictlogica", and "Type-0" always in that exact
+    format
   - "World of Final Fantasy" always converted to "WOFF"
   - "Lord of Vermilion" always converted to "LOV"
   - Roman numerals (I, II, III, etc.) always in uppercase
@@ -286,44 +330,44 @@ The service tracks:
 ## Best Practices
 
 1. Data Validation:
-   - Verify value ranges
-   - Validate category formats
-   - Check set matching
-   - Monitor update patterns
+    - Verify value ranges
+    - Validate category formats
+    - Check set matching
+    - Monitor update patterns
 
 2. Performance Optimization:
-   - Use batch processing
-   - Implement caching
-   - Optimize queries
-   - Monitor memory usage
+    - Use batch processing
+    - Implement caching
+    - Optimize queries
+    - Monitor memory usage
 
 3. Error Management:
-   - Log detailed errors
-   - Implement retries
-   - Monitor patterns
-   - Handle edge cases
+    - Log detailed errors
+    - Implement retries
+    - Monitor patterns
+    - Handle edge cases
 
 ## Troubleshooting
 
 ### Common Issues
 
 1. Value Mismatches:
-   - Check data source accuracy
-   - Verify set matching
-   - Review update logic
-   - Check null handling
+    - Check data source accuracy
+    - Verify set matching
+    - Review update logic
+    - Check null handling
 
 2. Category Issues:
-   - Verify format consistency
-   - Check encoding
-   - Monitor deduplication
-   - Validate ordering
+    - Verify format consistency
+    - Check encoding
+    - Monitor deduplication
+    - Validate ordering
 
 3. Performance:
-   - Review batch sizes
-   - Check memory usage
-   - Monitor API calls
-   - Optimize queries
+    - Review batch sizes
+    - Check memory usage
+    - Monitor API calls
+    - Optimize queries
 
 ## Integration Points
 

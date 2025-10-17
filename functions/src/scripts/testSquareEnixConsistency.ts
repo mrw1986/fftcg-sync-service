@@ -1,5 +1,6 @@
 import fetch from "node-fetch";
 import * as crypto from "crypto";
+import { translateElements } from "../utils/elementTranslator";
 
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
@@ -29,23 +30,6 @@ interface SquareEnixCard {
 interface SquareEnixApiResponse {
   count: number;
   cards: SquareEnixCard[];
-}
-
-// Element translation map from production
-const elementMap: Record<string, string> = {
-  火: "Fire",
-  氷: "Ice",
-  風: "Wind",
-  土: "Earth",
-  雷: "Lightning",
-  水: "Water",
-  光: "Light",
-  闇: "Dark",
-};
-
-// Translate elements using the same logic as production
-function translateElements(elements: string[]): string[] {
-  return elements.map((element) => elementMap[element] || element);
 }
 
 // Calculate hash using the exact same method as production
